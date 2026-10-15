@@ -25,6 +25,7 @@ import { dirname, join } from 'node:path'
 import { BridgeServer } from '../../src/host/bridge-server.js'
 import { Supervisor } from '../../src/host/supervisor.js'
 import { resolveElectron, electronHelpText } from '../../src/host/electron-locate.js'
+import { buildBalanceAnnouncement } from '../../src/shared-core/balance-announce.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const pluginRoot = join(here, '..', '..')
@@ -87,6 +88,8 @@ async function shutdown(code) {
   if (shuttingDown) return
   shuttingDown = true
   clearInterval(demoTimer)
+  // 假余额定时器也要收掉，否则它会给一个已经关掉的桥接写消息。
+  if (fakeBalanceTimer) clearInterval(fakeBalanceTimer)
   try {
     const result = supervisor.stop(() => bridge.enqueueCommand('quit'))
     log(`停止桌宠：${JSON.stringify(result)}`)
@@ -120,27 +123,75 @@ log(`Electron: ${electron ? `${electron.path}（${electron.source}）` : '未找
 bridge.setWorkStatus('idle', '')
 
 /**
- * 假余额 —— 用来目视确认下方那个**常驻余额面板**是通的。
+ * 假余额 —— 用来目视确认下方那个**常驻余额面板**与**消费播报**是通的。
  *
  * 开发宿主没有真实 API Key（也不该有），所以这里给一个明确的**假值**。
  * 生产环境下余额由宿主的 balance.js 从官方接口取，与这里无关。
  *
- * `--no-balance` 可以不给余额，用来看"取不到数时面板显示 `--`"的样子。
+ * 参数：
+ *   `--no-balance`        不给余额，用来看"取不到数时面板显示 `--`"
+ *   `--balance=23.45`     起始余额（默认 23.45）
+ *   `--balance-step=-5`   每轮变化量（默认 0 = 不变）
+ *   `--balance-every=5`   每几秒变一次（默认 5）
+ *
+ * 播报验证的用法：`--balance=23.45 --balance-step=-5` —— 每 5 秒余额掉 5 元，
+ * 桌宠应当念"刚才花掉了¥5，还有¥18.45，有些吃紧。"（档位随余额下降而变）。
+ * 传正值（`--balance-step=20`）可验证**充值不会被播报成消耗**。
  */
-if (!argv.includes('--no-balance')) {
-  const now = Date.now()
+const balanceEnabled = !argv.includes('--no-balance')
+const argValue = (name, dflt) => {
+  const hit = argv.find((a) => a.startsWith(`--${name}=`))
+  if (!hit) return dflt
+  const n = Number(hit.slice(name.length + 3))
+  return Number.isFinite(n) ? n : dflt
+}
+let fakeBalance = argValue('balance', 23.45)
+const fakeBalanceStep = argValue('balance-step', 0)
+const fakeBalanceEverySec = Math.max(1, argValue('balance-every', 5))
+
+/** 组一份余额快照并写入桥接。 */
+function pushFakeBalance() {
   bridge.setBalance({
     source: 'apikey',
     isAvailable: true,
     currency: 'CNY',
-    total: '23.45',
-    granted: '3.45',
-    toppedUp: '20.00',
-    fetchedAt: now,
+    total: fakeBalance.toFixed(2),
+    granted: '0.00',
+    toppedUp: fakeBalance.toFixed(2),
+    fetchedAt: Date.now(),
     stale: false,
     error: null,
   })
-  log('已放一条假余额（¥23.45）；用 --no-balance 可关掉')
+}
+
+if (balanceEnabled) {
+  pushFakeBalance()
+  log(`已放一条假余额（¥${fakeBalance.toFixed(2)}）；用 --no-balance 可关掉`)
+  if (fakeBalanceStep !== 0) {
+    log(`假余额每 ${String(fakeBalanceEverySec)} 秒变化 ${String(fakeBalanceStep)}（用来验证播报）`)
+  }
+}
+
+/**
+ * 假余额的定时变化。
+ *
+ * ⚠️ 这里**也走 `bridge.setMessage()`**，也就是与生产代码同一个播报通道 ——
+ * 不是另写一套。这样开发宿主能真正验证"余额变化 → 一次性消息 → 桌宠念出来"
+ * 这条链路，而不是只验证到余额面板更新。
+ *
+ * 用的是 `buildBalanceAnnouncement`（共享核心的纯逻辑），
+ * 所以分档与"充值不算消耗"的行为与生产完全一致。
+ */
+let fakeBalanceTimer = null
+if (balanceEnabled && fakeBalanceStep !== 0) {
+  fakeBalanceTimer = setInterval(() => {
+    const prev = fakeBalance
+    fakeBalance = Math.max(0, fakeBalance + fakeBalanceStep)
+    pushFakeBalance()
+    const ann = buildBalanceAnnouncement({ prevTotal: prev, nextTotal: fakeBalance })
+    bridge.setMessage(ann.text)
+    log(`余额变化 ¥${prev.toFixed(2)} → ¥${fakeBalance.toFixed(2)}；播报：${ann.text}`)
+  }, fakeBalanceEverySec * 1000)
 }
 
 if (startPet && electron) {

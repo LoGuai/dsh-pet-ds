@@ -720,6 +720,20 @@ async function pollLoop() {
       const commands = Array.isArray(state.commands) ? state.commands : []
       for (const command of commands) handleCommand(command)
 
+      /*
+       * 宿主的一次性消息（余额播报就走这条路）。
+       *
+       * 协议里 `message` 是"待播报的一句话"，桥接侧取走即清（取一次就不再重发），
+       * 所以这里直接转成一次 `pet:say` 即可 —— 渲染进程的 `pet:say` 通道
+       * 会走统一的 `showBubble`，那里的守卫（睡眠/惊醒期间不说话）也自动适用。
+       */
+      if (typeof state.message === 'string' && state.message.length > 0) {
+        if (win && !win.isDestroyed()) {
+          win.webContents.send('pet:say', { text: state.message, bubbleMs: 9000 })
+        }
+        log(`播报：${state.message}`)
+      }
+
       // 转发给渲染进程。
       //
       // 测试模式下若有状态覆盖值，就**不要**把轮询结果推下去 —— 否则宿主的真实状态

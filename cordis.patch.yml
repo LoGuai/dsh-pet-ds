@@ -31,8 +31,9 @@
         stopOnUnload: false
         # 余额低于该值时桌宠下方的余额面板转为"告急"配色。
         lowBalanceThreshold: 10
-        # 余额查询的缓存与刷新周期（秒）。余额接口有限流，不要设太小（下限 5）。
-        refreshSeconds: 60
+        # 余额刷新与消费播报周期（秒）。用户指定 5 分钟 = 300 秒；下限 5。
+        # 缓存时长与刷新周期共用这个值（分开设会在不一致时产生难查的问题）。
+        refreshSeconds: 300
         # DeepSeek API 地址（自建或走代理时改这里）。
         apiBase: 'https://api.deepseek.com'
         # 读取 API Key 的凭据键名。需要在 DSH 里配置这个凭据，否则余额面板显示"未配置"。

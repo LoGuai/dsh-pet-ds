@@ -97,6 +97,33 @@ export class BridgeServer {
     this._touch()
   }
 
+  /**
+   * 设一条**一次性消息**，让桌宠播报一句话。
+   *
+   * 协议里 `message` 就是这个用途（见 protocol.js 的 StateSnapshot），
+   * 但此前一直没被用过。语义要点：
+   *  · 它是**一次性**的 —— 桌宠取走后由 `consumeMessage()` 清掉，
+   *    否则每次轮询都会重念同一句（余额播报会变成复读机）；
+   *  · 所以它**不参与 `_touch()` 的"相同值不算变化"判断**，
+   *    每次设置都算一次新变化。
+   *
+   * @param {string} text
+   */
+  setMessage(text) {
+    const value = typeof text === 'string' && text.length > 0 ? text : null
+    if (value === null) return
+    this._snapshot.message = value
+    this._touch()
+  }
+
+  /** 取走并清空一次性消息。返回被取走的文本（没有则 null）。 */
+  consumeMessage() {
+    const value = this._snapshot.message
+    if (value === null || value === undefined) return null
+    this._snapshot.message = null
+    return value
+  }
+
   /** 更新工作档位。相同档位不视为变化，避免无意义唤醒。 */
   setWorkStatus(status, label = '') {
     if (this._snapshot.workStatus === status && this._snapshot.workLabel === label) return
@@ -250,8 +277,18 @@ export class BridgeServer {
     const respond = () => {
       const payload = {
         ...this.peekSnapshot(),
+        /*
+         * 一次性消息与命令一样：**取走即清**。
+         *
+         * 放在这里而不是留在快照里，是为了避免"每次轮询都重念同一句" ——
+         * 桌宠每几秒取一次状态，消息若不清就会变成复读机。
+         *
+         * ⚠️ 顺序要紧：先 peekSnapshot()（它带上 message 的当前值），
+         * 再 consumeMessage() 清掉。
+         */
         commands: this._drainCommands(),
       }
+      this.consumeMessage()
       this._send(res, 200, payload)
     }
 

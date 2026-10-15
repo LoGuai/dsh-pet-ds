@@ -22,6 +22,7 @@ import { BridgeServer } from './bridge-server.js'
 import { Supervisor } from './supervisor.js'
 import { electronHelpText, resolveElectron } from './electron-locate.js'
 import { createBalanceFetcher } from './balance.js'
+import { buildBalanceAnnouncement } from '../shared-core/balance-announce.js'
 import { PROTOCOL_VERSION } from '../shared-core/protocol.js'
 
 export const name = 'dsh-pet-ds'
@@ -56,8 +57,14 @@ const DEFAULTS = Object.freeze({
   alwaysOnTop: true,
   /** 余额低于该值时进入"告急"档（面板据此变色）。 */
   lowBalanceThreshold: 10,
-  /** 余额缓存与刷新周期（秒）。余额接口有限流，不能轮询太密。 */
-  refreshSeconds: 60,
+  /**
+   * 余额缓存与**刷新/播报**周期（秒）。用户指定 5 分钟（300 秒）。
+   *
+   * 余额接口有限流，不能轮询太密；而"每 5 分钟播报一次消费"本身就是需求，
+   * 所以缓存时长与刷新周期**共用同一个值** —— 分两处设只会在它们不一致时
+   * 产生"播报的其实是缓存、根本没重新取数"这类很难查的问题。
+   */
+  refreshSeconds: 300,
   /** DeepSeek API 地址（可在自建/代理场景覆盖）。 */
   apiBase: 'https://api.deepseek.com',
   /** 读取 API Key 的凭据键名。 */
@@ -167,7 +174,22 @@ export function apply(ctx, config) {
     log: say,
   })
 
-  /** 拉一次余额并写入桥接快照。失败也写 —— 快照里带 error，界面能显示"取数失败"。 */
+  /**
+   * 上一次成功取到的余额（数字），用于算"这 5 分钟花掉多少"。
+   *
+   * `null` 表示还没成功取过 —— 首次不播报（没有可比的上一次），
+   * 见下面 refreshBalance 里的说明。
+   * @type {number | null}
+   */
+  let lastBalanceTotal = null
+
+  /**
+   * 拉一次余额并写入桥接快照。失败也写 —— 快照里带 error，界面能显示"取数失败"。
+   *
+   * 拿到新余额后顺带**算一次播报**（用户要求）：告诉桌宠这 5 分钟花掉多少、
+   * 还剩多少、该说哪句台词。播报内容由 shared-core/balance-announce.js 计算 ——
+   * 那是纯逻辑，有单测覆盖分档的每个边界。
+   */
   const refreshBalance = async (fresh = false) => {
     try {
       const snap = await balance.get({
@@ -175,6 +197,35 @@ export function apply(ctx, config) {
         fresh,
       })
       bridge.setBalance(snap)
+
+      /*
+       * 只在**真的取到数**时才播报。
+       *
+       * `fetchedAt > 0` 表示拿到过至少一次成功结果；取数失败时它是上一次的时间戳，
+       * 而 `error` 非空。这两种情况都不该播报 —— 否则用户会听到
+       * "刚才花掉了¥0，还有¥0" 这种由故障产生的假话。
+       */
+      const ok = Boolean(snap) && snap.fetchedAt > 0 && snap.error === null
+      if (ok) {
+        const nextTotal = Number(snap.total)
+        const ann = buildBalanceAnnouncement({
+          // 首次成功取数时 prevTotal 为 null → 视为"没花"，只报剩余与档位。
+          prevTotal: lastBalanceTotal,
+          nextTotal,
+          currency: snap.currency,
+        })
+        /*
+         * ⚠️ 首次取数（lastBalanceTotal === null）**不播报**。
+         *
+         * 理由：那一次没有"上一次余额"可比，"花掉了 ¥0" 是无意义的噪音，
+         * 而且桌宠刚启动就冒一句会显得突兀。从第二次起才有真实差值可报。
+         */
+        if (lastBalanceTotal !== null) {
+          bridge.setMessage(ann.text)
+          say(`余额播报：${ann.text}（${ann.kind}，${String(ann.tier)} 档）`)
+        }
+        if (Number.isFinite(nextTotal)) lastBalanceTotal = nextTotal
+      }
       return snap
     } catch (err) {
       // balance.get() 本身不 reject，这里是防御性的兜底。
