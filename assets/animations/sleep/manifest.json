@@ -1,0 +1,211 @@
+{
+  "frameCount": 10,
+  "fps": 6,
+  "loop": false,
+  "sourceCanvasHeight": 1157,
+  "drawOffsetY": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+  ],
+  "_note": "由 scripts/dev/build-action-asset.py sleep 生成；与站立素材同一画布约定（水平居中 + 脚底基准 y=1148）。",
+  "_processing": {
+    "canvas": {
+      "w": 864,
+      "h": 1157
+    },
+    "scale": 0.972,
+    "footBaseOutput": 1148,
+    "perFrame": [
+      {
+        "src": "1.png",
+        "out": "frame_01.png",
+        "srcBounds": [
+          233,
+          41,
+          1013,
+          1214
+        ],
+        "placedAt": [
+          52,
+          8
+        ],
+        "outTop": 8,
+        "outFoot": 1147,
+        "outW": 759,
+        "outH": 1140
+      },
+      {
+        "src": "2.png",
+        "out": "frame_02.png",
+        "srcBounds": [
+          231,
+          41,
+          1014,
+          1216
+        ],
+        "placedAt": [
+          51,
+          6
+        ],
+        "outTop": 6,
+        "outFoot": 1147,
+        "outW": 762,
+        "outH": 1142
+      },
+      {
+        "src": "3.png",
+        "out": "frame_03.png",
+        "srcBounds": [
+          229,
+          41,
+          1015,
+          1214
+        ],
+        "placedAt": [
+          49,
+          8
+        ],
+        "outTop": 8,
+        "outFoot": 1148,
+        "outW": 765,
+        "outH": 1141
+      },
+      {
+        "src": "4.png",
+        "out": "frame_04.png",
+        "srcBounds": [
+          232,
+          35,
+          1014,
+          1214
+        ],
+        "placedAt": [
+          51,
+          2
+        ],
+        "outTop": 3,
+        "outFoot": 1148,
+        "outW": 761,
+        "outH": 1146
+      },
+      {
+        "src": "5.png",
+        "out": "frame_05.png",
+        "srcBounds": [
+          232,
+          44,
+          1015,
+          1215
+        ],
+        "placedAt": [
+          51,
+          10
+        ],
+        "outTop": 10,
+        "outFoot": 1146,
+        "outW": 762,
+        "outH": 1137
+      },
+      {
+        "src": "6.png",
+        "out": "frame_06.png",
+        "srcBounds": [
+          235,
+          49,
+          1019,
+          1212
+        ],
+        "placedAt": [
+          50,
+          18
+        ],
+        "outTop": 18,
+        "outFoot": 1148,
+        "outW": 763,
+        "outH": 1131
+      },
+      {
+        "src": "7.png",
+        "out": "frame_07.png",
+        "srcBounds": [
+          230,
+          42,
+          1017,
+          1214
+        ],
+        "placedAt": [
+          49,
+          9
+        ],
+        "outTop": 9,
+        "outFoot": 1148,
+        "outW": 766,
+        "outH": 1140
+      },
+      {
+        "src": "8.png",
+        "out": "frame_08.png",
+        "srcBounds": [
+          233,
+          46,
+          1015,
+          1214
+        ],
+        "placedAt": [
+          51,
+          13
+        ],
+        "outTop": 13,
+        "outFoot": 1148,
+        "outW": 761,
+        "outH": 1136
+      },
+      {
+        "src": "9.png",
+        "out": "frame_09.png",
+        "srcBounds": [
+          229,
+          39,
+          1017,
+          1216
+        ],
+        "placedAt": [
+          48,
+          4
+        ],
+        "outTop": 4,
+        "outFoot": 1147,
+        "outW": 767,
+        "outH": 1144
+      },
+      {
+        "src": "10.png",
+        "out": "frame_10.png",
+        "srcBounds": [
+          233,
+          41,
+          1015,
+          1217
+        ],
+        "placedAt": [
+          51,
+          5
+        ],
+        "outTop": 5,
+        "outFoot": 1147,
+        "outW": 761,
+        "outH": 1143
+      }
+    ]
+  },
+  "tailLoopFrames": 2,
+  "tailLoopFps": 1
+}

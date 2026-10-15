@@ -1,0 +1,15 @@
+{
+  "name": "dsh-pet-ds-pet",
+  "productName": "DSH Pet",
+  "version": "0.1.0",
+  "description": "DSH 桌宠的独立桌面窗口进程（透明置顶小窗）",
+  "private": true,
+  "type": "commonjs",
+  "main": "main.js",
+  "comment": [
+    "这是被宿主插件 spawn 的 Electron 应用，不是一个独立发布的应用。",
+    "刻意不声明任何 dependencies：窗口与渲染只用 Electron 与 Web 标准能力，",
+    "这样它不需要 node_modules 就能启动（也避免发布包里出现重复依赖树）。",
+    "渲染进程代码放在 renderer.js，由 index.html 以普通 script 引入。"
+  ]
+}

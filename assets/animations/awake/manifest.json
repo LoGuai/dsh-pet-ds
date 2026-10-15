@@ -1,0 +1,133 @@
+{
+  "frameCount": 6,
+  "fps": 6,
+  "loop": false,
+  "sourceCanvasHeight": 1157,
+  "drawOffsetY": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+  ],
+  "_note": "由 scripts/dev/build-action-asset.py awake 生成；与站立素材同一画布约定（水平居中 + 脚底基准 y=1148）。",
+  "_processing": {
+    "canvas": {
+      "w": 864,
+      "h": 1157
+    },
+    "scale": 0.9542,
+    "footBaseOutput": 1148,
+    "perFrame": [
+      {
+        "src": "1.png",
+        "out": "frame_01.png",
+        "srcBounds": [
+          249,
+          38,
+          1032,
+          1205
+        ],
+        "placedAt": [
+          58,
+          34
+        ],
+        "outTop": 34,
+        "outFoot": 1148,
+        "outW": 748,
+        "outH": 1115
+      },
+      {
+        "src": "2.png",
+        "out": "frame_02.png",
+        "srcBounds": [
+          246,
+          49,
+          1005,
+          1194
+        ],
+        "placedAt": [
+          69,
+          55
+        ],
+        "outTop": 55,
+        "outFoot": 1148,
+        "outW": 724,
+        "outH": 1094
+      },
+      {
+        "src": "3.png",
+        "out": "frame_03.png",
+        "srcBounds": [
+          249,
+          37,
+          1002,
+          1210
+        ],
+        "placedAt": [
+          72,
+          29
+        ],
+        "outTop": 29,
+        "outFoot": 1148,
+        "outW": 719,
+        "outH": 1120
+      },
+      {
+        "src": "4.png",
+        "out": "frame_04.png",
+        "srcBounds": [
+          243,
+          18,
+          1012,
+          1199
+        ],
+        "placedAt": [
+          64,
+          21
+        ],
+        "outTop": 21,
+        "outFoot": 1147,
+        "outW": 735,
+        "outH": 1127
+      },
+      {
+        "src": "5.png",
+        "out": "frame_05.png",
+        "srcBounds": [
+          223,
+          30,
+          1001,
+          1210
+        ],
+        "placedAt": [
+          60,
+          22
+        ],
+        "outTop": 22,
+        "outFoot": 1148,
+        "outW": 743,
+        "outH": 1127
+      },
+      {
+        "src": "6.png",
+        "out": "frame_06.png",
+        "srcBounds": [
+          225,
+          16,
+          1021,
+          1217
+        ],
+        "placedAt": [
+          52,
+          2
+        ],
+        "outTop": 2,
+        "outFoot": 1148,
+        "outW": 760,
+        "outH": 1147
+      }
+    ]
+  }
+}

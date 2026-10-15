@@ -1,0 +1,347 @@
+{
+  "frameCount": 17,
+  "fps": 6,
+  "loop": false,
+  "sourceCanvasHeight": 1157,
+  "drawOffsetY": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+  ],
+  "_note": "由 scripts/dev/build-action-asset.py eat 生成；与站立素材同一画布约定（水平居中 + 脚底基准 y=1148）。",
+  "_processing": {
+    "canvas": {
+      "w": 864,
+      "h": 1157
+    },
+    "scale": 0.925,
+    "footBaseOutput": 1148,
+    "perFrame": [
+      {
+        "src": "1.png",
+        "out": "frame_01.png",
+        "srcBounds": [
+          202,
+          6,
+          1036,
+          1243
+        ],
+        "placedAt": [
+          46,
+          4
+        ],
+        "outTop": 4,
+        "outFoot": 1148,
+        "outW": 772,
+        "outH": 1145
+      },
+      {
+        "src": "2.png",
+        "out": "frame_02.png",
+        "srcBounds": [
+          203,
+          6,
+          1041,
+          1242
+        ],
+        "placedAt": [
+          44,
+          5
+        ],
+        "outTop": 5,
+        "outFoot": 1148,
+        "outW": 776,
+        "outH": 1144
+      },
+      {
+        "src": "3.png",
+        "out": "frame_03.png",
+        "srcBounds": [
+          200,
+          6,
+          1037,
+          1243
+        ],
+        "placedAt": [
+          44,
+          4
+        ],
+        "outTop": 4,
+        "outFoot": 1148,
+        "outW": 775,
+        "outH": 1145
+      },
+      {
+        "src": "4.png",
+        "out": "frame_04.png",
+        "srcBounds": [
+          203,
+          7,
+          1037,
+          1243
+        ],
+        "placedAt": [
+          46,
+          5
+        ],
+        "outTop": 5,
+        "outFoot": 1148,
+        "outW": 772,
+        "outH": 1144
+      },
+      {
+        "src": "5.png",
+        "out": "frame_05.png",
+        "srcBounds": [
+          203,
+          6,
+          1035,
+          1243
+        ],
+        "placedAt": [
+          46,
+          4
+        ],
+        "outTop": 4,
+        "outFoot": 1148,
+        "outW": 771,
+        "outH": 1145
+      },
+      {
+        "src": "6.png",
+        "out": "frame_06.png",
+        "srcBounds": [
+          203,
+          6,
+          1036,
+          1243
+        ],
+        "placedAt": [
+          46,
+          4
+        ],
+        "outTop": 4,
+        "outFoot": 1148,
+        "outW": 771,
+        "outH": 1145
+      },
+      {
+        "src": "7.png",
+        "out": "frame_07.png",
+        "srcBounds": [
+          202,
+          6,
+          1037,
+          1242
+        ],
+        "placedAt": [
+          45,
+          5
+        ],
+        "outTop": 5,
+        "outFoot": 1148,
+        "outW": 773,
+        "outH": 1144
+      },
+      {
+        "src": "8.png",
+        "out": "frame_08.png",
+        "srcBounds": [
+          205,
+          5,
+          1034,
+          1242
+        ],
+        "placedAt": [
+          48,
+          4
+        ],
+        "outTop": 4,
+        "outFoot": 1148,
+        "outW": 768,
+        "outH": 1145
+      },
+      {
+        "src": "9.png",
+        "out": "frame_09.png",
+        "srcBounds": [
+          202,
+          6,
+          1036,
+          1243
+        ],
+        "placedAt": [
+          46,
+          4
+        ],
+        "outTop": 4,
+        "outFoot": 1148,
+        "outW": 772,
+        "outH": 1145
+      },
+      {
+        "src": "10.png",
+        "out": "frame_10.png",
+        "srcBounds": [
+          199,
+          8,
+          1043,
+          1244
+        ],
+        "placedAt": [
+          41,
+          5
+        ],
+        "outTop": 5,
+        "outFoot": 1148,
+        "outW": 782,
+        "outH": 1144
+      },
+      {
+        "src": "11.png",
+        "out": "frame_11.png",
+        "srcBounds": [
+          204,
+          5,
+          1037,
+          1243
+        ],
+        "placedAt": [
+          46,
+          3
+        ],
+        "outTop": 3,
+        "outFoot": 1148,
+        "outW": 771,
+        "outH": 1146
+      },
+      {
+        "src": "12.png",
+        "out": "frame_12.png",
+        "srcBounds": [
+          202,
+          5,
+          1038,
+          1244
+        ],
+        "placedAt": [
+          45,
+          2
+        ],
+        "outTop": 2,
+        "outFoot": 1148,
+        "outW": 774,
+        "outH": 1147
+      },
+      {
+        "src": "13.png",
+        "out": "frame_13.png",
+        "srcBounds": [
+          199,
+          8,
+          1040,
+          1241
+        ],
+        "placedAt": [
+          42,
+          8
+        ],
+        "outTop": 8,
+        "outFoot": 1148,
+        "outW": 779,
+        "outH": 1141
+      },
+      {
+        "src": "14.png",
+        "out": "frame_14.png",
+        "srcBounds": [
+          200,
+          9,
+          1037,
+          1244
+        ],
+        "placedAt": [
+          44,
+          6
+        ],
+        "outTop": 6,
+        "outFoot": 1148,
+        "outW": 775,
+        "outH": 1143
+      },
+      {
+        "src": "15.png",
+        "out": "frame_15.png",
+        "srcBounds": [
+          204,
+          5,
+          1038,
+          1243
+        ],
+        "placedAt": [
+          46,
+          3
+        ],
+        "outTop": 3,
+        "outFoot": 1148,
+        "outW": 772,
+        "outH": 1146
+      },
+      {
+        "src": "16.png",
+        "out": "frame_16.png",
+        "srcBounds": [
+          201,
+          6,
+          1037,
+          1243
+        ],
+        "placedAt": [
+          45,
+          4
+        ],
+        "outTop": 4,
+        "outFoot": 1148,
+        "outW": 774,
+        "outH": 1145
+      },
+      {
+        "src": "17.png",
+        "out": "frame_17.png",
+        "srcBounds": [
+          205,
+          11,
+          1037,
+          1242
+        ],
+        "placedAt": [
+          46,
+          9
+        ],
+        "outTop": 9,
+        "outFoot": 1148,
+        "outW": 771,
+        "outH": 1140
+      }
+    ]
+  },
+  "loopRange": {
+    "from": 6,
+    "to": 9,
+    "times": 4
+  }
+}

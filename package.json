@@ -1,0 +1,53 @@
+{
+  "name": "dsh-pet-ds",
+  "version": "0.1.0",
+  "description": "DSH 桌宠：一个独立的桌面透明窗口宠物，显示 DeepSeek 账户余额与 DSH 工作状态。宿主半侧负责数据与事件，桌宠界面运行在独立的 Electron 进程中。",
+  "type": "module",
+  "license": "MIT",
+  "private": true,
+  "main": "src/host/index.js",
+  "exports": {
+    ".": "./src/host/index.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "icon": "assets/icon.svg",
+  "scripts": {
+    "install:electron": "node scripts/dev/install-electron.mjs",
+    "dev": "node scripts/dev/mock-host.mjs",
+    "dev:debug": "node scripts/dev/mock-host.mjs --debug",
+    "probe": "node scripts/dev/probe.mjs"
+  },
+  "files": [
+    "src",
+    "pet-app",
+    "assets",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "comment": [
+    "本阶段（阶段 4 最小框架）刻意不设置构建步骤：src 下的 .js 就是运行代码，",
+    "DSH 用 Node ESM 直接加载，省掉 tsc/tsdown 与 lib/ 产物，改完即生效。",
+    "待模块规模变大后再引入构建（届时 main 指向 lib/index.js）。"
+  ],
+  "comment_electron": [
+    "刻意**不**把 electron 列为依赖。官方做法（npm install electron）会把它下载到",
+    "项目的 node_modules，而本机实测：工作区目录内的 electron.exe 启动即崩",
+    "（EXCEPTION_BREAKPOINT @ IsLoadBrowserProcessSpecificV8SnapshotEnabled）。",
+    "因此运行时必须装在工作区之外，用 npm run install:electron 装到 $DSH_HOME/electron/。",
+    "详见 README 的『环境约束』一节。"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.4",
+    "@deepseek-ai/dsh-tools": "^0.2.0-rc.1"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}

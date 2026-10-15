@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <!--
+      内容安全策略：桌宠页面不加载任何外部资源、不发起任何网络请求。
+      余额等数据全部由主进程通过 IPC 推进来，所以这里可以收得很紧。
+
+      connect-src 'self' 是必需的：动画清单（manifest.json）是用 fetch 读的，
+      没有它会被 default-src 'none' 拦掉 —— 实测踩过这个坑（表现是窗口全透明空白，
+      因为帧从未被设置）。'self' 在 file:// 下只允许读取同源本地文件，不放宽到网络。
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; connect-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:;"
+    />
+    <title>DSH Pet</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <!-- 舞台：整窗可拖拽。桌宠窗口很小且全被角色占据，所以拖拽区=整窗最自然。 -->
+    <div id="stage" class="stage">
+      <!-- 顶部气泡区：高度由主进程下发（固定像素，不随桌宠缩放）。 -->
+      <div class="bubble-area">
+        <div id="bubble" class="bubble" hidden><span id="bubble-text"></span></div>
+      </div>
+
+      <!--
+        角色区：占据气泡区以下的全部空间。
+        帧由 renderer.js 从 assets/animations/stand/frame_NN.png 预加载后切换 src。
+        素材画布是 864×1157（已裁掉透明留白），尺寸由渲染进程按主进程下发的
+        角色宽度精确计算，不使用 object-fit，以免产生 letterbox 影响命中测试。
+      -->
+      <div id="character" class="character">
+        <img id="frame" class="frame" alt="" draggable="false" />
+      </div>
+
+      <!--
+        属性面板：光标悬停在桌宠上时显示，位置在桌宠**下方**。
+        高度由主进程下发（见 STATS_ZONE_PX），且窗口尺寸里已经为它预留了空间，
+        因此它不会盖住角色、也不会被角色盖住。
+        目前只有心情值一项，后续属性往 stats-body 里加即可。
+      -->
+      <div id="stats-panel" class="stats-panel" hidden>
+        <div class="stats-body">
+          <div class="stat-row">
+            <span class="stat-name">心情</span>
+            <div class="stat-bar" role="progressbar" aria-label="心情值">
+              <div id="mood-fill" class="stat-bar-fill"></div>
+            </div>
+            <span id="mood-value" class="stat-value">100</span>
+          </div>
+          <div id="mood-tier" class="stat-note">心情很好</div>
+        </div>
+      </div>
+
+      <div id="offline" class="offline" hidden>宿主离线</div>
+    </div>
+
+    <script src="renderer.js"></script>
+  </body>
+</html>

@@ -1,0 +1,16 @@
+# pnpm 工作区配置。
+#
+# 目前本包**没有**需要安装的依赖：
+#   · 宿主半侧只用 Node 内置模块与 DSH 宿主提供的 @deepseek-ai/* （peer，由宿主注入）；
+#   · 桌宠半侧只用 Electron 与 Web 标准能力。
+# 刻意不引入任何第三方运行时依赖，减少供应链面与发布体积。
+#
+# 将来若引入带原生构建脚本的依赖，记得在这里放行（pnpm 11 起不再读 package.json 的 pnpm 字段）：
+#
+#   allowBuilds:
+#     some-package: true
+#
+# 注意：Electron **不**通过 npm 安装，它必须装在工作区之外，
+# 见 README 的『环境约束』与 scripts/dev/install-electron.mjs。
+packages:
+  - .
