@@ -24,8 +24,9 @@ const settings = require('./settings')
  * 三个模块全部加载成功。所以动作定义、闲置语音、心情算法只有一份，
  * 不会出现"宿主与桌宠各写一套、慢慢漂移"的问题。
  *
- * 注意心情只用了 `initialMood` / `applyDecay` / `applyPet` / `moodTier` ——
- * 不再需要 `normalizeMood`，因为心情不落盘，不存在"读到的脏数据要规整"这回事。
+ * 注意心情只用了 `initialMood` / `applyDrift` / `applyPet` / `applyActionReward` /
+ * `moodTier` —— 不再需要 `normalizeMood`，因为心情不落盘，
+ * 不存在"读到的脏数据要规整"这回事。
  */
 const {
   STANDING_ACTION_ID,
@@ -66,12 +67,14 @@ const {
  * 睡眠现在只有一条触发路径：**随机池抽中**（见 actions-library.js）。
  */
 const {
-  applyDecay,
+  applyDrift,
   applyPet,
   applyActionReward,
   initialMood,
   moodTier,
-  MOOD_DECAY_INTERVAL_MS,
+  MOOD_DRIFT_INTERVAL_MS,
+  MOOD_DRIFT_MIN,
+  MOOD_DRIFT_MAX,
   MOOD_GAIN_PER_PET_MIN,
   MOOD_GAIN_PER_PET_MAX,
   MOOD_GAIN_PER_ACTION_MIN,
@@ -1035,22 +1038,26 @@ function pushAffectionToRenderer() {
 }
 
 /**
- * 心情定时器：周期性结算衰减并推送。
+ * 心情定时器：周期性结算**随机漂移**并推送。
  *
- * 注意这里**不是**"每 3 分钟减 1"的定时器 —— 那会在休眠/挂起后漏掉衰减。
- * 这里只是每隔 MOOD_TICK_MS 调一次 applyDecay，由它按真实流逝时间补算，
- * 所以 tick 间隔与衰减间隔无关，取多少都不会算错。
+ * 用户指定：每 **5 分钟**心情随机变化 **−40 ~ +50** 点（原来是每 3 分钟 −1）。
  *
- * 衰减基准只在本进程生命周期内推进（心情不落盘），因此重启即回到满值。
+ * 注意这里**不是**"每 5 分钟结算一次"的定时器 —— 那会在休眠/挂起后漏掉周期。
+ * 这里只是每隔 MOOD_TICK_MS 调一次 `applyDrift`，由它按真实流逝时间补算
+ * **跨过的每一个周期**（每周期独立取随机值），所以 tick 间隔与漂移间隔无关，
+ * 取多少都不会算错。
+ *
+ * 心情不落盘，所以结算基准只在本进程生命周期内推进，重启即回到满值。
  */
 function startMoodTicker() {
   if (moodTimer) return
   moodTimer = setInterval(() => {
     try {
-      const { state, decayed } = applyDecay(mood, Date.now())
+      const { state, delta, steps } = applyDrift(mood, Date.now())
       mood = state
-      if (decayed > 0 && TRACE) {
-        log(`[trace] 心情衰减 ${String(decayed)} 点 → ${String(Math.round(mood.value))}`)
+      if (steps > 0) {
+        const sign = delta >= 0 ? '+' : ''
+        log(`心情周期变化 ${String(steps)} 次，净 ${sign}${String(delta)} → ${String(Math.round(mood.value))}`)
       }
       pushMoodToRenderer()
     } catch (err) {
@@ -4330,18 +4337,54 @@ async function verifyIdleAndMood(check, wait, readLayout) {
     )
   }
 
-  // ---- 7b) 衰减：把时间戳往前推 3 个周期，结算后应当正好掉 3 点 ----
-  const beforeDecay = mood.value
-  mood = { value: mood.value, updatedAt: Date.now() - MOOD_DECAY_INTERVAL_MS * 3 }
-  const decayResult = applyDecay(mood, Date.now())
-  mood = decayResult.state
-  pushMoodToRenderer()
-  await wait(300)
-  const afterDecay = (await readState()).moodValue
+  // ---- 7b) 周期漂移：每 5 分钟随机变化 −40 ~ +50 ----
+  //
+  // ⚠️ 断言不能写"掉多少点" —— 变化量是随机的（可正可负），
+  // 所以这里验证的是**规则本身**：结算出的每个周期变化量都落在区间内、
+  // 净变化等于各周期之和（并且确实结算了预期的周期数）。
+  //
+  // 用一个**自己控制的随机源**来跑，才能既确定性又覆盖区间两端：
+  // 直接调 `applyDrift(mood, now, rand)`，rand 依次返回 0 / 0.5 / 0.999…
+  {
+    const now = Date.now()
+    const cases = [
+      { rand: 0, expect: MOOD_DRIFT_MIN, note: '下界' },
+      { rand: 0.999999, expect: MOOD_DRIFT_MAX, note: '上界' },
+      { rand: 0.5, expect: MOOD_DRIFT_MIN + Math.floor((MOOD_DRIFT_MAX - MOOD_DRIFT_MIN + 1) / 2), note: '中位' },
+    ]
+    let allOk = true
+    const details = []
+    for (const c of cases) {
+      const start = { value: 50, updatedAt: now - MOOD_DRIFT_INTERVAL_MS }
+      const r = applyDrift(start, now, () => c.rand)
+      const ok = r.steps === 1 && r.delta === c.expect
+      if (!ok) allOk = false
+      details.push(`${c.note}: 变化 ${String(r.delta)}（期望 ${String(c.expect)}）`)
+    }
+    check('每 5 分钟的随机变化量落在 −40 ~ +50（含两端）', allOk, details.join('；'))
+  }
+
+  {
+    // 跨 3 个周期：应当结算 3 次，且净变化是三次之和（都在区间内）。
+    const now = Date.now()
+    const start = { value: 50, updatedAt: now - MOOD_DRIFT_INTERVAL_MS * 3 }
+    const r = applyDrift(start, now)
+    const inRange = r.steps === 3 && r.delta >= MOOD_DRIFT_MIN * 3 && r.delta <= MOOD_DRIFT_MAX * 3
+    check(
+      '跨 3 个周期会结算 3 次（不是只算一次）',
+      inRange,
+      `steps=${String(r.steps)}，净变化 ${String(r.delta)}（应在 ${String(MOOD_DRIFT_MIN * 3)}~${String(MOOD_DRIFT_MAX * 3)} 内）`,
+    )
+    // 把状态写回，后续断言用它的真实值。
+    mood = { value: 60, updatedAt: Date.now() }
+    pushMoodToRenderer()
+    await wait(300)
+  }
+
   check(
-    '每过 3 分钟掉 1 点（跨 3 个周期掉 3 点）',
-    afterDecay === beforeDecay - 3,
-    `心情 ${String(beforeDecay)} → ${String(afterDecay)}（期望 ${String(beforeDecay - 3)}）`,
+    '周期漂移的间隔是 5 分钟',
+    MOOD_DRIFT_INTERVAL_MS === 5 * 60 * 1000,
+    `MOOD_DRIFT_INTERVAL_MS=${String(MOOD_DRIFT_INTERVAL_MS)}`,
   )
 
   // ---- 8) 悬停移开后收起面板 ----

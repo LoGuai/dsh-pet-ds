@@ -12,6 +12,9 @@ import assert from 'node:assert/strict'
 
 import {
   MOOD_DECAY_INTERVAL_MS,
+  MOOD_DRIFT_INTERVAL_MS,
+  MOOD_DRIFT_MIN,
+  MOOD_DRIFT_MAX,
   MOOD_GAIN_PER_PET_MIN,
   MOOD_GAIN_PER_PET_MAX,
   MOOD_GAIN_PER_ACTION_MIN,
@@ -21,6 +24,7 @@ import {
   MOOD_MIN,
   applyActionReward,
   applyDecay,
+  applyDrift,
   applyPet,
   clampMood,
   initialMood,
@@ -52,7 +56,7 @@ function test(name, fn) {
 }
 
 const T0 = 1_700_000_000_000
-const MIN = MOOD_DECAY_INTERVAL_MS
+const MIN = MOOD_DRIFT_INTERVAL_MS
 
 test('初始值为满值 100', () => {
   assert.equal(MOOD_INITIAL, 100)
@@ -68,49 +72,87 @@ test('启动即满值：新会话不受上一会话影响', () => {
   assert.equal(initialMood(T0 + 999999).value, 100)
 })
 
-test('不足一个周期不衰减', () => {
-  const { state, decayed } = applyDecay(initialMood(T0), T0 + MIN - 1)
-  assert.equal(decayed, 0)
+/*
+ * 周期漂移（用户指定：每 5 分钟随机变化 −40 ~ +50）。
+ *
+ * ⚠️ 下面这些用例一律**注入确定的随机源**（第三个参数）。
+ * 漂移量是随机的，不注入就没法断言具体数值 —— 而"跨几个周期、
+ * 余数怎么留"这些算术必须能确定性验证。
+ * 区间本身的边界由后面专门的一组用例覆盖。
+ */
+test('不足一个周期不结算', () => {
+  const { state, delta, steps } = applyDrift(initialMood(T0), T0 + MIN - 1, () => 0)
+  assert.equal(steps, 0)
+  assert.equal(delta, 0)
   assert.equal(state.value, 100)
 })
 
-test('恰好一个周期衰减 1 点', () => {
-  const { state, decayed } = applyDecay(initialMood(T0), T0 + MIN)
-  assert.equal(decayed, 1)
-  assert.equal(state.value, 99)
+test('恰好一个周期结算一次（rand=0 → 取下界 −40）', () => {
+  const { state, delta, steps } = applyDrift(initialMood(T0), T0 + MIN, () => 0)
+  assert.equal(steps, 1)
+  assert.equal(delta, MOOD_DRIFT_MIN)
+  assert.equal(state.value, 100 + MOOD_DRIFT_MIN) // 60
 })
 
-test('跨多个周期一次算清（不逐周期循环）', () => {
-  const { state, decayed } = applyDecay(initialMood(T0), T0 + MIN * 7)
-  assert.equal(decayed, 7)
-  assert.equal(state.value, 93)
+test('跨多个周期就结算多次（每次独立取随机值）', () => {
+  // rand 固定 0 → 每次都取 −40；7 个周期 → −280，但会被夹到 0。
+  const { steps } = applyDrift(initialMood(T0), T0 + MIN * 7, () => 0)
+  assert.equal(steps, 7)
+  // 换个不会撞到下限的组合：起点 100、每周期 +50 → 夹在 100。
+  const up = applyDrift({ value: 0, updatedAt: T0 }, T0 + MIN * 2, () => 0.999999)
+  assert.equal(up.steps, 2)
+  assert.equal(up.state.value, 100, '两次 +50 应当到上限 100')
 })
 
 test('余数留到下次，不被抹平', () => {
-  // 走 2.5 个周期：只结算 2 点，updatedAt 停在 2 个周期处。
-  const { state } = applyDecay(initialMood(T0), T0 + Math.floor(MIN * 2.5))
-  assert.equal(state.value, 98)
+  // 走 2.5 个周期：只结算 2 次，updatedAt 停在 2 个周期处。
+  const { state, steps } = applyDrift(initialMood(T0), T0 + Math.floor(MIN * 2.5), () => 0)
+  assert.equal(steps, 2)
   assert.equal(state.updatedAt, T0 + MIN * 2)
-  // 再走 0.5 个周期就正好凑满第 3 个。
-  const second = applyDecay(state, T0 + MIN * 3)
-  assert.equal(second.decayed, 1)
-  assert.equal(second.state.value, 97)
+  // 再走 0.5 个周期就正好凑满第 3 次。
+  const second = applyDrift(state, T0 + MIN * 3, () => 0)
+  assert.equal(second.steps, 1)
 })
 
-test('长时间离线（模拟重启）也只算一次', () => {
-  // 离线 1 小时 = 20 个周期。
-  const { state } = applyDecay(initialMood(T0), T0 + 60 * 60 * 1000)
-  assert.equal(state.value, 80)
-})
-
-test('衰减不会低于 0', () => {
-  const { state } = applyDecay(initialMood(T0), T0 + MIN * 500)
+test('长时间离线会补算每一个跨过的周期（模拟被挂起）', () => {
+  // 离线 1 小时 = 12 个周期，全部按 −40 算 → 夹到 0。
+  const { state, steps } = applyDrift(initialMood(T0), T0 + 60 * 60 * 1000, () => 0)
+  assert.equal(steps, 12, '1 小时应当结算 12 个 5 分钟周期')
   assert.equal(state.value, MOOD_MIN)
 })
 
-test('结算到 0 之后继续过时间仍然停在 0', () => {
-  const { state } = applyDecay({ value: 0, updatedAt: T0 }, T0 + MIN * 10)
-  assert.equal(state.value, 0)
+test('漂移不会越过下限 0', () => {
+  const { state } = applyDrift(initialMood(T0), T0 + MIN * 500, () => 0)
+  assert.equal(state.value, MOOD_MIN)
+})
+
+test('漂移不会越过上限 100', () => {
+  const { state } = applyDrift({ value: 95, updatedAt: T0 }, T0 + MIN, () => 0.999999)
+  assert.equal(state.value, MOOD_MAX, '95 + 50 应当夹到 100')
+})
+
+test('结算到 0 之后继续过时间：可能被抬起来，也可能仍为 0', () => {
+  // 取下界 −40：一直是 0。
+  assert.equal(applyDrift({ value: 0, updatedAt: T0 }, T0 + MIN * 10, () => 0).state.value, 0)
+  // 取上界 +50：从 0 涨到 50（这正是"不再是单调衰减"的体现）。
+  assert.equal(applyDrift({ value: 0, updatedAt: T0 }, T0 + MIN, () => 0.999999).state.value, 50)
+})
+
+test('漂移区间是 −40 ~ +50，且含两端', () => {
+  assert.equal(MOOD_DRIFT_MIN, -40)
+  assert.equal(MOOD_DRIFT_MAX, 50)
+  assert.equal(pickGainInRange(MOOD_DRIFT_MIN, MOOD_DRIFT_MAX, () => 0), -40)
+  assert.equal(pickGainInRange(MOOD_DRIFT_MIN, MOOD_DRIFT_MAX, () => 0.999999), 50)
+  for (let i = 0; i < 2000; i += 1) {
+    const v = pickGainInRange(MOOD_DRIFT_MIN, MOOD_DRIFT_MAX)
+    assert.ok(Number.isInteger(v) && v >= -40 && v <= 50, `越界 ${String(v)}`)
+  }
+})
+
+test('漂移周期是 5 分钟', () => {
+  assert.equal(MOOD_DRIFT_INTERVAL_MS, 5 * 60 * 1000)
+  // 旧名保留为别名，避免外部引用找不到。
+  assert.equal(MOOD_DECAY_INTERVAL_MS, MOOD_DRIFT_INTERVAL_MS)
 })
 
 /*
@@ -133,17 +175,21 @@ test('互动不会超过 100', () => {
   assert.equal(gained, 2)
 })
 
-test('互动前会先结算衰减', () => {
-  // 过了 4 个周期：100 → 96，再加 10 → 100（夹住）。
-  const { state, decayed } = applyPet(initialMood(T0), T0 + MIN * 4, 10)
-  assert.equal(decayed, 4)
-  assert.equal(state.value, 100)
+test('互动前会先结算到期的漂移', () => {
+  /*
+   * 过了 4 个周期（rand=0 → 每次 −40）：100 −160 → 夹到 0，再加 10 → 10。
+   *
+   * 这条同时验证了"先结算漂移、再加点击值"这个顺序 ——
+   * 若顺序反了（先加后结算），结果会是 100 + 10 = 100 → 再 −160 → 0。
+   */
+  const { state } = applyPet(initialMood(T0), T0 + MIN * 4, 10, () => 0)
+  assert.equal(state.value, 10, '先被漂移压到 0，再加 10')
 })
 
-test('互动在低心情时同样先算衰减', () => {
-  const { state } = applyPet({ value: 30, updatedAt: T0 }, T0 + MIN * 3, 10)
-  // 30 - 3 + 10 = 37
-  assert.equal(state.value, 37)
+test('互动在中间心情时同样先算漂移', () => {
+  // rand=0.5 → 每次 +5；过 3 个周期 = +15，再加 10 → 55。
+  const { state } = applyPet({ value: 30, updatedAt: T0 }, T0 + MIN * 3, 10, () => 0.5)
+  assert.equal(state.value, 55)
 })
 
 // ---------------------------------------------------------------- 随机区间（用户指定）
@@ -202,14 +248,13 @@ test('applyActionReward 缺省 gain 时自己从区间取', () => {
   assert.ok(seen.size > 1, `取值应当有变化，实际只有 ${[...seen].join(',')}`)
 })
 
-test('applyActionReward 同样会先结算衰减，且不超上限', () => {
-  // 过了 4 个周期：100 → 96，再加 10~30 → 夹到 100。
-  const { state, decayed } = applyActionReward(initialMood(T0), T0 + MIN * 4)
-  assert.equal(decayed, 4)
+test('applyActionReward 同样先结算漂移，且不超上限', () => {
+  // rand=0.999999 → 每次 +50；过 4 个周期 → 夹在 100，再加 10~30 仍是 100。
+  const { state } = applyActionReward(initialMood(T0), T0 + MIN * 4, null, () => 0.999999)
   assert.equal(state.value, MOOD_MAX)
-  // 低心情时按显式值精确相加。
-  const mid = applyActionReward({ value: 30, updatedAt: T0 }, T0 + MIN * 3, 20)
-  assert.equal(mid.state.value, 47) // 30 - 3 + 20
+  // 显式 gain 时按"漂移后 + gain"精确相加：rand=0.5 → 每周期 +5。
+  const mid = applyActionReward({ value: 30, updatedAt: T0 }, T0 + MIN * 3, 20, () => 0.5)
+  assert.equal(mid.state.value, 65) // 30 + 15 + 20
 })
 
 test('clampMood 夹取与容错', () => {
@@ -240,47 +285,57 @@ test('心情档位边界', () => {
   assert.equal(moodTier(0), 'sad')
 })
 
-test('周期性互动的综合场景（固定 gain 时净持平）', () => {
-  // 模拟：起始满值，每 3 分钟掉 1，途中每 30 分钟点一次、每次固定加 10。
-  let state = initialMood(T0)
-  let now = T0
-  for (let i = 0; i < 10; i += 1) {
-    now += 30 * 60 * 1000 // 30 分钟
-    state = applyDecay(state, now).state
-    state = applyPet(state, now, 10).state
-  }
-  // 每 30 分钟掉 10 点、加 10 点 → 净持平，应当仍在满值附近。
-  assert.equal(state.value, 100)
-})
-
-test('周期性互动的综合场景（真实随机 gain 时缓慢下滑但不崩）', () => {
+test('周期性综合场景：漂移取中位时心情回升到上限', () => {
   /*
-   * 点击加心情改为随机 3~10 后的**真实**行为：
-   * 每 30 分钟衰减 10 点，而点击期望只加 6.5 点（(3+10)/2），
-   * 所以长期是**净下降**的 —— 这是改区间的自然结果，不是 bug。
+   * 模拟：每 30 分钟结算一次（= 6 个 5 分钟周期），每 30 分钟点一次固定 +10。
+   * rand=0.5 → 每次漂移 +5，6 次 = +30；点击 +10 → 每 30 分钟净 +40 → 很快封顶。
    *
-   * 这里断言的是"下降得平缓、且始终在合法范围内"，而不是某个精确值
-   * （随机数不可复现，断言精确值只会变成偶发失败）。
+   * 这条说明**新机制下心情长期是回升的**（区间正的多 10 点，平均每次 +5），
+   * 与旧的"每 3 分钟 −1 单调衰减"完全相反。
    */
   let state = initialMood(T0)
   let now = T0
-  for (let i = 0; i < 20; i += 1) {
+  const mid = () => 0.5
+  for (let i = 0; i < 10; i += 1) {
     now += 30 * 60 * 1000
-    state = applyDecay(state, now).state
-    state = applyPet(state, now).state
+    state = applyDrift(state, now, mid).state
+    state = applyPet(state, now, 10, mid).state
   }
-  // 20 轮：最容易出现的量级是每轮净 -3~-4，即 100 附近降到 20~40。
-  assert.ok(state.value >= MOOD_MIN, `不应低于下限，实际 ${String(state.value)}`)
-  assert.ok(
-    state.value <= MOOD_MAX,
-    `不应超过上限，实际 ${String(state.value)}`,
-  )
-  assert.ok(
-    state.value < MOOD_INITIAL,
-    `长期应当下滑（每 30 分钟衰减 10、点击期望只加 6.5），实际 ${String(state.value)}`,
-  )
-  // 20 轮最多也就掉这么多；掉光了说明衰减或夹取算错了。
-  assert.ok(state.value > 0, `20 轮内不该掉到 0，实际 ${String(state.value)}`)
+  assert.equal(state.value, MOOD_MAX, '每 30 分钟净 +40，10 轮后应当封顶')
+})
+
+test('周期性综合场景：漂移取最负值时心情被压到下限', () => {
+  // 只结算、不点击，rand=0 → 每次 −40，心情一路掉到 0 并停住。
+  let state = initialMood(T0)
+  let now = T0
+  for (let i = 0; i < 10; i += 1) {
+    now += 30 * 60 * 1000
+    state = applyDrift(state, now, () => 0).state
+  }
+  assert.equal(state.value, MOOD_MIN)
+})
+
+test('周期性综合场景（真实随机源）：始终落在 [0,100] 且不崩', () => {
+  /*
+   * 用真实 Math.random 跑长程，断言的是**不变式**而不是具体数值
+   * （随机序列不可复现，断言精确值只会变成偶发失败）：
+   *  · 心情始终在 [0, 100]；
+   *  · 漂移确实有升有降（不是单调）。
+   */
+  let state = initialMood(T0)
+  let now = T0
+  let sawUp = false
+  let sawDown = false
+  for (let i = 0; i < 500; i += 1) {
+    now += 5 * 60 * 1000
+    const before = state.value
+    const r = applyDrift(state, now)
+    state = r.state
+    if (state.value > before) sawUp = true
+    if (state.value < before) sawDown = true
+    assert.ok(state.value >= MOOD_MIN && state.value <= MOOD_MAX, `越界 ${String(state.value)}`)
+  }
+  assert.ok(sawUp && sawDown, `漂移应当有升有降，实际 up=${String(sawUp)} down=${String(sawDown)}`)
 })
 
 console.log(`\n结果：${String(passed)}/${String(passed + failed)} 通过`)
