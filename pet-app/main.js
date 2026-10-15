@@ -1040,9 +1040,10 @@ function pushAffectionToRenderer() {
 /**
  * 心情定时器：周期性结算**随机漂移**并推送。
  *
- * 用户指定：每 **5 分钟**心情随机变化 **−40 ~ +50** 点（原来是每 3 分钟 −1）。
+ * 用户指定：每 **10 分钟**心情随机变化 **−40 ~ +50** 点
+ * （演变：每 3 分钟 −1 → 每 5 分钟随机 −40~+50 → 每 10 分钟随机 −40~+50）。
  *
- * 注意这里**不是**"每 5 分钟结算一次"的定时器 —— 那会在休眠/挂起后漏掉周期。
+ * 注意这里**不是**"每 10 分钟结算一次"的定时器 —— 那会在休眠/挂起后漏掉周期。
  * 这里只是每隔 MOOD_TICK_MS 调一次 `applyDrift`，由它按真实流逝时间补算
  * **跨过的每一个周期**（每周期独立取随机值），所以 tick 间隔与漂移间隔无关，
  * 取多少都不会算错。
@@ -4337,7 +4338,7 @@ async function verifyIdleAndMood(check, wait, readLayout) {
     )
   }
 
-  // ---- 7b) 周期漂移：每 5 分钟随机变化 −40 ~ +50 ----
+  // ---- 7b) 周期漂移：每 10 分钟随机变化 −40 ~ +50 ----
   //
   // ⚠️ 断言不能写"掉多少点" —— 变化量是随机的（可正可负），
   // 所以这里验证的是**规则本身**：结算出的每个周期变化量都落在区间内、
@@ -4361,7 +4362,7 @@ async function verifyIdleAndMood(check, wait, readLayout) {
       if (!ok) allOk = false
       details.push(`${c.note}: 变化 ${String(r.delta)}（期望 ${String(c.expect)}）`)
     }
-    check('每 5 分钟的随机变化量落在 −40 ~ +50（含两端）', allOk, details.join('；'))
+    check('每 10 分钟的随机变化量落在 −40 ~ +50（含两端）', allOk, details.join('；'))
   }
 
   {
@@ -4382,8 +4383,8 @@ async function verifyIdleAndMood(check, wait, readLayout) {
   }
 
   check(
-    '周期漂移的间隔是 5 分钟',
-    MOOD_DRIFT_INTERVAL_MS === 5 * 60 * 1000,
+    '周期漂移的间隔是 10 分钟',
+    MOOD_DRIFT_INTERVAL_MS === 10 * 60 * 1000,
     `MOOD_DRIFT_INTERVAL_MS=${String(MOOD_DRIFT_INTERVAL_MS)}`,
   )
 
