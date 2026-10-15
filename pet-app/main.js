@@ -125,6 +125,19 @@ const SIZE_HINT = clampNumber(Number(readArg('size') ?? 240), 80, 1200)
  * 用户可以在右键菜单里随时切换，所以不能在启动后继续读这个常量。
  */
 const TOPMOST_DEFAULT_ARG = readArg('topmost') !== 'false'
+
+/**
+ * 余额"告急"阈值（元）。由宿主用 `--low-balance=` 下发（源头是插件配置
+ * `lowBalanceThreshold`），桌宠只拿这个数来判断面板配色。
+ *
+ * 之所以由宿主下发而不是桌宠自己定：阈值是**用户配置**，宿主是配置的唯一来源；
+ * 桌宠侧再写一份默认值只是"拿不到下发值时的兜底"。
+ */
+const LOW_BALANCE_THRESHOLD = (() => {
+  const raw = Number(readArg('low-balance'))
+  return Number.isFinite(raw) && raw >= 0 ? raw : 10
+})()
+
 const SELFTEST = process.argv.includes('--selftest')
 /** `--test-drag-follow`：验证主进程跟随式拖拽与布局/尺寸（见 runDragFollowTest）。 */
 const TEST_DRAG_FOLLOW = process.argv.includes('--test-drag-follow')
@@ -711,8 +724,22 @@ async function pollLoop() {
       //
       // 测试模式下若有状态覆盖值，就**不要**把轮询结果推下去 —— 否则宿主的真实状态
       // 会在几十毫秒内把注入的状态顶掉（闲置语音的门控测试就被这一点坑过）。
-      if (win && !win.isDestroyed() && !testStateOverride) {
-        win.webContents.send('pet:state', state)
+      //
+      // ⚠️ 但**余额必须照常转发**：测试覆盖的是"工作档位"这类行为状态，
+      // 而余额面板是常驻显示、依赖真实数据的。若连余额一起挡掉，
+      // 余额面板在整个自测里永远是 `--`，从没被真正画过。
+      if (win && !win.isDestroyed()) {
+        if (testStateOverride) {
+          if ('balance' in state) {
+            win.webContents.send('pet:state', {
+              v: state.v,
+              seq: state.seq,
+              balance: state.balance,
+            })
+          }
+        } else {
+          win.webContents.send('pet:state', state)
+        }
       }
     } else {
       consecutiveFailures += 1
@@ -862,6 +889,13 @@ ipcMain.handle('pet:get-initial', () => ({
   bubbleArea: bubbleAreaFor(logicalWidth),
   /** 底部属性面板区高度（CSS 像素）。留出这块空间，面板才不会被角色盖住。 */
   statsZone: statsZoneFor(logicalWidth),
+  /**
+   * 余额面板区高度（CSS 像素）。**常驻区域**，在角色区与属性面板区之间。
+   * 单独预留是"余额面板与属性面板不遮挡"的结构性保证。
+   */
+  balanceZone: balanceZoneFor(logicalWidth),
+  /** 余额低于此值时面板转为"告急"配色。 */
+  lowBalanceThreshold: LOW_BALANCE_THRESHOLD,
   /** 气泡字号（CSS 像素）。与气泡区一起随桌宠等比缩放。 */
   bubbleFont: bubbleFontFor(logicalWidth),
 
@@ -1240,6 +1274,30 @@ function statsZoneFor(petWidth) {
   return Math.round(bubbleFontFor(petWidth) * STATS_ZONE_FONT_RATIO)
 }
 
+/**
+ * 余额面板区高度 = 面板字号 × 这个系数。**常驻**，不随悬停显示/隐藏而变。
+ *
+ * 用户要求"api 监控需要在桌宠下方有一个独立的显示面板（不加入到属性面板中）
+ * 并且始终显示，在属性面板显示时二者不能有遮挡"。
+ *
+ * 做到"不遮挡"的方式**不是**去算两块面板的间距，而是**在窗口高度里各自预留一块
+ * 独立区域**：从下往上依次是「属性面板区 → 余额区 → 角色区 → 气泡区」。
+ * 于是：
+ *  · 余额面板常驻在余额区里，永远看得见；
+ *  · 属性面板只在悬停时出现在**它自己那块**预留区里，不占额外空间；
+ *  · 两者由**流布局**排开，窗口被系统量化时多出的余量只落在气泡区 ——
+ *    所以几何上不可能重叠，也不需要在显示时重新排版（否则会抖）。
+ *
+ * 比例 2.2 是"一行数字"需要的高度：比属性面板（4 行，7.0）矮得多。
+ * 必须与 renderer.js 里的同名常量一致。
+ */
+const BALANCE_ZONE_FONT_RATIO = 2.2
+
+/** 余额面板区高度（CSS 像素）。 */
+function balanceZoneFor(petWidth) {
+  return Math.round(bubbleFontFor(petWidth) * BALANCE_ZONE_FONT_RATIO)
+}
+
 /** 由角色宽度算出气泡区高度。 */
 function bubbleAreaFor(petWidth) {
   return Math.round(clampNumber(petWidth, 80, 1200) * BUBBLE_AREA_RATIO)
@@ -1266,7 +1324,14 @@ function boundsForWidth(petWidth) {
   const width = Math.round(clampNumber(petWidth, 80, 1200))
   return {
     width,
-    height: petHeightFor(width) + bubbleAreaFor(width) + statsZoneFor(width),
+    /*
+     * 自下而上的堆叠顺序（与 index.html 里的 DOM 顺序一致）：
+     *   气泡区（吃掉所有余量）+ 角色区 + 余额区 + 属性面板区。
+     *
+     * 余额区与属性面板区**各自独立预留**，这是"两者不遮挡"的结构性保证。
+     */
+    height:
+      petHeightFor(width) + bubbleAreaFor(width) + balanceZoneFor(width) + statsZoneFor(width),
   }
 }
 
@@ -1956,11 +2021,13 @@ async function verifyLayoutAndResize(check, wait) {
         const img = document.getElementById('frame')
         const area = document.querySelector('.bubble-area')
         const stats = document.getElementById('stats-panel')
+        const balance = document.getElementById('balance-panel')
         const r = (el) => { const b = el.getBoundingClientRect(); return { top: b.top, bottom: b.bottom, height: b.height, width: b.width, left: b.left, right: b.right } }
         const cs = getComputedStyle(bubble)
         const areaRect = r(area)
         const charRect = r(char)
         const statsRect = r(stats)
+        const balanceRect = balance ? r(balance) : null
         return {
           innerHeight: window.innerHeight,
           innerWidth: window.innerWidth,
@@ -1973,6 +2040,17 @@ async function verifyLayoutAndResize(check, wait) {
           statsZoneHeight: stats.style.height,
           statsHidden: stats.hidden,
           statsVisibleRect: stats.hidden ? null : statsRect,
+          /*
+           * 余额面板：**常驻**，所以永远有几何（不像属性面板会 hidden）。
+           * 这两个矩形是"两者不遮挡"断言的依据 ——
+           * 与其去算间距，不如直接比较矩形是否相交。
+           */
+          balanceRect,
+          balanceZonePx: balance ? parseFloat(balance.style.height) || 0 : 0,
+          balanceText: (document.getElementById('balance-value') || {}).textContent || '',
+          balanceNoteText: (document.getElementById('balance-note') || {}).textContent || '',
+          balanceIsLow: balance ? Boolean(balance.querySelector('.balance-body.is-low')) : false,
+          balanceIsError: balance ? Boolean(balance.querySelector('.balance-body.is-error')) : false,
           // 下面这组键名与 __petTestLayoutDiag 保持一致，便于复用同一批断言。
           statsZonePx: parseFloat(stats.style.height) || 0,
           characterRect: charRect,
@@ -2056,10 +2134,14 @@ async function verifyLayoutAndResize(check, wait) {
     await wc.executeJavaScript('window.__petTestForceStats(true)', true)
     await wait(120)
     const [bw, bh] = win.getSize()
-    // 窗口高 = 角色区 + 气泡区 + 属性面板区。
+    // 窗口高 = 气泡区 + 角色区 + 余额区 + 属性面板区（余额面板是常驻区，见 boundsForWidth）。
     // 容差给 8px：**Electron 实际做出来的窗口比请求值大**（实测请求 240x431 得到 243x434，
     // 视口 246x432），因此不能按请求值逐像素断言。
-    const expectedH = petHeightFor(presetWidth) + bubbleAreaFor(presetWidth) + statsZoneFor(presetWidth)
+    const expectedH =
+      petHeightFor(presetWidth) +
+      bubbleAreaFor(presetWidth) +
+      balanceZoneFor(presetWidth) +
+      statsZoneFor(presetWidth)
     check(
       `尺寸 ${String(presetWidth)}：窗口尺寸正确`,
       applied !== null && Math.abs(bw - presetWidth) <= Math.max(4, Math.round(presetWidth * 0.06)) && Math.abs(bh - expectedH) <= 8,
@@ -2068,14 +2150,41 @@ async function verifyLayoutAndResize(check, wait) {
 
     const l2 = await readLayout()
 
-    // 关键 0：**角色 + 面板的总高恰好等于视口高**。
-    // 这是"面板永远紧贴角色、且不会被推出窗口"的结构性保证。
+    /*
+     * 关键 0：**角色 + 余额区 + 属性面板区 恰好填满视口**。
+     * 这是"三块区域各占其位、谁也盖不住谁"的结构性保证。
+     *
+     * ⚠️ 加入余额区之前这里断言的是"角色底 + 面板高 = 视口高"；
+     * 余额面板成为常驻区之后必须把它算进去，否则这条会必然失败。
+     */
     const actualStatsH = l2.panelRect.height
+    const actualBalanceH = l2.balanceRect ? l2.balanceRect.height : 0
     check(
-      `尺寸 ${String(presetWidth)}：角色底 + 面板高 = 视口高`,
-      Math.abs(l2.characterRect.bottom + actualStatsH - l2.innerHeight) <= 2,
-      `角色底 ${l2.characterRect.bottom.toFixed(0)} + 面板 ${actualStatsH.toFixed(0)} = ${(l2.characterRect.bottom + actualStatsH).toFixed(0)}，视口高 ${String(l2.innerHeight)}`,
+      `尺寸 ${String(presetWidth)}：角色底 + 余额区 + 面板高 = 视口高`,
+      Math.abs(l2.characterRect.bottom + actualBalanceH + actualStatsH - l2.innerHeight) <= 2,
+      `角色底 ${l2.characterRect.bottom.toFixed(0)} + 余额 ${actualBalanceH.toFixed(0)}` +
+        ` + 面板 ${actualStatsH.toFixed(0)} = ${(l2.characterRect.bottom + actualBalanceH + actualStatsH).toFixed(0)}` +
+        `，视口高 ${String(l2.innerHeight)}`,
     )
+
+    /*
+     * 关键 0-2：**属性面板显示时与余额面板不遮挡**。
+     *
+     * 这一段是在"按住属性面板显示"的前提下量的（上面调了 __petTestForceStats(true)），
+     * 而且是在**三个档位**（140/240/320）各量一次 —— 遮挡往往只在某个档位出现。
+     */
+    if (l2.balanceRect) {
+      check(
+        `尺寸 ${String(presetWidth)}：余额面板与属性面板不遮挡`,
+        l2.balanceRect.bottom <= l2.panelRect.top + 2,
+        `余额底 ${l2.balanceRect.bottom.toFixed(1)} ≤ 属性面板顶 ${l2.panelRect.top.toFixed(1)}`,
+      )
+      check(
+        `尺寸 ${String(presetWidth)}：余额面板在角色下方`,
+        l2.balanceRect.top >= l2.characterRect.bottom - 2,
+        `余额顶 ${l2.balanceRect.top.toFixed(1)} ≥ 角色底 ${l2.characterRect.bottom.toFixed(1)}`,
+      )
+    }
     check(
       `尺寸 ${String(presetWidth)}：角色顶 = 气泡区高`,
       Math.abs(l2.characterRect.top - l2.bubbleArea.height) <= 2,
@@ -2119,10 +2228,26 @@ async function verifyLayoutAndResize(check, wait) {
       Math.abs(l2.panelRect.height - statsZoneFor(presetWidth)) <= 6,
       `面板高 ${l2.panelRect.height.toFixed(1)}，期望约 ${String(statsZoneFor(presetWidth))}px`,
     )
+    /*
+     * 属性面板在**余额面板**下方（而不是直接贴角色）。
+     *
+     * ⚠️ 加入常驻余额面板后这条判据必须改：角色与属性面板之间现在隔着余额面板。
+     * 判据从"面板顶 = 角色底"改成"面板顶 = 余额底"。
+     */
     check(
-      `尺寸 ${String(presetWidth)}：属性面板在角色区下方（不重叠）`,
-      Math.abs(l2.panelRect.top - l2.characterRect.bottom) <= 2,
-      `面板顶 ${l2.panelRect.top.toFixed(1)}，角色底 ${l2.characterRect.bottom.toFixed(1)}`,
+      `尺寸 ${String(presetWidth)}：属性面板在余额面板下方（不重叠）`,
+      l2.balanceRect
+        ? Math.abs(l2.panelRect.top - l2.balanceRect.bottom) <= 2
+        : Math.abs(l2.panelRect.top - l2.characterRect.bottom) <= 2,
+      l2.balanceRect
+        ? `面板顶 ${l2.panelRect.top.toFixed(1)}，余额底 ${l2.balanceRect.bottom.toFixed(1)}`
+        : `面板顶 ${l2.panelRect.top.toFixed(1)}，角色底 ${l2.characterRect.bottom.toFixed(1)}`,
+    )
+    // 并确认属性面板**仍然在角色下方**（整条链是 角色 → 余额 → 属性面板）。
+    check(
+      `尺寸 ${String(presetWidth)}：属性面板仍在角色区下方`,
+      l2.panelRect.top >= l2.characterRect.bottom - 2,
+      `面板顶 ${l2.panelRect.top.toFixed(1)} ≥ 角色底 ${l2.characterRect.bottom.toFixed(1)}`,
     )
 
     // 这一条就是"调节尺寸后气泡位置自适应"的可验证形式。
@@ -2223,9 +2348,12 @@ async function verifyLayoutDuringDrag(check, wait) {
     `面板高 ${before.panelRect ? before.panelRect.height.toFixed(1) : 'null'}，期望约 ${String(expectedZoneBefore)}`,
   )
   check(
-    '属性面板紧贴角色下方（含拖拽前）',
-    before.panelRect !== null && Math.abs(before.panelRect.top - before.characterRect.bottom) <= 2,
-    `面板顶 ${before.panelRect ? before.panelRect.top.toFixed(1) : 'null'}，角色底 ${before.characterRect.bottom.toFixed(1)}`,
+    '属性面板紧贴余额面板下方（含拖拽前）',
+    before.panelRect !== null &&
+      before.balanceRect !== null &&
+      Math.abs(before.panelRect.top - before.balanceRect.bottom) <= 2,
+    `面板顶 ${before.panelRect ? before.panelRect.top.toFixed(1) : 'null'}，` +
+      `余额底 ${before.balanceRect ? before.balanceRect.bottom.toFixed(1) : 'null'}`,
   )
   log(
     `参考-拖拽前几何: 内 ${String(before.innerWidth)}x${String(before.innerHeight)}` +
@@ -2296,9 +2424,12 @@ async function verifyLayoutDuringDrag(check, wait) {
       `面板高 ${s.panelRect ? s.panelRect.height.toFixed(1) : 'null'}，期望约 ${String(expectedZone)}`,
     )
     check(
-      `拖动中第 ${String(i + 1)} 次采样：面板紧贴角色下方`,
-      s.panelRect !== null && Math.abs(s.panelRect.top - s.characterRect.bottom) <= 2,
-      `面板顶 ${s.panelRect ? s.panelRect.top.toFixed(1) : 'null'}，角色底 ${s.characterRect.bottom.toFixed(1)}`,
+      `拖动中第 ${String(i + 1)} 次采样：面板紧贴余额面板下方`,
+      s.panelRect !== null &&
+        s.balanceRect !== null &&
+        Math.abs(s.panelRect.top - s.balanceRect.bottom) <= 2,
+      `面板顶 ${s.panelRect ? s.panelRect.top.toFixed(1) : 'null'}，` +
+        `余额底 ${s.balanceRect ? s.balanceRect.bottom.toFixed(1) : 'null'}`,
     )
   }
 
@@ -4143,7 +4274,30 @@ async function verifyIdleAndMood(check, wait, readLayout) {
   }
 
   // ---- 6) 属性面板：悬停显示 ----
-  // 直接把光标放在角色中心（命中测试因此为"命中"），面板应当显示。
+  /*
+   * ⚠️ 必须**先移出、再移入**，不能只派一次"移到角色中心"。
+   *
+   * 渲染进程的 mousemove 处理是 `setStatsVisible(hit)`，而那个函数有
+   * `if (visible === statsVisible) return` 的前置守卫。自测跑到这里时，
+   * 光标**可能已经停在角色上**（前面点部位的用例留下的），于是这次合成
+   * mousemove 计算出的 hit 仍是 true、状态没变化 → 面板不会被显示，
+   * 断言就偶发地报 `statsVisible=false`。实测五次里出现一次。
+   *
+   * 所以先派一次"移到窗口左上角"（透明处，必然不命中）把状态压成 false，
+   * 再派一次"移到角色中心" —— 这样 hit 从 false 变 true，必然触发显示。
+   */
+  {
+    const leaveProbe = await wc.executeJavaScript('window.__petTestProbeClient(2, 2)', true)
+    await wc.executeJavaScript(
+      `window.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 2, clientY: 2 }))`,
+      true,
+    )
+    await wait(200)
+    // 顺带确认这个"移出点"确实是透明处 —— 否则上面的推理不成立。
+    if (leaveProbe && leaveProbe.opaque === true) {
+      log('参考-悬停用例：窗口左上角 (2,2) 竟是角色像素，移出可能无效')
+    }
+  }
   const layout = await readLayout()
   const cx = Math.round(layout.frame.left + layout.frame.width / 2)
   const cy = Math.round(layout.frame.top + layout.frame.height / 2)
@@ -4303,6 +4457,101 @@ async function verifyIdleAndMood(check, wait, readLayout) {
         hovered2.affectionRowTop < hovered2.moodRowTop,
       `好感行 top=${String(hovered2.affectionRowTop)} < 心情行 top=${String(hovered2.moodRowTop)}`,
     )
+
+    // ---- 7b-2) 余额面板：常驻 + 与属性面板不遮挡 ----
+    /*
+     * 用户要求："api 监控需要在桌宠下方有一个独立的显示面板（不加入到属性面板中）
+     * 并且始终显示，在属性面板显示时二者不能有遮挡"。
+     *
+     * 这一段是在**属性面板正在显示**（hovered2 就是悬停时读的）的前提下检查的 ——
+     * 这正是"两者同时出现"的最坏情况。
+     *
+     * "不遮挡"的判据用**矩形是否相交**，而不是算间距：
+     * 相交与否是客观的，而"间距 ≥ N"这种判据要挑 N，反而容易漏。
+     */
+    {
+      const b = hovered2.balanceRect
+      const s = hovered2.statsVisibleRect
+      check(
+        '余额面板常驻（即使属性面板也在显示）',
+        Boolean(b) && b.height > 0 && b.width > 0,
+        b ? `余额面板 ${String(Math.round(b.width))}x${String(Math.round(b.height))} @ top=${b.top.toFixed(1)}` : '拿不到余额面板几何',
+      )
+      check(
+        '余额面板在角色下方',
+        Boolean(b) && b.top >= hovered2.character.bottom - 2,
+        b ? `余额顶 ${b.top.toFixed(1)} ≥ 角色底 ${hovered2.character.bottom.toFixed(1)}` : '拿不到余额面板几何',
+      )
+      check(
+        '余额面板显示的是余额数字（或明确的占位/错误态）',
+        typeof hovered2.balanceText === 'string' &&
+          (hovered2.balanceText.startsWith('¥') ||
+            hovered2.balanceText.startsWith('$') ||
+            hovered2.balanceText === '--'),
+        `面板文本=${JSON.stringify(hovered2.balanceText)}，说明=${JSON.stringify(hovered2.balanceNoteText)}`,
+      )
+      const overlap = Boolean(b && s) && b.top < s.bottom && s.top < b.bottom
+      check(
+        '属性面板显示时与余额面板不遮挡（矩形不相交）',
+        Boolean(b && s) && !overlap,
+        b && s
+          ? `余额 ${b.top.toFixed(1)}~${b.bottom.toFixed(1)}，属性面板 ${s.top.toFixed(1)}~${s.bottom.toFixed(1)}` +
+            `（${overlap ? '相交' : '不相交'}）`
+          : '拿不到其中一个面板的几何',
+      )
+      check(
+        '余额面板紧贴属性面板上方（两者由流布局排开，中间不留缝）',
+        Boolean(b && s) && Math.abs(b.bottom - s.top) <= 2,
+        b && s ? `余额底 ${b.bottom.toFixed(1)} vs 属性面板顶 ${s.top.toFixed(1)}` : '拿不到几何',
+      )
+
+      /*
+       * 余额面板的**三种渲染状态**。
+       *
+       * 为什么要单独注入：自测里宿主状态被 `testStateOverride` 整体挡住，
+       * 余额通道也拿不到数据 —— 面板一直显示 `--`，渲染逻辑等于没被画过。
+       * `__petTestSetBalance` 绕开状态通道直接喂快照。
+       */
+      const normal = await wc.executeJavaScript(
+        `window.__petTestSetBalance({ source: 'apikey', isAvailable: true, currency: 'CNY', total: '23.45', granted: '3.45', toppedUp: '20.00', fetchedAt: Date.now(), stale: false, error: null })`,
+        true,
+      )
+      check(
+        '余额充足时显示金额、不告急',
+        normal && normal.text === '¥23.45' && normal.isLow === false && normal.isError === false,
+        `文本=${JSON.stringify(normal && normal.text)}，告急=${String(normal && normal.isLow)}，错误=${String(normal && normal.isError)}`,
+      )
+
+      const low = await wc.executeJavaScript(
+        `window.__petTestSetBalance({ source: 'apikey', isAvailable: true, currency: 'CNY', total: '3.20', granted: '0.00', toppedUp: '3.20', fetchedAt: Date.now(), stale: false, error: null })`,
+        true,
+      )
+      check(
+        '余额低于阈值时转为告急配色',
+        low && low.text === '¥3.20' && low.isLow === true,
+        `文本=${JSON.stringify(low && low.text)}，告急=${String(low && low.isLow)}，说明=${JSON.stringify(low && low.note)}`,
+      )
+
+      const errState = await wc.executeJavaScript(
+        `window.__petTestSetBalance({ source: 'apikey', isAvailable: false, currency: 'CNY', total: '8.00', granted: '0.00', toppedUp: '8.00', fetchedAt: Date.now(), stale: true, error: '凭据 DEEPSEEK_API_KEY 未配置' })`,
+        true,
+      )
+      check(
+        '取数失败时保留上次金额并标灰（不是清成 --）',
+        errState && errState.text === '¥8.00' && errState.isError === true && errState.isLow === false,
+        `文本=${JSON.stringify(errState && errState.text)}，错误=${String(errState && errState.isError)}，说明=${JSON.stringify(errState && errState.note)}`,
+      )
+
+      const empty = await wc.executeJavaScript('window.__petTestSetBalance(null)', true)
+      check(
+        '没有任何数据时显示 --（而不是 ¥0.00）',
+        empty && empty.text === '--' && empty.isError === true,
+        `文本=${JSON.stringify(empty && empty.text)}`,
+      )
+
+      // 还原成宿主下发的真实状态（把注入清掉，让后续用例看到真实值）。
+      await wc.executeJavaScript('window.__petTestSetBalance(null)', true)
+    }
 
     /*
      * 面板要装得下四行内容（好感行 / 爱心行 / 心情行 / 档位行）。

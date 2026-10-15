@@ -21,6 +21,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import { BridgeServer } from './bridge-server.js'
 import { Supervisor } from './supervisor.js'
 import { electronHelpText, resolveElectron } from './electron-locate.js'
+import { createBalanceFetcher } from './balance.js'
 import { PROTOCOL_VERSION } from '../shared-core/protocol.js'
 
 export const name = 'dsh-pet-ds'
@@ -53,8 +54,14 @@ const DEFAULTS = Object.freeze({
   size: 260,
   /** 置顶。 */
   alwaysOnTop: true,
-  /** 余额低于该值时进入"告急"档（后续阶段使用）。 */
+  /** 余额低于该值时进入"告急"档（面板据此变色）。 */
   lowBalanceThreshold: 10,
+  /** 余额缓存与刷新周期（秒）。余额接口有限流，不能轮询太密。 */
+  refreshSeconds: 60,
+  /** DeepSeek API 地址（可在自建/代理场景覆盖）。 */
+  apiBase: 'https://api.deepseek.com',
+  /** 读取 API Key 的凭据键名。 */
+  credential: 'DEEPSEEK_API_KEY',
 })
 
 /**
@@ -110,6 +117,7 @@ export function apply(ctx, config) {
     stateUrl: bridge.stateUrl(),
     commandUrl: bridge.commandUrl(),
     debug: cfg.debug,
+    lowBalanceThreshold: cfg.lowBalanceThreshold,
     log: say,
   })
 
@@ -141,6 +149,50 @@ export function apply(ctx, config) {
       say(`回环接口异常：${errText(err)}`)
     }
   })()
+
+  // ---------------------------------------------------------------- 余额监控
+  /*
+   * 取数、缓存、错误处理都在 balance.js 里；这里只负责"定时拉一次并写进桥接快照"。
+   *
+   * 之所以定时任务放在宿主：桌宠是独立进程，它只通过回环接口读快照，
+   * 从不直接碰 API Key（见 balance.js 开头的说明）。
+   *
+   * 刷新节奏与缓存时长一致（默认 60 秒）。`fresh: true` 强制刷新仅供
+   * `DSHpet_balance` 工具用（用户显式要"现在这个数"时才绕过缓存）。
+   */
+  const balance = createBalanceFetcher({
+    refreshSeconds: cfg.refreshSeconds,
+    apiBase: cfg.apiBase,
+    credential: cfg.credential,
+    log: say,
+  })
+
+  /** 拉一次余额并写入桥接快照。失败也写 —— 快照里带 error，界面能显示"取数失败"。 */
+  const refreshBalance = async (fresh = false) => {
+    try {
+      const snap = await balance.get({
+        resolveCredential: (nameKey) => ctx.credentials.resolve(nameKey),
+        fresh,
+      })
+      bridge.setBalance(snap)
+      return snap
+    } catch (err) {
+      // balance.get() 本身不 reject，这里是防御性的兜底。
+      say(`余额刷新异常（已忽略）：${errText(err)}`)
+      return balance.peek()
+    }
+  }
+
+  // 按 refreshSeconds 周期刷新。
+  const balanceTimer = setInterval(() => {
+    void refreshBalance()
+  }, Math.max(5, cfg.refreshSeconds) * 1000)
+  // 立刻拉一次（不阻塞 apply）。
+  void refreshBalance()
+
+  ctx.effect(() => () => {
+    clearInterval(balanceTimer)
+  })
 
   /** 自动启动桌宠。所有异常就地吞掉，不影响宿主。 */
   const autoStartPet = () => {
@@ -343,7 +395,7 @@ export function apply(ctx, config) {
     defineTool({
       name: 'DSHpet_balance',
       description:
-        '查询 DeepSeek 账户余额（桌宠显示的同一个数）。注意：本阶段尚未接入余额数据源，会明确返回"未接入"。',
+        '查询 DeepSeek 账户余额（桌宠下方那个常驻面板显示的同一个数）。默认走缓存（约 60 秒），fresh=true 可强制立即重新查询。',
       parameters: {
         fresh: { type: 'boolean', description: 'true=忽略缓存立即重新查询' },
       },
@@ -351,17 +403,35 @@ export function apply(ctx, config) {
         schema: { type: 'object', additionalProperties: true },
         render: (_args, value) => [{ type: 'text', text: String(value?.summary ?? '') }],
       },
-      execute: async () => {
-        // 不返回任何模拟数据 —— 余额接入放到后续阶段，此处如实说明。
+      execute: async (input) => {
+        const fresh = input?.fresh === true
+        const snap = await refreshBalance(fresh)
+        const ok = Boolean(snap) && snap.error === null && snap.fetchedAt > 0
+
+        if (!ok) {
+          return {
+            ok: false,
+            summary: [
+              `余额查询失败：${snap?.error ?? '未知原因'}`,
+              `数据源：凭据 ${cfg.credential} → GET ${cfg.apiBase}/user/balance`,
+              `（凭据未配置时请在 DSH 里设置 ${cfg.credential}）`,
+            ].join('\n'),
+            balance: snap ?? null,
+          }
+        }
+
+        const symbol = snap.currency === 'USD' ? '$' : '¥'
+        const low = Number(snap.total) < cfg.lowBalanceThreshold
         return {
-          ok: false,
-          implemented: false,
+          ok: true,
           summary: [
-            '余额查询尚未接入（阶段 4 只实现最小框架）。',
-            '计划的两条数据来源：',
-            '  1) DSH 原生账号服务 ctx.deepseekAccount.getBalance()（需已登录 DeepSeek 账号）',
-            '  2) 用凭据 DEEPSEEK_API_KEY 直查官方 /user/balance 接口',
+            `余额 ${symbol}${snap.total} ${snap.currency}` +
+              (low ? `（低于阈值 ${String(cfg.lowBalanceThreshold)}）` : ''),
+            `其中赠金 ${snap.granted}、充值 ${snap.toppedUp}`,
+            `取数时间 ${new Date(snap.fetchedAt).toLocaleString()}` +
+              (snap.stale ? '（已过期）' : ''),
           ].join('\n'),
+          balance: snap,
         }
       },
     }),
@@ -411,6 +481,21 @@ function normalizeConfig(raw, say) {
 
   const threshold = Number(input.lowBalanceThreshold)
   if (Number.isFinite(threshold) && threshold >= 0) out.lowBalanceThreshold = threshold
+
+  /*
+   * 余额相关配置。
+   *
+   * `refreshSeconds` 有下限 5 秒：余额接口有限流，配成 0.5 秒会把自己打限流，
+   * 而且界面上根本看不出差别。上限 3600 秒（1 小时）—— 再长就不像"监控"了。
+   */
+  const refresh = Number(input.refreshSeconds)
+  if (Number.isFinite(refresh) && refresh >= 5 && refresh <= 3600) out.refreshSeconds = Math.floor(refresh)
+  else if (input.refreshSeconds !== undefined) {
+    say(`配置 refreshSeconds 非法（${String(input.refreshSeconds)}），已回落默认 ${String(DEFAULTS.refreshSeconds)}`)
+  }
+
+  if (typeof input.apiBase === 'string' && input.apiBase.trim()) out.apiBase = input.apiBase.trim()
+  if (typeof input.credential === 'string' && input.credential.trim()) out.credential = input.credential.trim()
 
   for (const key of ['autoStart', 'debug', 'stopOnUnload', 'alwaysOnTop']) {
     if (typeof input[key] === 'boolean') out[key] = input[key]

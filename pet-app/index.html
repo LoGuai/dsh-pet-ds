@@ -36,6 +36,24 @@
       </div>
 
       <!--
+        余额面板：**常驻**显示在桌宠下方（用户要求）。
+
+        与属性面板是**两块独立的区域**：
+          · 这块在 HTML 里位于角色区之后、属性面板之前，且窗口高度里
+            为它单独预留了 BALANCE_ZONE_FONT_RATIO × 字号 的高度；
+          · 属性面板也有自己单独预留的区域。
+        两者由流布局排开 —— 所以属性面板显示时不会盖住它，也不需要在
+        悬停时重新排版（那会抖）。
+      -->
+      <div id="balance-panel" class="balance-panel">
+        <div class="balance-body">
+          <span class="balance-label">API 余额</span>
+          <span id="balance-value" class="balance-value">--</span>
+          <span id="balance-note" class="balance-note"></span>
+        </div>
+      </div>
+
+      <!--
         属性面板：光标悬停在桌宠上时显示，位置在桌宠**下方**。
         高度由主进程下发（见 STATS_ZONE_PX），且窗口尺寸里已经为它预留了空间，
         因此它不会盖住角色、也不会被角色盖住。

@@ -35,6 +35,13 @@ export class Supervisor {
     this.stateUrl = options.stateUrl
     this.commandUrl = options.commandUrl
     this.debug = Boolean(options.debug)
+    /**
+     * 余额"告急"阈值（元），下发给桌宠用 `--low-balance=` 接收。
+     * 阈值是**用户配置**，宿主是唯一来源；桌宠不自己定。
+     */
+    this.lowBalanceThreshold = Number.isFinite(Number(options.lowBalanceThreshold))
+      ? Number(options.lowBalanceThreshold)
+      : 10
     this._log = options.log ?? (() => {})
     /**
      * 桌宠进程退出时的回调。
@@ -113,7 +120,14 @@ export class Supervisor {
 
       // 用标准 Electron 的参数形式：`electron <应用目录>`。
       // 注意不要用 `--app=<dir>` —— 那不是 Electron 的参数，会把应用目录当未知开关丢掉。
-      const args = [this.petAppDir, ...extraArgs]
+      //
+      // 余额告急阈值随启动参数下发：桌宠据此给面板换配色。
+      // 放在应用目录**之后**，因为 Electron 要求应用路径必须是第一个非开关参数。
+      const args = [
+        this.petAppDir,
+        `--low-balance=${String(this.lowBalanceThreshold)}`,
+        ...extraArgs,
+      ]
       if (this.debug) args.push('--enable-logging')
 
       const child = spawn(this.electronPath, args, {

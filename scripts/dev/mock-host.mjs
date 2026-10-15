@@ -69,6 +69,8 @@ const supervisor = new Supervisor({
   stateUrl: bridge.stateUrl(),
   commandUrl: bridge.commandUrl(),
   debug,
+  // 与 bridge 的阈值保持一致；Supervisor 会把它作为 `--low-balance=` 传给桌宠。
+  lowBalanceThreshold: 10,
   log,
   onPetExit: ({ code, signal }) => {
     // 桌宠进程没了。生产环境里这很正常（用户自己关掉了桌宠），宿主不必收尾；
@@ -116,6 +118,30 @@ log(`Electron: ${electron ? `${electron.path}（${electron.source}）` : '未找
 
 // 放一条初始状态，方便桌宠一上来就能显示点东西。
 bridge.setWorkStatus('idle', '')
+
+/**
+ * 假余额 —— 用来目视确认下方那个**常驻余额面板**是通的。
+ *
+ * 开发宿主没有真实 API Key（也不该有），所以这里给一个明确的**假值**。
+ * 生产环境下余额由宿主的 balance.js 从官方接口取，与这里无关。
+ *
+ * `--no-balance` 可以不给余额，用来看"取不到数时面板显示 `--`"的样子。
+ */
+if (!argv.includes('--no-balance')) {
+  const now = Date.now()
+  bridge.setBalance({
+    source: 'apikey',
+    isAvailable: true,
+    currency: 'CNY',
+    total: '23.45',
+    granted: '3.45',
+    toppedUp: '20.00',
+    fetchedAt: now,
+    stale: false,
+    error: null,
+  })
+  log('已放一条假余额（¥23.45）；用 --no-balance 可关掉')
+}
 
 if (startPet && electron) {
   const result = supervisor.start(petArgs)

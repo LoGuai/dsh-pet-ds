@@ -186,6 +186,78 @@ body.dragging {
   border-top-color: rgba(235, 245, 255, 0.97);
 }
 
+/* ---------------------------------------------------------------- 余额面板 */
+
+/*
+ * 常驻余额面板：显示在角色区下方的**独立区域**里（不属于属性面板）。
+ *
+ * 与 .stats-panel 的关系：两者各占窗口里预留的一块区域，由流布局排开，
+ * 所以属性面板显示时不会盖住余额面板（用户要求）。
+ * 高度由脚本按档位设置，这里不写死。
+ */
+.balance-panel {
+  position: relative;
+  flex: 0 0 auto;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* 与属性面板一致：不接收鼠标事件，否则会在透明区域挡住桌面点击。 */
+  pointer-events: none;
+}
+
+.balance-body {
+  width: 88%;
+  /* 上下留白比属性面板小：这里只有一行内容。 */
+  padding: 3px 8px;
+  border-radius: 9px;
+  background: rgba(22, 30, 46, 0.82);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(120, 180, 255, 0.35);
+  font-family: "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 6px;
+  /* 数字用等宽数字，刷新时不会左右跳。 */
+  font-variant-numeric: tabular-nums;
+}
+
+.balance-label {
+  flex: 0 0 auto;
+  font-size: 0.85em;
+  opacity: 0.75;
+}
+
+.balance-value {
+  flex: 0 0 auto;
+  font-size: 1.15em;
+  font-weight: 600;
+  color: #7ee0ff;
+  /* 数值变化时轻微过渡，避免突变。 */
+  transition: color 260ms ease;
+}
+
+/* 余额低于阈值：转成告急配色。 */
+.balance-body.is-low {
+  border-color: rgba(255, 130, 130, 0.55);
+}
+.balance-body.is-low .balance-value {
+  color: #ff8a8a;
+}
+
+/* 取不到数（凭据未配置 / 网络失败）：淡化 + 灰色。 */
+.balance-body.is-error .balance-value {
+  color: #c8c8c8;
+  opacity: 0.8;
+}
+
+.balance-note {
+  flex: 0 0 auto;
+  font-size: 0.7em;
+  opacity: 0.6;
+}
+
 /* ---------------------------------------------------------------- 属性面板 */
 /*
  * 光标悬停在桌宠上时显示，位于桌宠**下方**。

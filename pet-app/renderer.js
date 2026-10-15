@@ -22,6 +22,9 @@ const bubbleText = document.getElementById('bubble-text')
 const offlineTag = document.getElementById('offline')
 const bubbleAreaEl = document.querySelector('.bubble-area')
 const statsPanel = document.getElementById('stats-panel')
+const balancePanel = document.getElementById('balance-panel')
+const balanceValueEl = document.getElementById('balance-value')
+const balanceNoteEl = document.getElementById('balance-note')
 const moodFill = document.getElementById('mood-fill')
 const moodValueEl = document.getElementById('mood-value')
 const moodTierEl = document.getElementById('mood-tier')
@@ -78,6 +81,18 @@ const STATS_ZONE_RATIO = 0.16
  * 表现为"窗口变了、立绘不变"，而且控制台没有任何报错。
  */
 const STATS_ZONE_FONT_RATIO = 7.0
+
+/**
+ * 余额面板区高度 = 面板字号 × 这个系数。**必须与 main.js 里的
+ * BALANCE_ZONE_FONT_RATIO 完全一致**。
+ *
+ * 余额面板是**常驻**的（用户要求），所以它占窗口里单独预留的一块区域，
+ * 而不是叠在别的东西上面。属性面板有它自己那块 —— 两者由流布局排开，
+ * 因此"属性面板显示时盖住余额面板"在几何上不可能发生。
+ *
+ * 比例 2.2 是"一行数字"需要的高度：比属性面板（4 行，7.0）矮得多。
+ */
+const BALANCE_ZONE_FONT_RATIO = 2.2
 
 /**
  * 长按多久才进入"被拎起来"。
@@ -1403,10 +1418,12 @@ function applyLayout(targetWidth) {
   // 避免"窗口被系统量化 → 字号跟着抖"。
   const font = Math.max(BUBBLE_FONT_MIN_PX, Math.round(targetWidth / FONT_WIDTH_DIVISOR))
 
-  // 面板区高度按字号算（与主进程同式），它是自下而上布局的第一块。
+  // 面板区高度按字号算（与主进程同式）。
   const statsH = Math.round(font * STATS_ZONE_FONT_RATIO)
-  // 角色拿到除面板之外的全部高度；宽度由素材宽高比反推。
-  const petH = Math.max(1, viewportH - statsH)
+  // 余额区也按字号算。它**常驻**，所以和属性面板一样要先从可用高度里扣掉。
+  const balanceH = Math.round(font * BALANCE_ZONE_FONT_RATIO)
+  // 角色拿到除两块面板之外的全部高度；宽度由素材宽高比反推。
+  const petH = Math.max(1, viewportH - statsH - balanceH)
   let petWidth = Math.round((petH * ASPECT_W) / ASPECT_H)
   let petHeight = petH
   // 不要宽于视口（否则立绘会被裁）。
@@ -1415,8 +1432,8 @@ function applyLayout(targetWidth) {
     petHeight = Math.round((petWidth * ASPECT_H) / ASPECT_W)
   }
   // 气泡区吃掉剩下的余量：它锚在顶部，变大也看不出来，而且不会影响
-  // "角色紧贴面板"这条不变量。
-  const bubbleHeight = Math.max(0, viewportH - petHeight - statsH)
+  // "角色紧贴余额面板、余额面板紧贴属性面板"这条不变量。
+  const bubbleHeight = Math.max(0, viewportH - petHeight - balanceH - statsH)
 
   /*
    * 防线：任何一个尺寸算成 NaN/0，写进样式都会被浏览器**静默忽略**，
@@ -1424,14 +1441,19 @@ function applyLayout(targetWidth) {
    * 这种情况极难从现象反推，所以这里直接拦下来并显式报警。
    */
   if (!Number.isFinite(petWidth) || !Number.isFinite(petHeight) || petWidth <= 0 || petHeight <= 0) {
-    console.error('布局计算出非法尺寸，已放弃本次布局', { petWidth, petHeight, font, statsH, viewportH })
+    console.error('布局计算出非法尺寸，已放弃本次布局', { petWidth, petHeight, font, statsH, balanceH, viewportH })
     return
   }
 
   // --- 应用 ---
-  // 面板是 flex 纵列的最后一项、角色紧贴它上方，两者靠**流布局**保证相邻：
-  // 无论 Windows 把窗口量化成多高，多出的余量都只会落在顶部气泡区。
+  // 三块区域是 flex 纵列的连续项：气泡区（吃掉余量）→ 角色区 → 余额区 → 属性面板区。
+  // 它们靠**流布局**依次相邻：无论 Windows 把窗口量化成多高，多出的余量
+  // 都只会落在顶部气泡区，所以"余额面板与属性面板不遮挡"是结构性成立的。
   if (bubbleAreaEl) bubbleAreaEl.style.height = `${String(bubbleHeight)}px`
+  if (balancePanel) {
+    balancePanel.style.height = `${String(balanceH)}px`
+    balancePanel.style.fontSize = `${String(font)}px`
+  }
   if (statsPanel) {
     statsPanel.style.height = `${String(statsH)}px`
     statsPanel.style.fontSize = `${String(font)}px`
@@ -1462,6 +1484,12 @@ async function boot() {
   try {
     const initial = await window.pet.getInitial()
     if (initial && initial.state) applyState(initial.state)
+    // 余额面板：阈值由主进程下发（源头是插件配置 lowBalanceThreshold）。
+    if (initial && Number.isFinite(initial.lowBalanceThreshold)) {
+      lowBalanceThreshold = initial.lowBalanceThreshold
+    }
+    // 首屏先画一次：宿主的第一份快照还没到，此时显示 `--` 而不是空白。
+    renderBalance()
     // 布局参数由主进程下发，渲染进程只读它们做布局，绝不回报自己的 innerWidth。
     if (initial) {
       applyLayout(initial.logicalWidth)
@@ -1597,6 +1625,12 @@ function applyState(state) {
 
 window.pet.on('pet:state', (state) => {
   try {
+    // 余额随每一份宿主快照一起到（宿主侧定时刷新，桌宠只是显示）。
+    if (state && 'balance' in state) {
+      balanceState = state.balance ?? null
+      hostOffline = false
+      renderBalance()
+    }
     applyState(state)
   } catch {
     // 忽略：单个状态处理失败不应让桌宠停止工作。
@@ -1605,6 +1639,9 @@ window.pet.on('pet:state', (state) => {
 
 window.pet.on('pet:offline', () => {
   offlineTag.hidden = false
+  // 宿主离线时把余额面板标灰（数字保留最后一次取到的值）。
+  hostOffline = true
+  renderBalance()
 })
 
 window.pet.on('pet:say', (payload) => {
@@ -2430,8 +2467,62 @@ const MOOD_TIER_TEXT = {
   sad: '不开心',
 }
 
-/** 把心情画到属性面板上。 */
-function renderMood() {
+/**
+ * 最近一次收到的余额快照（宿主下发）。
+ *
+ * 默认值是"还没拿到"：面板显示 `--`，而不是显示 `¥0.00` ——
+ * 后者会被误读成"余额真的空了"。这个区分很重要。
+ */
+let balanceState = null
+
+/** 余额低于多少算"告急"（着色用）。由宿主通过启动参数下发。 */
+let lowBalanceThreshold = 10
+
+/** 当前是否处于"宿主离线"状态（离线时余额面板标灰）。 */
+let hostOffline = false
+
+/** 把余额画到常驻面板上。 */
+function renderBalance() {
+  if (!balanceValueEl) return
+  const body = balancePanel ? balancePanel.querySelector('.balance-body') : null
+  const setClass = (name, on) => {
+    if (body) body.classList.toggle(name, on)
+  }
+
+  const snap = balanceState
+  // 还没有任何数据（宿主没推过 / 宿主离线）。
+  if (!snap) {
+    balanceValueEl.textContent = '--'
+    if (balanceNoteEl) balanceNoteEl.textContent = hostOffline ? '宿主离线' : ''
+    setClass('is-low', false)
+    setClass('is-error', true)
+    return
+  }
+
+  const currency = String(snap.currency ?? 'CNY')
+  const symbol = currency === 'USD' ? '$' : '¥'
+  const total = String(snap.total ?? '0.00')
+  const numeric = Number(total)
+
+  // 取数失败时**保留上一次的数字**（快照里带 error），只把配色改成灰/告急。
+  // 这样一次网络抖动不会让面板变成"--"，用户看到的数还是最近一次真实的。
+  balanceValueEl.textContent = `${symbol}${total}`
+
+  const hasError = typeof snap.error === 'string' && snap.error.length > 0
+  const low = Number.isFinite(numeric) && numeric < lowBalanceThreshold
+  setClass('is-low', low && !hasError)
+  setClass('is-error', hasError || hostOffline || snap.stale === true)
+
+  if (balanceNoteEl) {
+    if (hostOffline) balanceNoteEl.textContent = '宿主离线'
+    else if (hasError) balanceNoteEl.textContent = '取数失败'
+    else if (snap.stale === true) balanceNoteEl.textContent = '已过期'
+    else if (low) balanceNoteEl.textContent = '余额告急'
+    else balanceNoteEl.textContent = ''
+  }
+}
+
+/** 把心情画到属性面板上。 */function renderMood() {
   const value = Number.isFinite(moodState.value) ? moodState.value : 100
   if (moodFill) {
     moodFill.style.width = `${String(Math.max(0, Math.min(100, value)))}%`
@@ -2882,6 +2973,28 @@ window.__petTestForceEndDrag = () => {
 }
 
 /**
+ * 测试用：直接注入一份余额快照，验证面板渲染与配色。
+ *
+ * 为什么需要：余额正常情况下由宿主下发，而自测里"宿主状态"被 `testStateOverride`
+ * 整体挡住了（那是为了不让真实状态覆盖注入的状态）。结果余额面板在整个自测里
+ * 一直显示 `--`，**从没被真正画过** —— 渲染逻辑等于没测。
+ * 这个钩子绕开状态通道，直接喂一份快照给渲染函数。
+ *
+ * @param {object|null} snap 传 null 清空
+ */
+window.__petTestSetBalance = (snap) => {
+  balanceState = snap ?? null
+  if (snap && typeof snap.hostOffline === 'boolean') hostOffline = snap.hostOffline
+  renderBalance()
+  return {
+    text: balanceValueEl ? balanceValueEl.textContent : null,
+    note: balanceNoteEl ? balanceNoteEl.textContent : null,
+    isLow: balancePanel ? Boolean(balancePanel.querySelector('.balance-body.is-low')) : false,
+    isError: balancePanel ? Boolean(balancePanel.querySelector('.balance-body.is-error')) : false,
+  }
+}
+
+/**
  * 测试用：开关"容忍 buttons === 0"。
  *
  * 见 `tolerateButtonsZero` 的说明 —— 自测是合成拖拽，真实鼠标键没按下，
@@ -3031,6 +3144,14 @@ window.__petTestLayoutDiag = () => {
     characterRect: rect(character),
     frameRect: rect(frameEl),
     stageRect: rect(stage),
+    // 余额面板是**常驻**的，所以它的几何永远可量（不像属性面板会 hidden）。
+    // 断言"两面板不遮挡"要拿它和 panelRect 比，缺了它那些断言会读到 undefined。
+    balanceRect: rect(document.getElementById('balance-panel')),
+    balanceComputedHeight: (function () {
+      const el = document.getElementById('balance-panel')
+      return el ? getComputedStyle(el).height : null
+    })(),
+    balanceText: (document.getElementById('balance-value') || {}).textContent || '',
   }
 }
 
