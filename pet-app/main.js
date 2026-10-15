@@ -38,6 +38,9 @@ const {
   RANDOM_ACTION_RULES,
 } = require('../src/shared-core/actions.js')
 
+/** 对话台词库（右键菜单「对话」用）。 */
+const { pickDialogueLine, dialogueLineCount, DIALOGUE_LINES } = require('../src/shared-core/dialogue.js')
+
 /**
  * 闲置随机动作的触发规则 —— **从动作库里取**，这里不再自己写一份。
  *
@@ -1169,6 +1172,9 @@ ipcMain.on('pet:action-reward', (_event, actionId) => {
  *
  * 主进程只负责"把请求转给渲染进程" —— 动作的实际播放、以及播完回到待机，
  * 都在渲染进程里做（它才是管动画的一方）。这样播放状态只有一处，不会两边打架。
+ *
+ * `partId` 只在"触碰某部位"时出现：渲染进程据此从 `clickParts` 里取该部位的台词，
+ * 让**菜单触发与真的点那个位置**说同一句话。
  */
 function triggerActionFromMenu(actionId) {
   if (!win || win.isDestroyed()) return
@@ -1182,6 +1188,8 @@ function triggerActionFromMenu(actionId) {
       id: entry.id,
       label: entry.label,
       lines: findAction(entry.id)?.lines ?? [],
+      /** 触碰部位时为部位 id（可选）；渲染进程用它取部位台词。 */
+      partId: entry.partId ?? null,
       /** fromMenu=true 表示用户显式指定，随机动作调度要据此重置计时。 */
       fromMenu: true,
     })
@@ -1648,46 +1656,56 @@ ipcMain.on('pet:context-menu', () => {
   }))
 
   /**
-   * 动作子菜单：列出**所有**可执行的动作（含"站立（待机）"用于打断）。
+   * 动作子菜单。
    *
-   * 清单来自共享核心的 actionMenuEntries()，不在菜单里再写一遍 ——
-   * 新增动作时只需改 src/shared-core/actions.js 一处。
+   * 清单来自共享核心的 `actionMenuEntries()`，不在菜单里再写一遍 ——
+   * 新增动作时只改一处。
+   *
+   * 条目按 `group` 分三段（站立 / 动作 / 触碰部位），
+   * **组之间插分隔线**：十来个项目平铺在一起很难扫读，分组后一眼能看出
+   * "上面是整只桌宠的动作、下面是碰某个部位"。分隔线在这里生成，
+   * 而不是让共享核心返回 separator 项 —— 菜单是**平台相关**的表达，
+   * 不该混进跨端复用的数据里。
    */
-  const actionSubmenu = actionMenuEntries().map((entry) => ({
-    label: entry.label,
-    click: () => {
-      triggerActionFromMenu(entry.id)
-    },
-  }))
+  const actionEntries = actionMenuEntries()
+  const actionSubmenu = []
+  let lastGroup = null
+  for (const entry of actionEntries) {
+    if (lastGroup !== null && entry.group !== lastGroup) actionSubmenu.push({ type: 'separator' })
+    lastGroup = entry.group
+    actionSubmenu.push({
+      label: entry.label,
+      click: () => {
+        triggerActionFromMenu(entry.id)
+      },
+    })
+  }
 
-  /**
-   * 「点击部位」子菜单：列出每个部位的台词。
+  /*
+   * 用户要求：「说句话」改为「对话」，并且建一个专门的对话台词库。
    *
-   * 做成**不可点的清单**而不是"点一下就触发"的入口 —— 部位台词本来就是要靠
-   * 真的点角色身上那个位置才触发的，用菜单代点会掩盖"区域是否落在角色身上"
-   * 这个问题。列在这里只是方便查看与定稿文案。
+   * 每次点击**随机取一句**（避开上一句），而不是固定那一句"你好呀" ——
+   * 固定文案点两次就腻了，也体现不出人设。
+   *
+   * ⚠️ 刻意**不做成子菜单**：对话本来就是"点一下就听一句"的轻交互，
+   * 展开子菜单多一次点击，还得先扫一遍挑哪句 —— 那不是对话，是点播。
    */
-  const partSubmenu = CLICK_PARTS.map((part) => ({
-    label: `${part.label}：${part.lines.join(' / ') || '（未配台词）'}`,
-    enabled: false,
-  }))
+  let lastDialogueLine = null
 
   const menu = Menu.buildFromTemplate([
     {
-      label: '说句话',
+      label: '对话',
       click: () => {
-        if (win && !win.isDestroyed()) {
-          win.webContents.send('pet:say', { text: '你好呀，我是 DeepSeek 娘～', bubbleMs: 6000 })
-        }
+        if (!win || win.isDestroyed()) return
+        const line = pickDialogueLine(Math.random, lastDialogueLine)
+        lastDialogueLine = line
+        win.webContents.send('pet:say', { text: line, bubbleMs: 6000 })
       },
     },
+    { type: 'separator' },
     {
       label: '动作',
       submenu: actionSubmenu,
-    },
-    {
-      label: '点击部位',
-      submenu: partSubmenu,
     },
     {
       label: '尺寸',
@@ -4219,6 +4237,88 @@ async function verifyIdleAndMood(check, wait, readLayout) {
   const menuIds = await wc.executeJavaScript('actionCatalog.filter((a) => !a.standing).map((a) => a.id)', true)
   const sleepCount = Array.isArray(menuIds) ? menuIds.filter((id) => id === 'sleep').length : -1
   check('菜单里"睡觉"只出现一次（随机池与菜单项重叠已去重）', sleepCount === 1, `sleep 出现 ${String(sleepCount)} 次`)
+
+  /*
+   * ---- 5c) 右键菜单结构（用户要求重构过）----
+   *
+   * 用户要求：删掉独立的「点击部位」一栏，把点击互动并进「动作」栏、
+   * 命名为「触碰{部位}」。这几条断言把新结构钉住，
+   * 免得以后有人"顺手"改回旧结构或改掉命名格式。
+   */
+  {
+    const entries = actionMenuEntries()
+    const byGroup = {
+      standing: entries.filter((e) => e.group === 'standing'),
+      action: entries.filter((e) => e.group === 'action'),
+      part: entries.filter((e) => e.group === 'part'),
+    }
+    check(
+      '动作菜单含且仅含"站立"一项',
+      byGroup.standing.length === 1 && byGroup.standing[0].id === STANDING_ACTION_ID,
+      `standing 组：${byGroup.standing.map((e) => e.label).join('，')}`,
+    )
+    check(
+      '触碰部位已并入动作菜单（不再有独立的"点击部位"栏）',
+      byGroup.part.length === 4,
+      `part 组：${byGroup.part.map((e) => e.label).join('，')}`,
+    )
+    const expectedLabels = ['触碰头', '触碰胸', '触碰腹', '触碰腿']
+    const actualLabels = byGroup.part.map((e) => e.label)
+    check(
+      '触碰项命名为「触碰{部位}」',
+      JSON.stringify(actualLabels) === JSON.stringify(expectedLabels),
+      `实际=${JSON.stringify(actualLabels)}，期望=${JSON.stringify(expectedLabels)}`,
+    )
+    check(
+      '每个触碰项都带 partId（菜单触发要能取到该部位的台词）',
+      byGroup.part.every((e) => typeof e.partId === 'string' && e.partId.length > 0),
+      byGroup.part.map((e) => `${e.label}→${String(e.partId)}`).join('，'),
+    )
+    // 旧的部位动作名不该再出现在菜单里（它们已改名为「触碰XX」）。
+    const stale = ['摸头', '戳胸', '戳腹', '碰腿'].filter((old) =>
+      entries.some((e) => e.label === old),
+    )
+    check(
+      '旧的部位动作名已不再作为菜单项出现',
+      stale.length === 0,
+      stale.length === 0 ? '无残留' : `仍有：${stale.join('，')}`,
+    )
+    // partId 必须能在 clickParts 里查到，否则菜单触发取不到台词。
+    const dangling = byGroup.part.filter((e) => !CLICK_PARTS.some((p) => p.id === e.partId))
+    check(
+      '触碰项的 partId 都能在 clickParts 里查到',
+      dangling.length === 0,
+      dangling.length === 0 ? '全部可解析' : `查不到：${dangling.map((e) => String(e.partId)).join('，')}`,
+    )
+  }
+
+  /*
+   * ---- 5d) 对话台词库 ----
+   *
+   * 用户要求「说句话」改为「对话」，并建一个专门的对话台词库。
+   * 这里断言库可用 + 台词符合基本要求（非空、去重、长度可控）。
+   */
+  {
+    check(
+      '对话台词库非空且条数合理',
+      dialogueLineCount() >= 8,
+      `共 ${String(dialogueLineCount())} 句`,
+    )
+    const picked = pickDialogueLine()
+    check(
+      '随机取一句对话，取自库内',
+      typeof picked === 'string' && picked.length > 0 && DIALOGUE_LINES.includes(picked),
+      `取到：${JSON.stringify(picked)}`,
+    )
+    // 避重：连取两次不该一样（库里 15 句，撞车的概率极低，但仍用避重参数保证）。
+    const second = pickDialogueLine(Math.random, picked)
+    check(
+      '连取两次不会重复（避开上一句）',
+      second !== picked,
+      `${JSON.stringify(picked)} → ${JSON.stringify(second)}`,
+    )
+  }
+
 
   /*
    * ---- 5b) 随机动作库：随机池与"库"必须一致 ----

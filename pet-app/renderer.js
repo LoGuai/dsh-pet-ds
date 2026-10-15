@@ -1744,8 +1744,11 @@ function findCatalogAction(id) {
 
 /**
  * 播放一个动作。
+ *
  * @param {string} id
- * @param {{ fromMenu?: boolean }} [options]
+ * @param {{ fromMenu?: boolean, clickPart?: boolean, partId?: string|null }} [options]
+ *        `partId` —— 从菜单「触碰{部位}」触发时带上，用于取**该部位的台词**，
+ *        让"菜单触发"与"真的点那个位置"说同一句话。
  */
 async function playAction(id, options = {}) {
   const entry = actionCatalog.find((action) => action.id === id)
@@ -1825,7 +1828,14 @@ async function playAction(id, options = {}) {
   startPlanPlayback(id)
 
   // 台词：一次性动作配一句（占位符在 shared-core 里）。
-  if (entry && entry.lines && entry.lines[0]) showBubble(entry.lines[0], 'say', 5000)
+  //
+  // ⚠️ 从菜单「触碰{部位}」触发时（options.partId）要改用**该部位的台词** ——
+  // 素材 id（如 stomach）与部位 id（belly）并不同名，而且部位台词本来就定义在
+  // clickParts 里，所以按 partId 去那里取，而不是用动作自己的 lines。
+  const partDef = options.partId ? clickParts.find((p) => p.id === options.partId) : null
+  const bubbleLine = partDef && partDef.lines && partDef.lines[0] ? partDef.lines[0] : null
+  if (bubbleLine) showBubble(bubbleLine, 'say', 5000)
+  else if (entry && entry.lines && entry.lines[0]) showBubble(entry.lines[0], 'say', 5000)
 
   /*
    * 播完回到站立。时长按**播放计划**的长度算，而不是帧数 ——
@@ -2666,7 +2676,11 @@ window.pet.on('pet:affection', (payload) => {
 window.pet.on('pet:play-action', (payload) => {
   try {
     if (!payload || typeof payload.id !== 'string') return
-    void playAction(payload.id, { fromMenu: Boolean(payload.fromMenu) })
+    void playAction(payload.id, {
+      fromMenu: Boolean(payload.fromMenu),
+      // 触碰部位时带上 partId，让菜单触发也能说该部位的台词。
+      partId: typeof payload.partId === 'string' ? payload.partId : null,
+    })
   } catch (err) {
     console.warn('播放动作失败：', err)
   }

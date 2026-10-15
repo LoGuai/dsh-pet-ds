@@ -150,12 +150,14 @@ export const MENU_ONLY_ACTIONS = [
  * —— 否则同一句台词会在两处各写一份，迟早漂移。
  *
  * id 与素材目录名一致（`assets/animations/head` 等）。
+ * `partId` 指向 `CLICK_PARTS` 里的部位（**注意不必与 id 同名**：
+ * 部位 `belly` 的动画目录叫 `stomach`）。
  */
 export const PART_ACTIONS = [
-  { id: 'head', label: '摸头' },
-  { id: 'chest', label: '戳胸' },
-  { id: 'stomach', label: '戳腹' },
-  { id: 'leg', label: '碰腿' },
+  { id: 'head', partId: 'head', label: '摸头' },
+  { id: 'chest', partId: 'chest', label: '戳胸' },
+  { id: 'stomach', partId: 'belly', label: '戳腹' },
+  { id: 'leg', partId: 'leg', label: '碰腿' },
 ]
 
 /** 所有动作（查台词/定义用）。 */
@@ -174,20 +176,48 @@ export function randomActionIds() {
 /**
  * 右键菜单「动作」子菜单里的完整动作列表。
  *
- * 第一项不是一次性动作，而是"回到待机"—— 用于中途打断正在播的动作。
+ * 分三段（`group` 字段），菜单渲染时在**组之间插分隔线**，
+ * 免得十来项平铺在一起、分不清哪是哪：
+ *   · `standing` —— "站立（待机）"，用于中途打断正在播的动作；
+ *   · `action`   —— 随机池 + 仅菜单动作；
+ *   · `part`     —— 触碰各部位（用户要求从独立的"点击部位"栏挪进来，
+ *                   命名为「触碰{部位}」）。
  *
  * ⚠️ 必须**按 id 去重**：睡觉既在随机池里、又在仅菜单项里，
  * 不去重的话菜单里会出现两个"睡觉"。
  *
- * 也**不含点击互动动画**：那些是点击部位时自动播的，
- * 放进菜单只会让人困惑"点了没反应"。
+ * 需求变更说明：这里**曾经刻意不含**点击互动动画（理由是"点菜单看不出
+ * 区域是否落在角色身上"）。用户后来要求把它们并进动作栏，
+ * 于是加了 `partId` —— 从菜单触发时会走与点击**完全相同**的播放路径
+ * （动画 + 该部位的台词），功能上等价，只是入口多了一个。
  */
 export function actionMenuEntries() {
   const seen = new Set()
   const entries = [
-    { id: STANDING_ACTION_ID, label: '站立（待机）', standing: true },
-    ...RANDOM_ACTIONS.map((action) => ({ id: action.id, label: action.label, standing: false })),
-    ...MENU_ONLY_ACTIONS.map((action) => ({ id: action.id, label: action.label, standing: false })),
+    { id: STANDING_ACTION_ID, label: '站立（待机）', standing: true, group: 'standing' },
+    ...RANDOM_ACTIONS.map((action) => ({
+      id: action.id,
+      label: action.label,
+      standing: false,
+      group: 'action',
+    })),
+    ...MENU_ONLY_ACTIONS.map((action) => ({
+      id: action.id,
+      label: action.label,
+      standing: false,
+      group: 'action',
+    })),
+    ...PART_ACTIONS.map((action) => {
+      const part = findClickPart(action.partId)
+      return {
+        id: action.id,
+        // 用户指定的命名："触碰{部位}"。
+        label: `触碰${part ? part.label : action.label}`,
+        standing: false,
+        group: 'part',
+        partId: action.partId,
+      }
+    }),
   ]
   return entries.filter((entry) => {
     if (seen.has(entry.id)) return false
