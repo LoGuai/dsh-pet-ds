@@ -22,7 +22,7 @@ import { BridgeServer } from './bridge-server.js'
 import { Supervisor } from './supervisor.js'
 import { electronHelpText, resolveElectron } from './electron-locate.js'
 import { createBalanceFetcher } from './balance.js'
-import { buildBalanceAnnouncement } from '../shared-core/balance-announce.js'
+import { buildBalanceAnnouncement, shouldAnnounceBalance } from '../shared-core/balance-announce.js'
 import { PROTOCOL_VERSION } from '../shared-core/protocol.js'
 
 export const name = 'dsh-pet-ds'
@@ -215,14 +215,19 @@ export function apply(ctx, config) {
           currency: snap.currency,
         })
         /*
-         * ⚠️ 首次取数（lastBalanceTotal === null）**不播报**。
+         * 播不播由 `shouldAnnounceBalance()` 决定 —— 那是共享核心里的纯函数，
+         * 有单测逐种情形钉住。这里只负责照它的结论执行。
          *
-         * 理由：那一次没有"上一次余额"可比，"花掉了 ¥0" 是无意义的噪音，
-         * 而且桌宠刚启动就冒一句会显得突兀。从第二次起才有真实差值可报。
+         * 两种情况不播：**首次取数**（没有"上一次"可比）与**余额没变**
+         * （用户要求："如果 5 分钟内没有余额变化，则不播放提示"）。
+         * 注意**充值要播**：余额确实变了，不说的话用户会奇怪"钱怎么突然多了"。
          */
-        if (lastBalanceTotal !== null) {
+        const verdict = shouldAnnounceBalance({ prevTotal: lastBalanceTotal, nextTotal })
+        if (verdict.announce) {
           bridge.setMessage(ann.text)
-          say(`余额播报：${ann.text}（${ann.kind}，${String(ann.tier)} 档）`)
+          say(`余额播报：${ann.text}（${verdict.reason}，${String(ann.tier)} 档）`)
+        } else {
+          say(`跳过播报（${verdict.reason}）当前 ¥${snap.total}`)
         }
         if (Number.isFinite(nextTotal)) lastBalanceTotal = nextTotal
       }

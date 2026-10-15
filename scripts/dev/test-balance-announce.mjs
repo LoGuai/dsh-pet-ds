@@ -14,6 +14,7 @@ import {
   balanceTierOf,
   buildBalanceAnnouncement,
   formatMoney,
+  shouldAnnounceBalance,
 } from '../../src/shared-core/balance-announce.js'
 
 let passed = 0
@@ -199,6 +200,81 @@ test('非法 nextTotal 不产生 NaN 句子', () => {
   assert.ok(!r.text.includes('NaN'), `句子里不该出现 NaN：${r.text}`)
   assert.equal(r.remaining, 0)
   assert.equal(r.tier, 1)
+})
+
+// ---------------------------------------------------------------- 播不播（用户要求）
+
+/*
+ * 用户要求："如果 5 分钟内没有余额变化，则不播放提示。"
+ *
+ * 这组用例守住"桌宠不会变成复读机" —— 5 分钟的刷新周期里，
+ * 小额使用时余额经常一动不动，每次都播"花掉了¥0"纯属干扰。
+ */
+test('余额没变 → 不播报（reason=unchanged）', () => {
+  const v = shouldAnnounceBalance({ prevTotal: 68.49, nextTotal: 68.49 })
+  assert.equal(v.announce, false)
+  assert.equal(v.reason, 'unchanged')
+})
+
+test('余额变少 → 播报（reason=spent）', () => {
+  const v = shouldAnnounceBalance({ prevTotal: 68.49, nextTotal: 67.82 })
+  assert.equal(v.announce, true)
+  assert.equal(v.reason, 'spent')
+})
+
+test('余额变多（充值）→ 也要播报（reason=toppedUp）', () => {
+  /*
+   * ⚠️ 这条容易写错：充值时 `spent` 是 0，若判据写成 `spent > 0` 就会被静默跳过 ——
+   * 于是"钱怎么突然多了"完全没有提示。判据必须按**余额是否变化**（delta ≠ 0），
+   * 而不是"是否花了钱"。
+   */
+  const v = shouldAnnounceBalance({ prevTotal: 10, nextTotal: 60 })
+  assert.equal(v.announce, true)
+  assert.equal(v.reason, 'toppedUp')
+})
+
+test('首次取数 → 不播报（reason=first）', () => {
+  // 没有"上一次"可比，说"花掉了¥0"是无意义噪音。
+  for (const prev of [null, undefined, Number.NaN]) {
+    const v = shouldAnnounceBalance({ prevTotal: prev, nextTotal: 68.49 })
+    assert.equal(v.announce, false, `prevTotal=${String(prev)} 不该播报`)
+    assert.equal(v.reason, 'first')
+  }
+})
+
+test('极小变化也算"变了"（哪怕只有 0.01）', () => {
+  const v = shouldAnnounceBalance({ prevTotal: 68.49, nextTotal: 68.48 })
+  assert.equal(v.announce, true)
+  assert.equal(v.reason, 'spent')
+})
+
+test('余额归零也算变化', () => {
+  const v = shouldAnnounceBalance({ prevTotal: 5, nextTotal: 0 })
+  assert.equal(v.announce, true)
+  assert.equal(v.reason, 'spent')
+})
+
+test('shouldAnnounceBalance 与 buildBalanceAnnouncement 的 kind 保持一致', () => {
+  /*
+   * 两者不能各判一套：宿主用前者决定"播不播"、用后者生成"播什么"。
+   * 若判断口径不一致，就会出现"决定播、但句子说没花"这种自相矛盾。
+   *
+   * 对应关系：first/unchanged → kind 为 'same'；spent → 'spent'；toppedUp → 'toppedUp'。
+   */
+  const cases = [
+    { prev: null, next: 10, expectAnnounce: false, expectKind: 'same' },
+    { prev: 10, next: 10, expectAnnounce: false, expectKind: 'same' },
+    { prev: 10, next: 5, expectAnnounce: true, expectKind: 'spent' },
+    { prev: 10, next: 30, expectAnnounce: true, expectKind: 'toppedUp' },
+  ]
+  for (const c of cases) {
+    const v = shouldAnnounceBalance({ prevTotal: c.prev, nextTotal: c.next })
+    const ann = buildBalanceAnnouncement({ prevTotal: c.prev, nextTotal: c.next })
+    assert.equal(v.announce, c.expectAnnounce, `announce 不一致：${JSON.stringify(c)}`)
+    assert.equal(ann.kind, c.expectKind, `kind 不一致：${JSON.stringify(c)}`)
+    // 核心不变式：决定播报 ⇔ kind 不是 'same'。
+    assert.equal(v.announce, ann.kind !== 'same', `口径不一致：${JSON.stringify(c)}`)
+  }
 })
 
 console.log(`\n结果：${String(passed)}/${String(passed + failed)} 通过`)

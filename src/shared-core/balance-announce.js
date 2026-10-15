@@ -103,3 +103,30 @@ export function buildBalanceAnnouncement({ prevTotal, nextTotal, currency = 'CNY
     text: `刚才花掉了${symbol}${formatMoney(spent)}，还有${symbol}${formatMoney(next)}，${line}。`,
   }
 }
+
+/**
+ * 是否应该把这次余额变化播报出去。
+ *
+ * 用户要求："如果 5 分钟内没有余额变化，则不播放提示。"
+ *
+ * 抽成独立纯函数而不是写在宿主的回调里，是为了让"播不播"这条规则
+ * **可以被单测逐种情形钉住** —— 它决定了桌宠会不会变成复读机，值得单测。
+ *
+ * @param {object} args
+ * @param {number|null} args.prevTotal 上一次的余额；null = 首次取数
+ * @param {number} args.nextTotal 本次的余额
+ * @returns {{ announce: boolean, reason: 'first' | 'unchanged' | 'spent' | 'toppedUp' }}
+ *          `reason` 用于日志与断言，把"为什么不播"讲清楚
+ */
+export function shouldAnnounceBalance({ prevTotal, nextTotal }) {
+  // 首次取数：没有"上一次"可比，"花掉了 ¥0" 是无意义的噪音。
+  if (!Number.isFinite(prevTotal)) return { announce: false, reason: 'first' }
+
+  const next = Number.isFinite(nextTotal) ? nextTotal : 0
+  const delta = next - prevTotal
+
+  if (delta === 0) return { announce: false, reason: 'unchanged' }
+  // 注意"充值"要播报：余额确实变了，不说的话用户会奇怪"钱怎么突然多了"。
+  if (delta < 0) return { announce: true, reason: 'spent' }
+  return { announce: true, reason: 'toppedUp' }
+}
