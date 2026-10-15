@@ -78,6 +78,26 @@ const {
   MOOD_GAIN_PER_ACTION_MAX,
 } = require('../src/shared-core/mood.js')
 
+/**
+ * 好感值（等级 + 阶段好感值）。
+ *
+ * ⚠️ 当前**刻意不接任何增长**（用户指定"先不接增长，只做面板与数据结构"）。
+ * 于是它恒为"等级 1、阶段 0"，面板上显示 ♥♡♡♡♡ 与 0/100。
+ * `applyAffectionGain()` 已经实现并单测过（进位 / 连升 / 满级封顶），
+ * 接增长时只要在某处调用它即可，不必再改数据结构。
+ */
+const {
+  initialAffection,
+  normalizeAffection,
+  applyAffectionGain,
+  stageThresholdFor,
+  affectionProgress,
+  heartsFor,
+  affectionHeartsLabel,
+  affectionStagesPayload,
+  AFFECTION_MAX_HEARTS,
+} = require('../src/shared-core/affection.js')
+
 // ------------------------------------------------------------------ 启动参数
 function readArg(name) {
   const prefix = `--${name}=`
@@ -779,6 +799,15 @@ ipcMain.handle('pet:get-initial', () => ({
   mood: currentMoodPayload(),
 
   /**
+   * 当前好感（等级 + 阶段好感值）。
+   *
+   * 与心情一样由主进程管、渲染进程只负责显示 —— 将来若要落盘也不用改结构。
+   * 阈值表由共享核心生成（`affectionStagesPayload()`），
+   * 渲染进程**不重复实现**一份，避免"面板按 100、进位按 200"这种错位。
+   */
+  affection: currentAffectionPayload(),
+
+  /**
    * 可触发的动作清单与闲置语音配置。
    *
    * 这两项来自共享核心（src/shared-core/），主进程只是**转发**给渲染进程 ——
@@ -896,6 +925,43 @@ function pushMoodToRenderer() {
   if (!win || win.isDestroyed()) return
   try {
     win.webContents.send('pet:mood', currentMoodPayload())
+  } catch {
+    // 忽略：推送失败不影响桌宠主体功能。
+  }
+}
+
+/** 当前好感的快照，供界面展示。 */
+function currentAffectionPayload() {
+  const hearts = affection.hearts
+  return {
+    /** 阶段好感值（当前这段里攒了多少）。 */
+    value: affection.value,
+    /** 爱心数（0~5）。一开始是 0 颗心，攒满 100 得第 1 颗。 */
+    hearts,
+    /** 当前这段的阶段阈值（攒满就晋一心）。 */
+    threshold: stageThresholdFor(hearts),
+    maxHearts: AFFECTION_MAX_HEARTS,
+    /** 爱心串（"♥♡♡♡♡"）—— 由共享核心生成，渲染进程不重复实现一遍。 */
+    heartsText: heartsFor(hearts),
+    heartsLabel: affectionHeartsLabel(hearts),
+    /** 阶段进度 0~1，进度条用。 */
+    progress: affectionProgress(affection),
+    updatedAt: affection.updatedAt,
+    /** 完整的阶段表，便于面板显示"距下一心还差多少"。 */
+    stages: affectionStagesPayload(),
+  }
+}
+
+/**
+ * 把好感推给渲染进程。
+ *
+ * 目前只在初始化时推一次（好感还没有增长途径）。
+ * 接入增长后，在 `applyAffectionGain()` 之后调它即可。
+ */
+function pushAffectionToRenderer() {
+  if (!win || win.isDestroyed()) return
+  try {
+    win.webContents.send('pet:affection', currentAffectionPayload())
   } catch {
     // 忽略：推送失败不影响桌宠主体功能。
   }
@@ -1078,11 +1144,15 @@ const BUBBLE_FONT_MAX_PX = 26
  * 属性面板区高度 = 面板字号 × 这个系数，因此也随桌宠等比缩放。
  *
  * 从**字号**推导而不是从宽度推导，是为了让"面板一定装得下内容"成为结构性保证：
- * 面板里是"心情"一行 + 档位标签一行，行高都是字号的整数倍。
+ * 面板里是"好感一行 + 好感爱心一行 + 心情一行 + 档位标签一行"，行高都是字号的倍数。
  * 若改成从宽度推，字号一旦有可读下限（小档位不再线性缩），两者就会脱节 ——
  * 要么面板装不下字，要么留一大片空白。
+ *
+ * ⚠️ 加入好感之后面板从"两行"变成"四行"，所以这个比例从 3.2 提到 4.6。
+ * 必须与 `renderer.js` 里的同名常量**保持一致**（渲染进程没有模块加载能力，
+ * 只能各写一份镜像）。改一处必须改另一处，否则面板高度与实际内容对不上。
  */
-const STATS_ZONE_FONT_RATIO = 3.2
+const STATS_ZONE_FONT_RATIO = 7.0
 
 /**
  * 属性面板区高度 = 字号 × STATS_ZONE_FONT_RATIO，**不设下限**。
@@ -1138,6 +1208,18 @@ let logicalWidth = SIZE_HINT
  * 算法本身在 src/shared-core/mood.js 里（纯函数，有单元测试）。
  */
 let mood = initialMood()
+
+/**
+ * 好感值状态（等级 + 阶段好感值）。
+ *
+ * ⚠️ 与心情不同的是：好感**目前不增长也不衰减**，恒为初始值
+ * （等级 1、阶段 0）。增长途径待定（用户指定"先不接增长"）。
+ * 数据结构和进位逻辑都已经做好并有单测，接增长时只需在合适时机调
+ * `applyAffectionGain(affection, n)` 然后 `pushAffectionToRenderer()`。
+ *
+ * 同样归主进程管 —— 将来若要落盘，渲染进程没有文件访问能力。
+ */
+let affection = initialAffection()
 
 /** 心情结算/推送的周期。这一项只决定"多久算一次并推给界面"，不影响衰减本身。 */
 const MOOD_TICK_MS = 30_000
@@ -1690,6 +1772,30 @@ async function verifyLayoutAndResize(check, wait) {
           stageRect: r(document.getElementById('stage')),
           moodValueText: (document.getElementById('mood-value') || {}).textContent || '',
           moodFillWidth: (document.getElementById('mood-fill') || {}).style ? document.getElementById('mood-fill').style.width : '',
+          /*
+           * 好感行的**实际渲染结果**与**几何位置**。
+           *
+           * 位置用 getBoundingClientRect 而不是读源码顺序 —— 用户要求"好感值显示在
+           * 心情值**上方**"，只有比较两者的 top 才能真正证明这一点
+           * （DOM 里写在前面不等于视觉上在上面，flex 顺序/样式都可能改掉）。
+           */
+          affectionValueText: (document.getElementById('affection-value') || {}).textContent || '',
+          affectionHeartsText: (document.getElementById('affection-hearts') || {}).textContent || '',
+          affectionFillWidth: (document.getElementById('affection-fill') || {}).style
+            ? document.getElementById('affection-fill').style.width
+            : '',
+          affectionRowTop: (function () {
+            const el = document.getElementById('affection-value')
+            return el ? el.getBoundingClientRect().top : null
+          })(),
+          moodRowTop: (function () {
+            const el = document.getElementById('mood-value')
+            return el ? el.getBoundingClientRect().top : null
+          })(),
+          affectionHeartsFontPx: (function () {
+            const el = document.getElementById('affection-hearts')
+            return el ? parseFloat(getComputedStyle(el).fontSize) || 0 : 0
+          })(),
           // 元素自检：确认脚本操作的确实是页面里那个 img（曾怀疑取错元素）
           frameInlineStyle: img.getAttribute('style'),
           frameTagName: img.tagName,
@@ -2356,6 +2462,21 @@ async function verifyRealDrag(check, wait) {
     )
     await wait(300)
   }
+  /*
+   * 明确的收尾：**强制**让渲染进程退出拖拽态。
+   *
+   * 为什么需要：本用例是靠合成 mousedown / mousemove / mouseup 驱动的，
+   * 而 `finishDrag()` 只在「mouseup」或「mousemove 且 buttons===0」时才真正退出
+   * 拖拽态。只补发 mouseup 并不可靠（实测偶发残留），而残留的拖拽态会**污染后续用例**：
+   * 睡眠用例的"静置 6 秒不被打断"检查里冒出一条
+   * `sleeping→idle(强行中断：用户开始拖拽)`，整片睡眠断言跟着失败。
+   *
+   * 所以直接调测试专用的 `__petTestForceEndDrag()`（内部就是 finishDrag）——
+   * 不依赖事件是否递送到位，收尾是确定的。补发 mouseup 仍保留在前面，
+   * 因为它同时验证了"真实松手路径"能把状态清掉。
+   */
+  await wc.executeJavaScript('window.__petTestForceEndDrag()', true)
+  await wait(200)
   check(
     '拖拽用例结束后渲染进程已退出拖拽态',
     (await readState()).dragging === false,
@@ -3909,6 +4030,90 @@ async function verifyIdleAndMood(check, wait, readLayout) {
     String(hovered2.moodValueText) === String(panelMood),
     `面板显示 ${String(hovered2.moodValueText)}，心情值 ${String(panelMood)}`,
   )
+
+  // ---- 7c) 好感值：等级（爱心数）+ 阶段好感值 ----
+  {
+    const aff = (await readState()).affection
+    /*
+     * 面板上应当显示"等级 1、阶段 0/100、♥♡♡♡♡"。
+     *
+     * 断言既看**状态快照**（value/level/threshold），也看**实际渲染文本**
+     * （heartsText/valueText）—— 后者才能抓到"数据对了但没画上去"这类问题
+     * （例如元素 id 写错、renderAffection 忘了调）。
+     */
+    check(
+      '好感初始为 0 颗心、阶段 0/100',
+      aff && aff.hearts === 0 && aff.value === 0 && aff.threshold === 100,
+      aff ? `爱心 ${String(aff.hearts)} 颗，阶段 ${String(aff.value)}/${String(aff.threshold)}` : '拿不到好感状态',
+    )
+    check(
+      '面板画出五颗爱心，0 心时全是空心',
+      aff && aff.heartsTextRendered === '♡♡♡♡♡',
+      `面板爱心=${JSON.stringify(aff && aff.heartsTextRendered)}（期望 "♡♡♡♡♡"）`,
+    )
+    check(
+      '面板显示"阶段值/阈值"文本',
+      aff && aff.valueText === '0/100',
+      `面板文本=${JSON.stringify(aff && aff.valueText)}（期望 "0/100"）`,
+    )
+    check(
+      '好感进度条宽度为 0%（阶段 0）',
+      aff && aff.fillWidth === '0%',
+      `进度条宽度=${JSON.stringify(aff && aff.fillWidth)}`,
+    )
+    check(
+      '爱心数恒为 5 个（0 心与满级都如此）',
+      aff && [...String(aff.heartsTextRendered)].length === 5,
+      `爱心串 ${JSON.stringify(aff && aff.heartsTextRendered)} 长度 ${String(aff && [...String(aff.heartsTextRendered)].length)}`,
+    )
+
+    /*
+     * 用户明确要求"好感值显示在**心情值上方**"。
+     *
+     * 用两者的 getBoundingClientRect().top 比较，而不是看 DOM 顺序 ——
+     * 写在前面不等于视觉上在上面。
+     */
+    check(
+      '好感值显示在心情值上方',
+      Number.isFinite(hovered2.affectionRowTop) &&
+        Number.isFinite(hovered2.moodRowTop) &&
+        hovered2.affectionRowTop < hovered2.moodRowTop,
+      `好感行 top=${String(hovered2.affectionRowTop)} < 心情行 top=${String(hovered2.moodRowTop)}`,
+    )
+
+    /*
+     * 面板要装得下四行内容（好感行 / 爱心行 / 心情行 / 档位行）。
+     *
+     * 判据是"爱心字号 > 0"且"面板可见高度 ≥ 内容高度" ——
+     * 后者用面板区高度减去内边距（上下各 5px + 边框 2px）近似。
+     * 这里只验证**没有明显截断**（内容高不超过面板高），
+     * 具体像素值由尺寸比例的断言在别的用例里覆盖。
+     */
+    const contentH = await wc.executeJavaScript(
+      `(function () {
+        const body = document.querySelector('.stats-body')
+        if (!body) return null
+        const cs = getComputedStyle(body)
+        const pad = cs.paddingTop ? parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) : 0
+        // scrollHeight 是内容真实高度（含被压缩时溢出的部分）。
+        const rows = [...body.children].map((el) => el.getBoundingClientRect().height)
+        return { scrollH: body.scrollHeight, pad, rowCount: body.children.length, rows }
+      })()`,
+      true,
+    )
+    check(
+      '属性面板里共有 4 行（好感/爱心/心情/档位）',
+      contentH && contentH.rowCount === 4,
+      contentH ? `实际 ${String(contentH.rowCount)} 行，各高 ${JSON.stringify(contentH.rows)}` : '拿不到面板内容',
+    )
+    check(
+      '面板高度装得下四行内容（无截断）',
+      contentH && Number.isFinite(hovered2.statsZonePx) && hovered2.statsZonePx + 1 >= contentH.scrollH,
+      contentH
+        ? `面板区 ${String(hovered2.statsZonePx)}px ≥ 内容 ${String(contentH.scrollH)}px`
+        : '拿不到面板内容高度',
+    )
+  }
 
   // ---- 7b) 衰减：把时间戳往前推 3 个周期，结算后应当正好掉 3 点 ----
   const beforeDecay = mood.value

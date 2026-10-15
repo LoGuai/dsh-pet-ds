@@ -25,6 +25,9 @@ const statsPanel = document.getElementById('stats-panel')
 const moodFill = document.getElementById('mood-fill')
 const moodValueEl = document.getElementById('mood-value')
 const moodTierEl = document.getElementById('mood-tier')
+const affectionFill = document.getElementById('affection-fill')
+const affectionValueEl = document.getElementById('affection-value')
+const affectionHeartsEl = document.getElementById('affection-hearts')
 
 /** 判定为点击而非拖拽的位移阈值（像素）。 */
 const CLICK_THRESHOLD_PX = 4
@@ -64,7 +67,7 @@ const STATS_ZONE_RATIO = 0.16
  * **浏览器会静默忽略非法样式**，元素于是退回素材原始尺寸（864×1157）。
  * 表现为"窗口变了、立绘不变"，而且控制台没有任何报错。
  */
-const STATS_ZONE_FONT_RATIO = 3.2
+const STATS_ZONE_FONT_RATIO = 7.0
 
 /**
  * 长按多久才进入"被拎起来"。
@@ -1483,6 +1486,10 @@ async function boot() {
         moodState = { value: Number(initial.mood.value), tier: String(initial.mood.tier ?? 'happy') }
         renderMood()
       }
+      if (initial.affection) {
+        affectionState = { ...affectionState, ...initial.affection }
+        renderAffection()
+      }
       // 起始工作状态：拿不到就当作闲置。
       currentWorkStatus = initial.state && typeof initial.state.workStatus === 'string' ? initial.state.workStatus : 'idle'
     }
@@ -2364,6 +2371,23 @@ function interruptSleep(reason) {
 /** 最近一次收到的心情快照。 */
 let moodState = { value: 100, tier: 'happy' }
 
+/**
+ * 最近一次收到的好感快照。
+ *
+ * 默认值只是**首屏兜底**（主进程的 `pet:get-initial` 会立刻覆盖它）：
+ * 0 颗心、阶段 0、第一段阈值 100。
+ */
+let affectionState = {
+  value: 0,
+  hearts: 0,
+  threshold: 100,
+  maxHearts: 5,
+  heartsText: '♡♡♡♡♡',
+  heartsLabel: '陌生',
+  progress: 0,
+  stages: [],
+}
+
 /** 属性面板当前是否显示。 */
 let statsVisible = false
 
@@ -2387,6 +2411,35 @@ function renderMood() {
   }
   if (moodValueEl) moodValueEl.textContent = String(Math.round(value))
   if (moodTierEl) moodTierEl.textContent = MOOD_TIER_TEXT[moodState.tier] ?? ''
+}
+
+/**
+ * 把好感画到属性面板上（显示在心情**上方**）。
+ *
+ * 三个元素各自对应一项信息：
+ *  · 进度条 —— 当前阶段的进度（阶段值 ÷ 本段阈值）；
+ *  · 数值   —— `阶段值/阈值`（如 `37/100`），比纯百分比更明确"还差多少晋心"；
+ *  · 爱心串 —— 爱心数（实心 = 已达到，空心 = 还没到），一开始是 0 颗心。
+ *
+ * ⚠️ 爱心数（长期）与进度条（本段）**不是**同一件事：爱心是攒满了几段，
+ * 进度条是这一段里攒了多少。满级 5 心后进度条还能继续涨到 3000/3000。
+ */
+function renderAffection() {
+  const s = affectionState
+  const threshold = Number.isFinite(s.threshold) && s.threshold > 0 ? s.threshold : 100
+  const value = Number.isFinite(s.value) ? s.value : 0
+  const ratio = Number.isFinite(s.progress) ? s.progress : Math.min(1, value / threshold)
+
+  if (affectionFill) affectionFill.style.width = `${String(Math.max(0, Math.min(100, ratio * 100)))}%`
+  if (affectionValueEl) affectionValueEl.textContent = `${String(Math.round(value))}/${String(threshold)}`
+  if (affectionHeartsEl) {
+    // 爱心串由主进程（共享核心）生成；拿不到时按爱心数现算，避免显示空白。
+    const hearts =
+      typeof s.heartsText === 'string' && s.heartsText
+        ? s.heartsText
+        : '♥'.repeat(Math.max(0, Math.min(s.maxHearts || 5, s.hearts || 0))).padEnd(s.maxHearts || 5, '♡')
+    affectionHeartsEl.textContent = hearts
+  }
 }
 
 /** 显示/隐藏属性面板。 */
@@ -2475,6 +2528,16 @@ window.pet.on('pet:mood', (payload) => {
   }
 })
 
+window.pet.on('pet:affection', (payload) => {
+  try {
+    if (!payload) return
+    affectionState = { ...affectionState, ...payload }
+    if (statsVisible) renderAffection()
+  } catch {
+    // 忽略：好感渲染失败不该影响其它功能。
+  }
+})
+
 window.pet.on('pet:play-action', (payload) => {
   try {
     if (!payload || typeof payload.id !== 'string') return
@@ -2536,6 +2599,19 @@ window.__petTestState = () => {
     statsVisible,
     moodValue: Number.isFinite(moodState.value) ? moodState.value : null,
     moodTier: moodState.tier,
+    /** 好感快照（面板显示用；供自测断言）。 */
+    affection: {
+      value: affectionState.value,
+      hearts: affectionState.hearts,
+      threshold: affectionState.threshold,
+      maxHearts: affectionState.maxHearts,
+      heartsText: affectionState.heartsText,
+      heartsLabel: affectionState.heartsLabel,
+      /** 面板上**实际渲染出来**的爱心串与数值文本 —— 断言读这个才能抓到渲染问题。 */
+      heartsTextRendered: affectionHeartsEl ? affectionHeartsEl.textContent : null,
+      valueText: affectionValueEl ? affectionValueEl.textContent : null,
+      fillWidth: affectionFill ? affectionFill.style.width : null,
+    },
     bubbleOwner,
     workStatus: currentWorkStatus,
     actionCatalog: actionCatalog.map((action) => ({ id: action.id, label: action.label, standing: Boolean(action.standing) })),
@@ -2750,6 +2826,28 @@ window.__petTestSetIdleClock = (opts) => {
 window.__petTestIdleTickNow = () => {
   onIdleTick()
   return { lastPlayedActionId, activeAnimationId }
+}
+
+/**
+ * 测试用：**强制结束拖拽态**，不依赖合成 mouseup。
+ *
+ * 为什么需要：拖拽用例是靠合成 mousedown / mousemove / mouseup 驱动的，
+ * 而 `finishDrag()` 只在「mouseup」或「mousemove 且 buttons===0」时才真正退出拖拽态。
+ * 后续用例若紧接着发 mousemove，就会**继承残留的拖拽态** ——
+ * 实测后果：睡眠用例的"静置 6 秒不被打断"检查里冒出一条
+ * `sleeping→idle(强行中断：用户开始拖拽)`，以及
+ * "进入睡眠用例前，渲染进程已退出拖拽态"失败。
+ *
+ * 所以给测试一个**确定的收尾**入口：直接调 finishDrag（不传事件即可，
+ * 它内部对 e 做了空值保护），把状态与定时器一次清干净。
+ */
+window.__petTestForceEndDrag = () => {
+  try {
+    finishDrag()
+  } catch {
+    // 忽略：收尾失败不该让自测崩掉。
+  }
+  return { dragging }
 }
 
 /**

@@ -16,6 +16,8 @@ const INBOUND = [
   'pet:layout',
   /** 心情变化（属性面板用）。 */
   'pet:mood',
+  /** 好感变化（属性面板用）。 */
+  'pet:affection',
   /** 主进程要求播放某个动作（菜单入口触发）。 */
   'pet:play-action',
 ]
@@ -74,7 +76,6 @@ contextBridge.exposeInMainWorld('pet', {
    * @param {string} actionId 触发的动作 id（仅用于日志）
    */
   rewardAction: (actionId) => ipcRenderer.send('pet:action-reward', actionId),
-
   /** 请求触发指定动作（走主进程，与右键菜单同一条路径，避免两套逻辑）。 */
   triggerAction: (id) => ipcRenderer.send('pet:trigger-action', { id }),
 

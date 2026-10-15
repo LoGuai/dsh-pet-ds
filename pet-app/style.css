@@ -250,6 +250,28 @@ body.dragging {
 .stat-bar-fill.tier-normal { background: linear-gradient(90deg, #ffd166, #ffe9a8); }
 .stat-bar-fill.tier-low { background: linear-gradient(90deg, #ff9f43, #ffc98a); }
 .stat-bar-fill.tier-sad { background: linear-gradient(90deg, #ff6b6b, #ffa8a8); }
+
+/*
+ * 好感进度条用粉色系，与心情的蓝色/黄/橙/红区分开 ——
+ * 四行面板里两条进度条挨着，颜色必须一眼能分辨。
+ *
+ * 用 `!important` 是因为心情那套 `.stat-bar-fill.tier-*` 是按档位加类的，
+ * 好感条虽然不带 tier 类，但为防"以后给好感也加档位颜色"时互相盖住，
+ * 这里显式提高优先级。更干净的做法是给好感单独一个基类，
+ * 但那样要改 HTML 结构，收益不大。
+ */
+.stat-bar-fill.affection {
+  background: linear-gradient(90deg, #ff7fb0, #ffc2dd) !important;
+}
+
+/* 爱心串：用实心/空心表示"已达到的等级 / 总等级"。 */
+.stat-note.hearts {
+  color: #ff8fbd;
+  font-size: 0.95em;
+  letter-spacing: 0.08em;
+  /* 空心爱心较细，稍微提一点对比度免得看不清。 */
+  opacity: 0.92;
+}
 .stat-value {
   flex: 0 0 auto;
   min-width: 2.2em;

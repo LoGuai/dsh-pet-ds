@@ -39,10 +39,24 @@
         属性面板：光标悬停在桌宠上时显示，位置在桌宠**下方**。
         高度由主进程下发（见 STATS_ZONE_PX），且窗口尺寸里已经为它预留了空间，
         因此它不会盖住角色、也不会被角色盖住。
-        目前只有心情值一项，后续属性往 stats-body 里加即可。
+        后续属性往 stats-body 里加即可（高度比例要同步调 STATS_ZONE_FONT_RATIO）。
       -->
       <div id="stats-panel" class="stats-panel" hidden>
         <div class="stats-body">
+          <!--
+            好感值显示在心情值**上方**（用户要求）。
+            爱心数量 = 好感等级（1~5），进度条 = 当前等级的阶段好感值进度，
+            右侧数字 = 阶段好感值 / 该等级的阶段阈值。
+          -->
+          <div class="stat-row">
+            <span class="stat-name">好感</span>
+            <div class="stat-bar" role="progressbar" aria-label="好感值">
+              <div id="affection-fill" class="stat-bar-fill affection"></div>
+            </div>
+            <span id="affection-value" class="stat-value">0/100</span>
+          </div>
+          <div id="affection-hearts" class="stat-note hearts">♥♡♡♡♡</div>
+
           <div class="stat-row">
             <span class="stat-name">心情</span>
             <div class="stat-bar" role="progressbar" aria-label="心情值">
