@@ -47,8 +47,16 @@
       -->
       <div id="balance-panel" class="balance-panel">
         <div class="balance-body">
-          <span class="balance-label">API 余额</span>
-          <span id="balance-value" class="balance-value">--</span>
+          <div class="balance-main">
+            <span class="balance-label">余额</span>
+            <span id="balance-value" class="balance-value">--</span>
+          </div>
+          <!--
+            说明文字（余额告急 / 取数失败 / 已过期）单独一行。
+            ⚠️ 刻意**不放在 .balance-main 里**：那一行是 `align-items: baseline` 的，
+            18px 的数字与 10px 的说明混排会互相撑高、容易溢出；
+            分成两行后各自的高度都只由自己的字号决定，窗口窄时也不会挤爆。
+          -->
           <span id="balance-note" class="balance-note"></span>
         </div>
       </div>

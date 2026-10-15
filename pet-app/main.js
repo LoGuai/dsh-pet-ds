@@ -1302,10 +1302,13 @@ function statsZoneFor(petWidth) {
  *  · 两者由**流布局**排开，窗口被系统量化时多出的余量只落在气泡区 ——
  *    所以几何上不可能重叠，也不需要在显示时重新排版（否则会抖）。
  *
- * 比例 2.2 是"一行数字"需要的高度：比属性面板（4 行，7.0）矮得多。
- * 必须与 renderer.js 里的同名常量一致。
+ * 比例 3.0 是"一行较大的数字 + 一行小说明"需要的高度 ——
+ * 实测（区域 23px vs 内容 24px）2.6 还差一点，说明行的高度被我低估了。
+ * 比属性面板（4 行，7.0）矮得多。字体放大过一档（用户反馈原来太不明显），
+ * 所以这个比例从 2.2 跟着提到 3.0 —— **改字体大小就要同步改这里**，
+ * 否则内容会比预留区域高、被裁掉。必须与 renderer.js 里的同名常量一致。
  */
-const BALANCE_ZONE_FONT_RATIO = 2.2
+const BALANCE_ZONE_FONT_RATIO = 3.0
 
 /** 余额面板区高度（CSS 像素）。 */
 function balanceZoneFor(petWidth) {
@@ -1994,7 +1997,17 @@ async function runDragFollowTest() {
     const failed = results.filter((r) => !r.ok)
     log(`跟随自测结果：${String(results.length - failed.length)}/${String(results.length)} 通过`)
   } catch (err) {
+    /*
+     * 打印**完整堆栈**而不只是 message。
+     *
+     * 只打 message 时，"body is not defined" 这种错误完全无法定位 ——
+     * 项目里有几十处 executeJavaScript 片段，光看一句话不知道是哪一处。
+     * 堆栈能直接指到行号。
+     */
     log(`跟随自测出错：${err instanceof Error ? err.message : String(err)}`)
+    if (err instanceof Error && err.stack) {
+      log(`跟随自测堆栈：\n${err.stack.split('\n').slice(0, 12).join('\n')}`)
+    }
   } finally {
     cursorOverride = null
     try {
@@ -4496,6 +4509,112 @@ async function verifyIdleAndMood(check, wait, readLayout) {
         Boolean(b) && b.top >= hovered2.character.bottom - 2,
         b ? `余额顶 ${b.top.toFixed(1)} ≥ 角色底 ${hovered2.character.bottom.toFixed(1)}` : '拿不到余额面板几何',
       )
+
+      /*
+       * 余额面板的**内容必须装得进预留高度**。
+       *
+       * 用户两次要求把余额面板做大：先是颜色改白，再把字号放大一档。
+       * 字号是相对 `BALANCE_ZONE_FONT_RATIO` 预留的高度缩放的，
+       * 所以放大字体后**很容易**出现内容比区域高、被裁掉的情况 ——
+       * 而裁掉的是数字的下半截，肉眼不一定立刻注意到。
+       *
+       * 判据：`.balance-body` 的实际高度（含内边距与边框）不得超过面板区高度。
+       */
+      const bodyBox = await wc.executeJavaScript(
+        `(function () {
+          const p = document.getElementById('balance-panel')
+          const body = p ? p.querySelector('.balance-body') : null
+          if (!body) return null
+          const b = body.getBoundingClientRect()
+          const v = document.getElementById('balance-value')
+          return {
+            bodyH: b.height,
+            zoneH: p.getBoundingClientRect().height,
+            valueFontPx: v ? parseFloat(getComputedStyle(v).fontSize) || 0 : 0,
+            valueColor: v ? getComputedStyle(v).color : null,
+            labelText: (p.querySelector('.balance-label') || {}).textContent || '',
+          }
+        })()`,
+        true,
+      )
+      check(
+        '余额面板内容装得进预留高度（字体放大后不被裁）',
+        bodyBox && bodyBox.bodyH <= bodyBox.zoneH + 1,
+        bodyBox
+          ? `内容高 ${bodyBox.bodyH.toFixed(1)} ≤ 区域高 ${bodyBox.zoneH.toFixed(1)}；数字字号 ${String(bodyBox.valueFontPx)}px`
+          : '拿不到余额面板内容',
+      )
+      check(
+        '余额面板文案是"余额"（不是"API 余额"）',
+        Boolean(bodyBox) && bodyBox.labelText === '余额',
+        `标签文本=${JSON.stringify(bodyBox && bodyBox.labelText)}`,
+      )
+      /*
+       * 颜色断言要**自己先放一份正常余额**再查。
+       *
+       * ⚠️ 不能直接用上面 bodyBox 里的颜色：那段测量跑在"面板可能是错误态"的时刻
+       * （自测中途注入过 null），而错误态按设计就是灰色 ——
+       * 先前写成 `=== 'rgb(255,255,255)'` 就因此失败过一次。
+       * 这里显式注入一份**正常**快照，测的才是"正常态是不是白色"。
+       */
+      await wc.executeJavaScript(
+        `window.__petTestSetBalance({ source: 'apikey', isAvailable: true, currency: 'CNY', total: '69.97', granted: '41.78', toppedUp: '28.18', fetchedAt: Date.now(), stale: false, error: null })`,
+        true,
+      )
+      /*
+       * ⚠️ 注入后必须**等过渡结束**再读颜色。
+       *
+       * `.balance-value` 上有 `transition: color 260ms ease`（数值变化时平滑过渡）。
+       * 正处于过渡中时，`getComputedStyle().color` 返回的是**插值**而不是终值 ——
+       * 于是从错误态灰 `#c8c8c8` 切到白色时，会读到 `rgb(200,200,200)`。
+       *
+       * 这个坑很有迷惑性：`.balance-label` **没有** transition，
+       * 所以它读到的是终值白色 —— 表现为"标签白、数字灰"，
+       * 看着像"数字被别的规则盖了"，其实是动画还没跑完。
+       * 实测排查花了好几轮，先怀疑过类名、内部离线标记、内联样式，都不是。
+       */
+      await wait(420)
+      const normalBox = await wc.executeJavaScript(
+        `(function () {
+          const v = document.getElementById('balance-value')
+          const l = document.querySelector('.balance-label')
+          const p = document.getElementById('balance-panel')
+          const bodyEl = p ? p.querySelector('.balance-body') : null
+          return {
+            valueColor: v ? getComputedStyle(v).color : null,
+            labelColor: l ? getComputedStyle(l).color : null,
+            valueFontPx: v ? parseFloat(getComputedStyle(v).fontSize) || 0 : 0,
+            labelFontPx: l ? parseFloat(getComputedStyle(l).fontSize) || 0 : 0,
+            text: v ? v.textContent : null,
+            baseFontPx: p ? parseFloat(getComputedStyle(p).fontSize) || 0 : 0,
+            bodyH: bodyEl ? bodyEl.getBoundingClientRect().height : 0,
+            zoneH: p ? p.getBoundingClientRect().height : 0,
+          }
+        })()`,
+        true,
+      )
+      check(
+        '正常态下余额数字与标签都是白色',
+        Boolean(normalBox) &&
+          normalBox.valueColor === 'rgb(255, 255, 255)' &&
+          normalBox.labelColor === 'rgb(255, 255, 255)',
+        normalBox
+          ? `数字 ${JSON.stringify(normalBox.valueColor)}，标签 ${JSON.stringify(normalBox.labelColor)}`
+          : '拿不到余额面板样式',
+      )
+      check(
+        '余额字号比标签大（数字更醒目）',
+        Boolean(normalBox) && normalBox.valueFontPx > normalBox.labelFontPx,
+        normalBox
+          ? `数字 ${String(normalBox.valueFontPx)}px > 标签 ${String(normalBox.labelFontPx)}px（面板基准 ${String(normalBox.baseFontPx)}px）`
+          : '拿不到字号',
+      )
+      check(
+        '带说明文字时内容仍装得进预留高度',
+        Boolean(normalBox) && normalBox.bodyH <= normalBox.zoneH + 1,
+        normalBox ? `内容高 ${normalBox.bodyH.toFixed(1)} ≤ 区域高 ${normalBox.zoneH.toFixed(1)}` : '拿不到高度',
+      )
+
       check(
         '余额面板显示的是余额数字（或明确的占位/错误态）',
         typeof hovered2.balanceText === 'string' &&

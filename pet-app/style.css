@@ -208,54 +208,79 @@ body.dragging {
 
 .balance-body {
   width: 88%;
-  /* 上下留白比属性面板小：这里只有一行内容。 */
-  padding: 3px 8px;
+  /* 上下留白比属性面板小：这里只有一行主内容（+ 可选的说明行）。 */
+  padding: 3px 9px;
   border-radius: 9px;
   background: rgba(22, 30, 46, 0.82);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.28);
   border: 1px solid rgba(120, 180, 255, 0.35);
   font-family: "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+  /* 纵列：主行（标签+数字）在上，说明行在下。 */
   display: flex;
-  align-items: baseline;
+  flex-direction: column;
+  align-items: center;
   justify-content: center;
-  gap: 6px;
   /* 数字用等宽数字，刷新时不会左右跳。 */
   font-variant-numeric: tabular-nums;
 }
 
+/* 主行：把标签与数字排成一行并基线对齐。 */
+.balance-main {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 7px;
+}
+
+/*
+ * 文案与数字统一用**白色**（用户要求"字体颜色改为白色，更显眼一些"）。
+ *
+ * 原来标签是 `opacity: 0.75` 的灰、数值是青色 `#7ee0ff` ——
+ * 在半透明深色底上偏暗。现在改成纯白，并把字号整体放大一档
+ * （用户反馈"原本的太不明显了"：标签 0.85em→1.05em、数值 1.15em→1.45em）。
+ *
+ * ⚠️ 字号放大后**必须同步提高 BALANCE_ZONE_FONT_RATIO**（2.2 → 3.0），
+ * 否则内容会比预留区域高、被裁掉。两处常量在 main.js 与 renderer.js 里各一份，
+ * 改一处要改两处。
+ */
 .balance-label {
   flex: 0 0 auto;
-  font-size: 0.85em;
-  opacity: 0.75;
+  font-size: 1.05em;
+  color: #ffffff;
+  font-weight: 500;
 }
 
 .balance-value {
   flex: 0 0 auto;
-  font-size: 1.15em;
-  font-weight: 600;
-  color: #7ee0ff;
+  font-size: 1.45em;
+  font-weight: 700;
+  color: #ffffff;
   /* 数值变化时轻微过渡，避免突变。 */
   transition: color 260ms ease;
 }
 
-/* 余额低于阈值：转成告急配色。 */
+/* 余额低于阈值：转成告急配色（覆盖上面的白色，告急优先）。 */
 .balance-body.is-low {
   border-color: rgba(255, 130, 130, 0.55);
 }
+.balance-body.is-low .balance-label,
 .balance-body.is-low .balance-value {
   color: #ff8a8a;
 }
 
 /* 取不到数（凭据未配置 / 网络失败）：淡化 + 灰色。 */
+.balance-body.is-error .balance-label,
 .balance-body.is-error .balance-value {
   color: #c8c8c8;
-  opacity: 0.8;
 }
 
 .balance-note {
+  /* 空文本时不占高度（内容为空时这一行高度为 0）。 */
   flex: 0 0 auto;
-  font-size: 0.7em;
-  opacity: 0.6;
+  font-size: 0.85em;
+  line-height: 1.25;
+  color: #ffffff;
+  opacity: 0.7;
 }
 
 /* ---------------------------------------------------------------- 属性面板 */
