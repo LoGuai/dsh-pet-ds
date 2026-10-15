@@ -83,6 +83,37 @@ contextBridge.exposeInMainWorld('pet', {
   contextMenu: () => ipcRenderer.send('pet:context-menu'),
 
   /**
+   * 读取"始终显示在最上层"的当前状态（只读，无副作用）。
+   *
+   * ⚠️ 这里**不加"仅测试模式"的条件判断** —— 我第一版试过用
+   * `process.argv.includes('--test-drag-follow')` 来把关，结果永远为 false：
+   * preload 虽然能拿到 `process`，但**它的 argv 是渲染进程自己的参数**
+   * （`--type=renderer --user-data-dir=...`），看不到主进程的命令行参数。
+   * 实测把它打印出来确认了这一点。
+   *
+   * 所以把关放在主进程侧，而且是**读写分开**：
+   *  · 读（本方法）随时可用 —— 它不改任何东西，暴露没有风险；
+   *  · 写（`setTopmost`）只在测试模式下暴露（见下）。
+   *
+   * @returns {Promise<{enabled: boolean, windowAlwaysOnTop: boolean, persisted: boolean}>}
+   */
+  topmostState: () => ipcRenderer.invoke('pet:test-topmost'),
+
+  /**
+   * 测试用：设置"始终显示在最上层"。
+   *
+   * 与右键菜单里的开关走**同一条路径**（都调主进程的 `applyTopmost`），
+   * 所以从渲染进程调用它也能真实改变窗口层级 —— 自测靠它验证，
+   * 不必模拟点击原生菜单项（原生菜单在自动化下点不到）。
+   *
+   * 主进程侧只在 `--selftest` / `--test-drag-follow` 时注册
+   * `pet:test-topmost-set`，生产运行时调用它会 reject。
+   *
+   * @param {boolean} enabled
+   */
+  setTopmost: (enabled) => ipcRenderer.invoke('pet:test-topmost-set', { set: Boolean(enabled) }),
+
+  /**
    * 订阅主进程推送。
    * 只接受白名单内的频道，且不把 event 对象暴露给页面（避免泄漏 sender）。
    * @param {string} channel

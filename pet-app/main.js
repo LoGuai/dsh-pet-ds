@@ -110,7 +110,18 @@ function readArg(name) {
  * 之后以本地设置文件（右键菜单里改的那个）为准。
  */
 const SIZE_HINT = clampNumber(Number(readArg('size') ?? 240), 80, 1200)
-const TOPMOST = readArg('topmost') !== 'false'
+/**
+ * 置顶开关的**默认值**。
+ *
+ * 优先级（见 `resolveTopmost()`）：
+ *   1. 本地设置文件里的 `topmost`（用户在右键菜单里改过）；
+ *   2. 启动参数 `--topmost=false`（开发/测试用）；
+ *   3. 默认置顶。
+ *
+ * ⚠️ 这里只表示"默认"，真正的当前值由 `topmostEnabled` 保存 ——
+ * 用户可以在右键菜单里随时切换，所以不能在启动后继续读这个常量。
+ */
+const TOPMOST_DEFAULT_ARG = readArg('topmost') !== 'false'
 const SELFTEST = process.argv.includes('--selftest')
 /** `--test-drag-follow`：验证主进程跟随式拖拽与布局/尺寸（见 runDragFollowTest）。 */
 const TEST_DRAG_FOLLOW = process.argv.includes('--test-drag-follow')
@@ -450,11 +461,67 @@ function initialPosition(width, height) {
 }
 
 // ------------------------------------------------------------------ 窗口创建
+
+/**
+ * 当前是否置顶。启动时由 `resolveTopmost()` 定，之后由右键菜单的开关改。
+ *
+ * 注意不能在运行期读 `TOPMOST_DEFAULT_ARG` —— 那只是"没被用户改过时用什么"。
+ */
+let topmostEnabled = true
+
+/**
+ * 解析启动时的置顶状态。
+ *
+ * 优先级：设置文件 > 启动参数 > 默认置顶。
+ *
+ * 为什么设置文件优先：用户在右键菜单里关掉置顶，是明确的意图，
+ * 不该被一个默认参数盖回去。而 `--topmost=false` 是给开发/自测用的临时开关，
+ * 它只在用户还没做过选择时起作用 —— 否则"菜单里打开、重启又变回来"很费解。
+ */
+function resolveTopmost() {
+  const stored = settings.load()
+  if (typeof stored.topmost === 'boolean') return stored.topmost
+  return TOPMOST_DEFAULT_ARG
+}
+
+/**
+ * 应用置顶状态到窗口，并持久化。
+ *
+ * `'screen-saver'` 层级比普通 alwaysOnTop 更高，能压住大多数窗口，
+ * 又不会像 `'pop-up-menu'` 那样抢焦点。关掉时传 `false` 让窗口回到普通层。
+ *
+ * @param {boolean} enabled
+ * @param {{ persist?: boolean }} [options]
+ */
+function applyTopmost(enabled, options = {}) {
+  const next = Boolean(enabled)
+  topmostEnabled = next
+  if (win && !win.isDestroyed()) {
+    win.setAlwaysOnTop(next, next ? 'screen-saver' : 'normal')
+  }
+  if (options.persist !== false) {
+    try {
+      settings.update({ topmost: next })
+    } catch (err) {
+      log(`保存置顶设置失败：${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+  log(`置顶：${next ? '已开启（始终显示在最上层）' : '已关闭（作为普通窗口）'}`)
+  return next
+}
+
+/** 切换置顶，返回新的状态。 */
+function toggleTopmost() {
+  return applyTopmost(!topmostEnabled)
+}
+
 function createWindow() {
   // 读本地设置（右键菜单里改的尺寸就存在这里）。
   // 本地文件不存在时，用宿主下发/默认的宽度作为初始值。
   const stored = settings.load()
   logicalWidth = clampNumber(Number(stored.petWidth) || SIZE_HINT, PET_WIDTH_MIN, PET_WIDTH_MAX)
+  // 置顶状态也来自设置文件（用户上次的选择），没存过才回落到启动参数。
+  topmostEnabled = resolveTopmost()
 
   /*
    * 心情：**每次启动都重置为满值**。
@@ -495,7 +562,7 @@ function createWindow() {
     minimizable: false,
     fullscreenable: false,
     skipTaskbar: true,
-    alwaysOnTop: TOPMOST,
+    alwaysOnTop: topmostEnabled,
     show: false,
     // 关掉节流，保证动画流畅（透明窗在后台被节流会显得卡顿）。
     webPreferences: {
@@ -509,7 +576,7 @@ function createWindow() {
 
   // 置顶层级：'screen-saver' 比普通 alwaysOnTop 更高，能压住大多数窗口，
   // 但不会像 'pop-up-menu' 那样抢焦点。
-  if (TOPMOST) win.setAlwaysOnTop(true, 'screen-saver')
+  if (topmostEnabled) win.setAlwaysOnTop(true, 'screen-saver')
 
   win.loadFile(path.join(__dirname, 'index.html'))
 
@@ -776,7 +843,7 @@ function postCommand(body) {
 
 // ------------------------------------------------------------------ IPC 接口
 ipcMain.handle('pet:get-initial', () => ({
-  topmost: TOPMOST,
+  topmost: topmostEnabled,
   state: lastState,
   /**
    * 渲染进程应该采用的**逻辑宽度**（角色区域宽度）。布局请以它为准，
@@ -1428,7 +1495,45 @@ if (SELFTEST || TEST_DRAG_FOLLOW) {
   ipcMain.on('pet:test-clear-state-override', () => {
     testStateOverride = null
   })
+  /*
+   * 测试用：读 / 设置置顶状态。
+   *
+   * 为什么需要：置顶是**窗口级**属性，渲染进程看不到，也没法用合成事件验证；
+   * 原生菜单项在自动化下也点不到。所以走这条路（内部就是 `applyTopmost`，
+   * 与菜单点击完全同一条路径），再问窗口的**真实** alwaysOnTop 值 ——
+   * 两者不一致就说明"设置生效了但没作用到窗口上"。
+   *
+   * ⚠️ 读写分开注册：
+   *  · 读用 `handle`（invoke 语义）随时可用 —— 不改任何东西，没有风险；
+   *  · 写只在测试分支里注册，生产运行时渲染进程调不动窗口层级。
+   *
+   * 一开始我把**读**也塞进了这个测试分支，结果自测里读不到状态；
+   * 更早一版还想用 preload 的 `process.argv` 把关，而 preload 的 argv
+   * 是渲染进程自己的参数、看不到 `--test-drag-follow`（实测确认）。
+   */
+  ipcMain.handle('pet:test-topmost-set', (_event, payload) => {
+    const requested = payload && typeof payload.set === 'boolean' ? payload.set : null
+    if (requested !== null) applyTopmost(requested)
+    return topmostSnapshot()
+  })
 }
+
+/**
+ * 置顶状态的快照（主进程记录值、窗口真实值、设置文件里的值）。
+ *
+ * 三者放在一起是有意的：`enabled` 与 `windowAlwaysOnTop` 不一致说明
+ * "变量改了但没作用到窗口"，`persisted` 不一致说明"没存住"，
+ * 而这两种故障的表现（重启后恢复）很难区分开。
+ */
+function topmostSnapshot() {
+  return {
+    enabled: topmostEnabled,
+    windowAlwaysOnTop: win && !win.isDestroyed() ? win.isAlwaysOnTop() : null,
+    persisted: settings.load().topmost,
+  }
+}
+
+ipcMain.handle('pet:test-topmost', () => topmostSnapshot())
 
 /** 由菜单项调用：调整尺寸并回报结果，失败时用气泡提示。 */
 function changePetSizeByMenu(petWidth) {
@@ -1497,6 +1602,24 @@ ipcMain.on('pet:context-menu', () => {
     {
       label: '尺寸',
       submenu: sizeSubmenu,
+    },
+    {
+      /*
+       * 置顶开关（用户要求："可以让桌宠始终显示在最上层或正常作为窗口调节"）。
+       *
+       * 用 `type: 'checkbox'` + `checked` 而不是两行"开启/关闭" ——
+       * 菜单每次弹出时都重新构建，所以 `checked` 永远是当前真实状态，
+       * 一眼能看出现在是不是置顶。点击时 Electron 会自动翻转勾选，
+       * 但**状态以主进程的 topmostEnabled 为准**（用 click 参数里的
+       * menuItem.checked），而不是靠 !topmostEnabled 反推 ——
+       * 两者若因某种原因不同步，反推会把状态越搞越乱。
+       */
+      label: '始终显示在最上层',
+      type: 'checkbox',
+      checked: topmostEnabled,
+      click: (menuItem) => {
+        applyTopmost(menuItem.checked)
+      },
     },
     {
       label: '回到初始位置',
@@ -1608,6 +1731,24 @@ async function runDragFollowTest() {
   /** 渲染进程的 webContents：多个子用例都要用它执行脚本来读写内部状态。 */
   const wc = win && !win.isDestroyed() ? win.webContents : null
 
+  /*
+   * 自测专用：容忍"拖拽中 mousemove 报告 buttons === 0"。
+   *
+   * 那条判断在生产环境是**必要**的（mouseup 丢失时的补救信号），但自测用合成
+   * mousedown 起拖、屏幕上真实鼠标键并未按下，于是这 180ms 内任何一次真实
+   * mousemove 被转发进来都会把拖拽提前取消 —— 实测偶发（约五次一次），
+   * 表现为"拎起判定没通过、动画还停在 head"。
+   *
+   * 只影响渲染进程里这一个启发式，不改任何生产逻辑。
+   */
+  if (wc) {
+    try {
+      await wc.executeJavaScript('window.__petTestTolerateButtonsZero(true)', true)
+    } catch {
+      // 忽略：拿不到钩子时仍按原逻辑跑。
+    }
+  }
+
   try {
     await setTimeoutAsync(1200)
     const [wx0, wy0] = win.getPosition()
@@ -1703,6 +1844,65 @@ async function runDragFollowTest() {
 
     // ---- 拖动范围限制：窗口边界不出屏 ----
     await verifyDragBounds(check, setTimeoutAsync)
+
+    /*
+     * ---- 置顶开关（右键菜单里的"始终显示在最上层"）----
+     *
+     * 放在**所有拖拽验证之后**：本块会把窗口的 alwaysOnTop 反复开关，
+     * 而拖拽跟随/落点那几条断言对窗口状态很敏感（实测把这段插在拖拽序列中间，
+     * 会让"拖拽进行中禁止其他动画触发""拖拽动画播完停在最后一帧""落点无漂移"
+     * 三条一起失败）。窗口级操作要等窗口状态相关的用例都跑完再做。
+     *
+     * 置顶是窗口级属性，渲染进程看不到，原生菜单项在自动化下也点不到，
+     * 所以走 `pet:test-topmost` / `pet:test-topmost-set` —— 内部就是
+     * `applyTopmost`，与菜单点击**完全同一条路径**，再问窗口的真实值。
+     */
+    {
+      const initial = await wc.executeJavaScript('window.pet.topmostState()', true)
+      check(
+        '置顶状态可读取，且与窗口真实层级一致',
+        initial && typeof initial.enabled === 'boolean' && initial.windowAlwaysOnTop === initial.enabled,
+        `主进程记录=${String(initial && initial.enabled)}，窗口实际=${String(initial && initial.windowAlwaysOnTop)}`,
+      )
+
+      const off = await wc.executeJavaScript('window.pet.setTopmost(false)', true)
+      check(
+        '关闭置顶后窗口真的不再置顶',
+        off && off.enabled === false && off.windowAlwaysOnTop === false,
+        `主进程记录=${String(off && off.enabled)}，窗口实际=${String(off && off.windowAlwaysOnTop)}`,
+      )
+      check(
+        '关闭置顶会持久化到设置文件',
+        off && off.persisted === false,
+        `设置文件里的 topmost=${String(off && off.persisted)}`,
+      )
+
+      const on = await wc.executeJavaScript('window.pet.setTopmost(true)', true)
+      check(
+        '开启置顶后窗口真的置顶',
+        on && on.enabled === true && on.windowAlwaysOnTop === true,
+        `主进程记录=${String(on && on.enabled)}，窗口实际=${String(on && on.windowAlwaysOnTop)}`,
+      )
+      check(
+        '开启置顶也会持久化',
+        on && on.persisted === true,
+        `设置文件里的 topmost=${String(on && on.persisted)}`,
+      )
+
+      // 恢复成用例开始前的状态，避免污染用户的设置文件。
+      if (initial && typeof initial.enabled === 'boolean') {
+        const restored = await wc.executeJavaScript(
+          `window.pet.setTopmost(${String(initial.enabled)})`,
+          true,
+        )
+        check(
+          '置顶状态已恢复为用例开始前的值',
+          restored && restored.enabled === initial.enabled && restored.persisted === initial.enabled,
+          `恢复为 ${String(initial.enabled)}；主进程=${String(restored && restored.enabled)}，` +
+            `设置文件=${String(restored && restored.persisted)}`,
+        )
+      }
+    }
 
     const failed = results.filter((r) => !r.ok)
     log(`跟随自测结果：${String(results.length - failed.length)}/${String(results.length)} 通过`)
@@ -2322,6 +2522,21 @@ async function verifyRealDrag(check, wait) {
     // 180ms 长按之后才起播拖拽动画，多等一点余量。
     await wait(420)
     const liftedState = await readState()
+    /*
+     * 先单独钉住"拎起判定是否通过"。
+     *
+     * 实测偶发（约五次一次）出现 `activeAnimationId` 仍是 head、收尾定时器还在 ——
+     * 这不是"收尾把 hang 打断了"，而是 **180ms 的拎起回调根本没执行**。
+     * 两种情况（回调没跑 / 跑完又被打断）修法完全不同，所以必须先分清：
+     * `dragging` 为 true 说明回调**跑过**（它第一件事就是 endAction 并起播 hang），
+     * 为 false 说明回调被 `finishDrag()` 提前取消了。
+     */
+    check(
+      '拎起判定通过（mousedown 后处于拖拽态）',
+      liftedState.dragging === true,
+      `dragging=${String(liftedState.dragging)}；` +
+        `active=${String(liftedState.activeAnimationId)}，currentActionId=${String(liftedState.currentActionId)}`,
+    )
     check(
       '确认拖拽后立即停掉正在播的动作动画',
       beforeDragStart.activeAnimationId === 'head' &&

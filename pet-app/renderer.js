@@ -32,6 +32,16 @@ const affectionHeartsEl = document.getElementById('affection-hearts')
 /** 判定为点击而非拖拽的位移阈值（像素）。 */
 const CLICK_THRESHOLD_PX = 4
 
+/**
+ * 是否**容忍**"拖拽中 mousemove 报告 buttons === 0"。
+ *
+ * 生产环境必须是 `false`：那是"mouseup 丢了"的补救信号（见 mousemove 处理器）。
+ * 但自测用合成 mousedown 起拖，真实鼠标键并未按下，于是任何一次真实 mousemove
+ * 都会带着 `buttons === 0` 把拖拽提前取消 —— 造成偶发失败。
+ * 测试开始时把它置为 true，见 `window.__petTestTolerateButtonsZero`。
+ */
+let tolerateButtonsZero = false
+
 /** 角色画布宽高比。素材已裁去透明留白，为 864×1157。 */
 const ASPECT_W = 864
 const ASPECT_H = 1157
@@ -1132,7 +1142,13 @@ window.addEventListener('mousemove', (e) => {
   // 拖拽中：位置**由主进程跟随**（它每 4ms 读一次光标并立即设置窗口位置），
   // 这里不再上报坐标 —— 上报会多一次 IPC 往返，反而让跟随变慢。
   // 但要瞄一眼按键是否还按着：万一 mouseup 丢了，这是最可靠的补救信号。
-  if (e.buttons === 0) finishDrag()
+  //
+  // ⚠️ 自测下这个启发式必须**关掉**：自测是用合成 mousedown 起拖的，
+  // 屏幕上真实的鼠标键并没有按下，所以这 180ms 内任何一次真实 mousemove
+  // 被转发进来都会带着 `buttons === 0`，把拖拽提前取消 ——
+  // 表现为偶发（约五次一次）"拎起判定没通过、还停在 head / 站立"。
+  // 真拖拽时 `buttons` 就是 1，这条启发式在生产环境是有效的，所以只在测试里禁用。
+  if (!tolerateButtonsZero && e.buttons === 0) finishDrag()
 })
 
 /**
@@ -1783,6 +1799,21 @@ async function playAction(id, options = {}) {
   const holdMs = Math.max(1200, onceMs + 150)
   actionStopTimer = setTimeout(() => {
     actionStopTimer = null
+    /*
+     * ⚠️ 拖拽期间**不许**收尾。
+     *
+     * 为什么需要：拖拽开始时 `endAction()` 会把 `currentActionId` 清空并停掉
+     * 当时的收尾定时器，但**这个回调仍可能因种种时序原因被触发**
+     * （例如定时器在 `endAction()` 之前就已进入任务队列）。而它的第一件事就是
+     * `endAction()`，那会把正在播的**拖拽动画**从中间切成站立 ——
+     * 实测现象：`active=stand（期望 hang）`，诊断里写着
+     * `最近一次 endAction：动作=head`。短动作（head 10 帧 ≈ 1.85s）的收尾
+     * 正好落在拖拽动画的播放窗口里，最容易撞上。
+     *
+     * 修法不是"想办法把定时器清干净"（时序问题清不干净），而是**让收尾自己判断**：
+     * 正在拖拽就什么都不做 —— 那个动作早就被 `endAction()` 结束过了。
+     */
+    if (dragging) return
     endAction()
     /*
      * 什么时候该重置闲置计时：
@@ -2848,6 +2879,19 @@ window.__petTestForceEndDrag = () => {
     // 忽略：收尾失败不该让自测崩掉。
   }
   return { dragging }
+}
+
+/**
+ * 测试用：开关"容忍 buttons === 0"。
+ *
+ * 见 `tolerateButtonsZero` 的说明 —— 自测是合成拖拽，真实鼠标键没按下，
+ * 不关掉这条启发式就会有偶发失败。**只在测试里用**。
+ *
+ * @param {boolean} value
+ */
+window.__petTestTolerateButtonsZero = (value) => {
+  tolerateButtonsZero = Boolean(value)
+  return { tolerateButtonsZero }
 }
 
 /**
