@@ -2,14 +2,25 @@
  * DSH 桌宠插件 · 宿主半侧入口。
  *
  * 职责边界（重要）：
- *   · 余额与凭据只留在这里 —— 桌宠进程永远拿不到 API Key，只拿到余额数字。
- *   · 桌宠是一个独立的 Electron 透明窗口进程；本插件只监听回环地址、不对外暴露，
- *     也不注册到 Web UI 的路由表。
- *   · 桌宠被 spawn 成 detached 进程，宿主重启/卸载不会关掉它（除非显式配置）。
+ *   · 桌宠是一个独立的 Electron 透明窗口进程；本插件只监听回环地址、不对外暴露。
+ *   · 桌宠被 spawn 成 detached 进程，宿主重启不会带走它（但退出 DSH 会，
+ *     见 `stopOnUnload`）。
  *
- * 本阶段（阶段 4 最小框架）只实现：插件的装载/卸载生命周期、回环桥接、
- * 桌宠进程的启停与判活、以及三个模型工具。余额与工作档位的真实数据
- * 由后续阶段接入，当前明确标注为"未接入"，不返回任何模拟数据。
+ * ## 余额与凭据（这条改过，别照旧注释理解）
+ *
+ * 这里**曾经**写着"余额与凭据只留在这里，桌宠进程永远拿不到 API Key"。
+ * 后来按用户要求把余额取数**搬到了桌宠侧**（桌宠自己读凭据文件、自己取数、
+ * 自己播报）—— 这条边界的真实情况是：
+ *
+ *   · DSH 把 API Key **明文**存在 `$DSH_HOME/.credentials.yaml`，本机任何进程都能读，
+ *     所以"密钥绝不进桌宠"从一开始就不是一条真实的安全边界；
+ *   · 现在守的是另一条：**密钥只进各自的主进程，绝不进渲染进程**
+ *     （渲染进程每帧都在跑页面代码，还有 CSS/图片，那才是真风险）。
+ *
+ * 宿主侧保留 `createBalanceFetcher` 只为 `DSHpet_balance` 工具按需查询，
+ * 不设定时器、不播报（否则两边各播一遍，用户会听到两次）。
+ *
+ * 完整说明见 README 的「API 余额监控」一节。
  */
 
 import { existsSync } from 'node:fs'
@@ -27,62 +38,38 @@ import { PROTOCOL_VERSION } from '../shared-core/protocol.js'
 export const name = 'dsh-pet-ds'
 
 /**
- * 必需服务。tools 用于注册模型工具，credentials 留给后续阶段的余额查询。
+ * 必需服务。
+ *
+ * `tools` 用于注册模型工具，`credentials` 用于按需查余额。
  * 用 inject 声明而不是直接读 ctx.xxx，Cordis 会等这些服务就绪后再调用 apply。
+ *
+ * ⚠️ 这里**刻意不声明 `settings`**。设置页要用它，但它是个可选服务：
+ * 写在顶层 `inject` 里的话，一个没挂 settings 的部署会让**整个插件不激活** ——
+ * 桌宠本体（窗口、余额、动作）就全废了。所以改成在 apply 里用
+ * `ctx.inject(['settings'], child => ...)` 局部注入（见下方"设置页支持"）。
+ * 这正是 DSH 官方规范要求的做法。
  */
 export const inject = ['tools', 'credentials']
 
 const VERSION = '0.1.0'
 
-const DEFAULTS = Object.freeze({
-  /** 回环状态接口的起始端口；被占用时自动向后顺延。 */
-  port: 47845,
-  /** 显式指定 Electron 可执行文件；留空则自动探测。 */
-  electronPath: '',
-  /** 宿主启动后是否自动把桌宠叫起来。 */
-  autoStart: true,
-  /** 启动延迟，避开宿主 boot 高峰。 */
-  startDelayMs: 3000,
-  /** 打印桌宠子进程的输出，排障用。 */
-  debug: false,
-  /**
-   * 宿主卸载（含 DSH 退出）时是否顺手关掉桌宠。
-   *
-   * ⚠️ 默认值从 `false` 改成了 **`true`**（用户要求：
-   * "给桌宠加上…退出dsh时自动关闭"）。
-   *
-   * 原先默认 false 的理由是"桌宠是桌面常驻小玩意，宿主重启不该把它带走"。
-   * 用户明确要求反过来：**退出 DSH 就关掉桌宠**。
-   *
-   * 这条路是可靠的：DSH 退出时会走 `app.current.fiber.dispose()`，
-   * 那会执行本插件所有 `ctx.effect` 的清理器（已读 DSH 打包源码确认）。
-   * 唯一的约束是它外面套着一个 **5 秒**的预算
-   * （`PROCESS_SHUTDOWN_TIMEOUT_MS = 5e3`）—— 而桌宠用的是长轮询，
-   * quit 命令基本能立即送达，所以这个预算足够。
-   */
-  stopOnUnload: true,
-  /**
-   * 桌宠窗口宽度（CSS 像素）。高度默认按 1:1 取，后续接入立绘素材后改为按比例。
-   * 名字里的"宠物"保持中文注释说明，配置键用英文。
-   */
-  size: 260,
-  /** 置顶。 */
-  alwaysOnTop: true,
-  /** 余额低于该值时进入"告急"档（面板据此变色）。 */
-  lowBalanceThreshold: 10,
-  /**
-   * 余额缓存与**刷新/播报**周期（秒）。用户指定 5 分钟（300 秒）。
-   *
-   * 余额接口有限流，不能轮询太密；而"每 5 分钟播报一次消费"本身就是需求，
-   * 所以缓存时长与刷新周期**共用同一个值** —— 分两处设只会在它们不一致时
-   * 产生"播报的其实是缓存、根本没重新取数"这类很难查的问题。
-   */
-  refreshSeconds: 300,
-  /** DeepSeek API 地址（可在自建/代理场景覆盖）。 */
-  apiBase: 'https://api.deepseek.com',
-  /** 读取 API Key 的凭据键名。 */
-  credential: 'DEEPSEEK_API_KEY',
-})
+/**
+ * 插件配置的 **schema**（schemastery）—— 定义在 `./config-schema.js`。
+ *
+ * 单独成模块是为了**能独立单测**：DSH 设置页里能看到哪些字段完全由它决定
+ * （只有 `.volatile()` 的字段会出现在页面上），而"字段没出现"这种故障
+ * 不报错、很难从现象反推。
+ */
+export { Config } from './config-schema.js'
+
+/**
+ * 插件配置的**运行时默认值** —— 定义在 `./defaults.js`。
+ *
+ * ⚠️ 它与 `config-schema.js` 里的 `.default()` 是**两份默认值**，
+ * 分别服务"运行时回落"与"设置页显示"。`scripts/dev/test-config-schema.mjs`
+ * 会逐字段断言两者一致，防止出现"设置页显示 300、实际用 600"这种漂移。
+ */
+export { DEFAULTS } from './defaults.js'
 
 /**
  * 插件入口。
@@ -106,6 +93,47 @@ export function apply(ctx, config) {
   say('apply() 开始装载')
 
   const cfg = normalizeConfig(config, say)
+
+  /*
+   * ---------------------------------------------------------------- 设置页支持
+   *
+   * DSH 的设置页里，本插件的配置由**客户端**插件（`client/`）渲染，
+   * 但"哪些字段可编辑"由这份宿主 schema 决定（只有 `.volatile()` 的会出现在页面上）。
+   * 宿主这边只需要做一件事：告诉 settings 服务"**这个插件的设置页是自己画的**"。
+   *
+   * 为什么必须显式说这一句：settings 服务默认策略是 `autoGenerate: true`，
+   * 意思是"客户端可以拿 schema 自己生成页面"。DSH 官方文档要求
+   * "自带页面的插件要注册 `configure({ auto: false }, ctx.fiber)`"。
+   * （附带发现：`autoGenerate` 在当前 DSH 版本里**没有任何客户端消费者** ——
+   * 所有设置页都是插件手写的。这里仍然按官方要求注册，是为了语义正确、
+   * 也为了将来真有渲染器时不会重复生成一份。）
+   *
+   * ⚠️ 两处细节很要紧：
+   *
+   * 1. **用 `ctx.inject(['settings'], child => ...)` 局部注入，不写进顶层 `inject`。**
+   *    settings 是可选服务；写进顶层的话，一个没挂它的部署会让整个插件不激活 ——
+   *    桌宠本体（窗口、余额、动作）就全废了。
+   *
+   * 2. **`configure` 要作为 effect 注册。** 官方原文：这样做之后
+   *    "a late-loading or replaced Settings service picks the policy up"，
+   *    也就是 settings 服务晚加载或被替换时策略仍然生效。
+   */
+  try {
+    ctx.inject(['settings'], (child) => {
+      try {
+        child.effect(
+          () => child.settings.configure({ auto: false }, ctx.fiber),
+          'dsh-pet-ds: settings page policy',
+        )
+        say('已注册设置页策略（auto: false，页面由本插件的客户端渲染）')
+      } catch (err) {
+        say(`注册设置页策略失败（设置页会不可用，其它功能不受影响）：${errText(err)}`)
+      }
+    })
+  } catch (err) {
+    // 没有 settings 服务时 ctx.inject 的 child 不会执行 —— 这里兜住意外形状。
+    say(`跳过设置页支持：${errText(err)}`)
+  }
 
   // ---------------------------------------------------------------- 路径解析
   // 用 import.meta.resolve 解析自身 package.json，从而可靠地拿到插件根目录。

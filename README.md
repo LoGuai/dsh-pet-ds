@@ -94,7 +94,8 @@ node scripts/dev/verify-stop-on-unload.mjs
 |---|---|
 | `pet-app/**`（窗口、动画、面板 UI、菜单动作） | **只重启桌宠**（`DSHpet_control stop` → `start`） |
 | `src/shared-core/**`（共用逻辑） | 只重启桌宠（桌宠侧用它） |
-| `src/host/**`（宿主：工具、桥接、监管） | **需要重启 DSH** —— 见下 |
+| `src/host/**`（宿主：工具、桥接、监管、**配置 schema**） | **需要重启 DSH** —— 见下 |
+| `client/**`（设置页的浏览器半侧） | **需要重启 DSH + 刷新页面** —— 见下 |
 
 ### 为什么宿主侧改动仍要重启 DSH
 
@@ -1401,6 +1402,96 @@ node scripts/dev/mock-host.mjs --no-balance
 
 真实余额只在 DSH 宿主里取，开发宿主不会去碰真实 API。
 
+## 设置页：桌宠设置栏
+
+DSH 的**设置页里有一栏「桌宠」**，可以直接调本插件的配置，不用手改 YAML。
+
+```
+设置 ▸ 桌宠
+  启动
+    自动启动桌宠            [开关]
+    启动延迟（毫秒）        [3000]
+    退出 DSH 时关闭桌宠      [开关]
+  窗口
+    桌宠宽度（像素）        [260]
+    始终显示在最上层        [开关]
+  余额监控
+    余额告急阈值（元）      [10]
+    余额刷新周期（秒）      [300]
+                            [保存] [放弃修改]
+```
+
+### 背后是怎么接上的
+
+DSH 的设置表单**不是插件自己注册的**，而是从插件的 `Config` schema **派生**的：
+
+| 环节 | 位置 |
+|---|---|
+| 声明哪些字段可编辑 | 宿主 `src/host/config-schema.js`（**只有标 `.volatile()` 的字段会出现**） |
+| 告诉 DSH「这个插件的页面我自己画」 | `apply` 里 `ctx.inject(['settings'], child => child.settings.configure({ auto: false }, ctx.fiber))` |
+| 页面本体 | `client/client.js`，注册到 `settings.section` 槽位 |
+| 读写配置 | 客户端 `ctx.configForms.get('dsh-pet-ds')` |
+| 落盘 | DSH 自己写进 profile 的 `cordis.patch.yml` 并热应用 —— **本插件不碰任何文件** |
+
+命名空间 = loader 行的 `id:`（本插件是 `dsh-pet-ds`），**无需注册**，DSH 会自动派生。
+
+### 为什么拆成两半
+
+设置页由**宿主 schema** 与**客户端表单**两部分组成，而它们天生容易漂移：
+
+- 客户端多写一个字段 → 保存时 Host 抛 `Config field "x" is not volatile`；
+- 客户端少写一个字段 → 那个配置**静默消失**在页面上，不报错；
+- 默认值不一致 → 「恢复默认」写成错的值。
+
+客户端是浏览器里的 `__ModuleLoader__.load` 外壳（**不是 ES 模块**），
+拿不到宿主 schema，所以字段清单与默认值必然是**手抄的一份**。
+为此客户端顶部留了两个**机器可读**的契约注释：
+
+```js
+// @dsh-pet-fields: autoStart, startDelayMs, ...
+// @dsh-pet-defaults: {"autoStart":true,"startDelayMs":3000,...}
+```
+
+`scripts/dev/test-client-settings.mjs` 拿它们与宿主 schema **逐项比对**，
+漂移就红。**改字段或默认值时这两个注释必须一起改。**
+
+### ⚠️ 客户端不依赖任何 Harness Client 包
+
+DSH 官方 UI 规范明令禁止第三方插件 `require('@deepseek-ai/dsh-client-ui-primitives')`
+之类的包，理由是：
+
+1. 那些包会变，而普通 JS **没有类型检查**；
+2. **一个抛错的组件会让整个槽位空白**（控制台只留 `slot entry crashed`）。
+
+所以本插件的表单控件是**自己搭的**（`React.createElement`，React 本身在浏览器
+模块表里、是稳定的），样式**只用** `--dsw-alias-*` 主题令牌 ——
+令牌名变了只会掉点颜色，不会把页面搞崩。单测里有一条断言**禁止**客户端
+require 除 `react` / `react-dom` / `react/jsx-runtime` 之外的任何模块。
+
+### 保存语义上的两个细节
+
+**一、改成默认值用 `unset` 而不是 `set`。**
+
+用户点「恢复默认」时，发出去的是 `{op:'unset', path:[key]}` —— 删掉 profile 里的
+覆盖，让值回落继承层。若改成写一行与默认相同的值，`cordis.patch.yml` 会越攒越乱。
+
+**二、失败时把草稿丢掉。**
+
+`mutate()` 返回 `false` 表示被拒绝（多半是配置已被别处改过，revision 冲突）。
+这时 DSH 会自动重读，我们把草稿清成宿主真值并提示重试 ——
+而不是留着一份迟早会被覆盖的假象。
+
+### 几个刻意的选择
+
+**不把 `settings` 写进顶层 `inject`。** 它是可选服务；写顶层的话，一个没挂它的
+部署会让**整个插件不激活** —— 桌宠本体（窗口、余额、动作）就全废了。
+所以用 `ctx.inject(['settings'], ...)` 局部注入。`mock-host` 正好没有这个服务，
+探针 8/8 就是在验证这条降级路径。
+
+**`port` / `apiBase` / `credential` / `electronPath` / `debug` 不出现在设置页上。**
+它们改了要重启、属于"装错才会动"的类型，塞进常用设置栏只会干扰。
+它们仍然只能改 `cordis.patch.yml`（schema 里声明了、但**没标** `.volatile()`）。
+
 ## 属性面板
 
 光标悬停在桌宠上时，在**桌宠下方**显示。四行内容：
@@ -1583,7 +1674,6 @@ resize 事件 → 180x326 @ (948,322)
 必须保留占位，否则角色会被撑高、脚被裁掉，悬停时还会来回跳。
 
 ## 退出为什么曾经失效
-
 `quitSelf()` 原来的写法是：
 
 ```js
