@@ -23,8 +23,10 @@
     "dev": "node scripts/dev/mock-host.mjs",
     "dev:debug": "node scripts/dev/mock-host.mjs --debug",
     "probe": "node scripts/dev/probe.mjs",
-    "test": "node scripts/dev/test-manifest-deps.mjs && node scripts/dev/test-config-schema.mjs && node scripts/dev/test-client-settings.mjs && node scripts/dev/test-client-smoke.mjs && node --experimental-vm-modules scripts/dev/test-host-link.mjs && node --experimental-vm-modules scripts/dev/test-install-bundle-spec.mjs && node scripts/dev/test-install.mjs && node scripts/dev/test-dialogue.mjs && node scripts/dev/test-balance-announce.mjs && node scripts/dev/test-mood.mjs && node scripts/dev/test-affection.mjs",
-    "verify:install-bundle": "node scripts/dev/verify-install-bundle.mjs"
+    "test": "node scripts/dev/test-manifest-deps.mjs && node scripts/dev/test-config-schema.mjs && node scripts/dev/test-client-settings.mjs && node scripts/dev/test-client-smoke.mjs && node --experimental-vm-modules scripts/dev/test-host-link.mjs && node --experimental-vm-modules scripts/dev/test-install-bundle-spec.mjs && node scripts/dev/test-install.mjs && node scripts/dev/test-setup-extract.mjs && node scripts/dev/test-dialogue.mjs && node scripts/dev/test-balance-announce.mjs && node scripts/dev/test-mood.mjs && node scripts/dev/test-affection.mjs",
+    "verify:install-bundle": "node scripts/dev/verify-install-bundle.mjs",
+    "build:installer": "node scripts/dev/build-installer.mjs",
+    "test:setup": "node scripts/dev/test-setup-extract.mjs && node scripts/dev/test-setup-pnpm.mjs"
   },
   "files": [
     "src",
@@ -50,7 +52,14 @@
     "RELEASE-NOTES-v0.1.3.md",
     "scripts/dev/probe-hittest-stability.mjs",
     "scripts/dev/probe-stats-stable.mjs",
-    "RELEASE-NOTES-v0.1.3-fix.md"
+    "RELEASE-NOTES-v0.1.3-fix.md",
+    "installer/Setup.cs",
+    "installer/MiniZip.cs",
+    "scripts/dev/build-installer.mjs",
+    "scripts/dev/setup-runner.mjs",
+    "scripts/dev/test-setup-extract.mjs",
+    "scripts/dev/test-setup-pnpm.mjs",
+    "INSTALLER.md"
   ],
   "comment": [
     "本阶段（阶段 4 最小框架）刻意不设置构建步骤：src 下的 .js 就是运行代码，",

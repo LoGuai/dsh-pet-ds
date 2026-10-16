@@ -2,6 +2,9 @@
 node_modules/
 pnpm-lock.yaml
 
+# pnpm 的本地内容寻址存储（构建安装程序载荷时会生成，很大）
+.pnpm-store/
+
 # 开发缓存：Electron 安装包（约 150MB）与编译出的开发工具
 .cache/
 
