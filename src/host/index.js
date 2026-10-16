@@ -35,6 +35,34 @@ import { electronHelpText, resolveElectron } from './electron-locate.js'
 import { createBalanceFetcher } from './balance.js'
 import { PROTOCOL_VERSION } from '../shared-core/protocol.js'
 
+/**
+ * 插件配置的 **schema**（schemastery）—— 定义在 `./config-schema.js`。
+ *
+ * 单独成模块是为了**能独立单测**：DSH 设置页里能看到哪些字段完全由它决定
+ * （只有 `.volatile()` 的字段会出现在页面上），而"字段没出现"这种故障
+ * 不报错、很难从现象反推。
+ */
+import { Config } from './config-schema.js'
+
+/**
+ * 插件配置的**运行时默认值** —— 定义在 `./defaults.js`。
+ *
+ * ⚠️ 它与 `config-schema.js` 里的 `.default()` 是**两份默认值**，
+ * 分别服务"运行时回落"与"设置页显示"。`scripts/dev/test-config-schema.mjs`
+ * 会逐字段断言两者一致，防止出现"设置页显示 300、实际用 600"这种漂移。
+ *
+ * ⚠️⚠️ **必须写成 `import`，不能写成 `export { DEFAULTS } from './defaults.js'`。**
+ * 再导出（re-export）**不会在模块内创建本地绑定**，而 `normalizeConfig()`
+ * 里要用 `{ ...DEFAULTS }` —— 于是会在 `apply()` 里抛 ReferenceError。
+ *
+ * 后果极其隐蔽：Loader 把异常记进**它自己的日志**（本机 DSH 没有日志文件），
+ * 表现是插件**静默不加载** —— 模型工具消失、桥接端口不监听，
+ * 而 `node --check` 只验语法、**抓不到未定义标识符**。这个坑真踩过。
+ */
+import { DEFAULTS } from './defaults.js'
+
+export { Config, DEFAULTS }
+
 export const name = 'dsh-pet-ds'
 
 /**
@@ -52,24 +80,6 @@ export const name = 'dsh-pet-ds'
 export const inject = ['tools', 'credentials']
 
 const VERSION = '0.1.0'
-
-/**
- * 插件配置的 **schema**（schemastery）—— 定义在 `./config-schema.js`。
- *
- * 单独成模块是为了**能独立单测**：DSH 设置页里能看到哪些字段完全由它决定
- * （只有 `.volatile()` 的字段会出现在页面上），而"字段没出现"这种故障
- * 不报错、很难从现象反推。
- */
-export { Config } from './config-schema.js'
-
-/**
- * 插件配置的**运行时默认值** —— 定义在 `./defaults.js`。
- *
- * ⚠️ 它与 `config-schema.js` 里的 `.default()` 是**两份默认值**，
- * 分别服务"运行时回落"与"设置页显示"。`scripts/dev/test-config-schema.mjs`
- * 会逐字段断言两者一致，防止出现"设置页显示 300、实际用 600"这种漂移。
- */
-export { DEFAULTS } from './defaults.js'
 
 /**
  * 插件入口。
