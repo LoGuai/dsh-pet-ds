@@ -13,27 +13,46 @@
 
 ---
 
-## 方式一：PowerShell 脚本（推荐）
+## 方式一：一键安装（推荐）
 
-需要三个文件放在**同一个目录**里：
+解压后是**一个文件夹、四个文件**，全部放在一起：
 
 ```
-install-pet.ps1          一键安装脚本
-register-profile.mjs     登记 profile 配置（脚本会调用它）
-dsh-pet-ds-<版本>.tgz     插件包体
+install.cmd               双击这个（启动器，不受执行策略限制）
+install-pet.ps1           实际的安装脚本
+register-profile.mjs      登记 profile 配置（脚本会调用它）
+dsh-pet-ds-<版本>.tgz      插件包体
 ```
 
-然后任选一种运行：
+**用法：双击 `install.cmd`。** 不需要改任何系统设置、不需要管理员权限、
+不需要预装任何东西。
+
+> ### 为什么要有 `install.cmd` 这一层
+>
+> Windows 默认的 PowerShell 执行策略是 **`Restricted`** —— **禁止运行任何 `.ps1`**。
+> 所以直接双击/右键 `install-pet.ps1` 会报：
+>
+> ```
+> cannot be loaded because running scripts is disabled on this system.
+> ```
+>
+> 而 **`.cmd` 不受执行策略约束**。`install.cmd` 就是替用户带上
+> `-ExecutionPolicy Bypass`（仅对这一次进程生效，**不改机器上的任何设置**）。
+>
+> 我开发时一直用 `-ExecutionPolicy Bypass` 测试，**因此没暴露这个问题** ——
+> 这是"测试方式掩盖了真实使用方式"的典型错误。现在有一条专门模拟双击的
+> 测试（`scripts/dev/test-doubleclick.mjs`）守着了。
+
+### 命令行用法（可选）
 
 ```powershell
-# 1) 右键 install-pet.ps1 → "使用 PowerShell 运行"
-# 2) 在 PowerShell 里：
+# 带参数运行（等价于双击，但能传参）
+.\install.cmd -WhatIf                       # 只检查，不改任何东西
+.\install.cmd -Tgz D:\path\to\xxx.tgz       # 指定包体
+.\install.cmd -DshHome C:\Users\me\.dsh     # 指定 DSH 配置目录
+
+# 或者直接用 ps1（需要自己带 Bypass）
 powershell -ExecutionPolicy Bypass -File .\install-pet.ps1
-# 3) 指定包体或配置目录：
-.\install-pet.ps1 -Tgz D:\path\to\dsh-pet-ds-0.1.3-fix.tgz
-.\install-pet.ps1 -DshHome C:\Users\me\.dsh -Profile desktop
-# 4) 只检查、不改任何东西：
-.\install-pet.ps1 -WhatIf
 ```
 
 它会做 4 步并在屏幕上逐条报告：
@@ -46,6 +65,18 @@ powershell -ExecutionPolicy Bypass -File .\install-pet.ps1
 ```
 
 装完**重启 DSH** 即可。
+
+### 为什么 `install.cmd` 里全是英文
+
+`cmd.exe` 按**系统 ANSI 代码页**读 `.cmd`（中文 Windows 上是 GBK），
+**不看 BOM、也不管文件里的 `chcp`**。所以 UTF-8 存的中文注释会变成乱码，
+把引号括号全搞乱、脚本直接碎（实测一堆 `'ho' is not recognized`）。
+
+因此 `install.cmd` 刻意**纯 ASCII**，中文输出全部由 `install-pet.ps1` 负责
+（它是 UTF-8 with BOM，由 PowerShell 读，没这个问题）。
+
+这条约束有个自动校验守着：`node scripts/dev/check-cmd-ascii.mjs`
+（已接入 `npm test`）—— 因为编辑器会反复把文件改回 UTF-8，光靠"当初是 ASCII"不够。
 
 ### 它改了什么
 
