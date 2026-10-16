@@ -1027,7 +1027,71 @@ function hitTest(clientX, clientY) {
 let lastIgnoreState = null
 
 /**
+ * 命中判定要连续多少次与当前状态**不同**才允许翻转。
+ *
+ * ## 为什么必须有这个滞回（实测数据）
+ *
+ * `hitTest()` 用的是**当前动画帧**的掩膜，而站立动画是循环的、
+ * 各帧的角色轮廓并不完全一样（发丝、裙摆、尾巴在动）。于是靠近轮廓边界的
+ * 像素会**随动画帧**在"命中 / 不命中"之间反复切换 —— 光标一动不动也会抖。
+ *
+ * 本机实测（把 `__petTestProbeClient` 在帧矩形内打 12×20 网格、每点采样 14 次）：
+ *
+ *     240 个采样点里，**22 个**的命中结果会变化，最多翻转 4 次
+ *     采样序列形如  11100011100000 / 00011000111111 / 10011111111111
+ *
+ * 后果是 `setStatsVisible(hit)` 与鼠标穿透**跟着动画一起闪** ——
+ * 现象就是用户报的"光标不在桌宠身上时属性面板闪烁"。
+ *
+ * ## 取值依据
+ *
+ * 站行动画约 6~10 fps（每帧 100~160ms），而 mousemove 在几十毫秒级到来。
+ * 取 3 次：既能滤掉"单帧边缘像素"这种一两帧的抖动，
+ * 又不至于让真实进出变得迟钝。
+ *
+ * ⚠️ 不要调成 1（等于没有滞回）；也不要太大 —— 那会让滞回在真实移动时
+ * 也生效，表现为"面板慢半拍"。
+ */
+const HIT_CONFIRM_SAMPLES = 3
+
+/**
+ * 两次采样之间光标移动超过这么多像素，就认为**用户真的在移动光标**，
+ * 于是跳过滞回、立即采纳判定结果。
+ *
+ * ## 为什么需要这个区分
+ *
+ * 滞回的目的是滤掉"**同一个位置**上、因动画换帧导致的抖动"。
+ * 而"光标从这里移到那里"是**真实的意图变化**，必须立刻响应 ——
+ * 否则会看到"面板在该出现的时候慢半拍"。
+ *
+ * 实测症状（就是加这个判断的原因）：先停在一个会显示面板的点，
+ * 再移到另一个不该显示的点，序列是 `1000000000…` ——
+ * 第一次采样仍读到旧状态，要 3 次采样后才翻过来。
+ *
+ * 取 3 像素：远大于手抖/亚像素抖动，又远小于有意的移动。
+ */
+const HIT_MOVE_RESET_PX = 3
+
+/** 与当前生效状态不同的命中结果已连续出现多少次。 */
+let hitPendingCount = 0
+/** 当前生效的命中状态（滞回后的结果）。 */
+let hitStable = null
+/**
+ * 是否已有确定过的命中状态。
+ *
+ * 与 `hitStable !== null` 分开是因为：拖拽结束后要**重新开始**滞回
+ * （把 `hitStable` 置回 null），此时也需要"首次立即采纳"的快路径。
+ */
+let hasHitStable = false
+/** 上一次用于判定的光标位置（用来识别"用户真的移动了"）。 */
+let lastHitProbe = null
+
+/**
  * 记录光标位置并按需更新鼠标穿透状态。
+ *
+ * ⚠️ 这里**不能**直接用单次 `hitTest` 的结果去切换状态（见 HIT_CONFIRM_SAMPLES
+ * 的说明）——必须经过连续采样确认，否则面板与穿透会跟着动画帧闪。
+ *
  * @param {number} clientX
  * @param {number} clientY
  */
@@ -1035,11 +1099,50 @@ function updateHitTest(clientX, clientY) {
   try {
     lastCursor = { x: clientX, y: clientY }
     if (dragging) return
-    const hit = hitTest(clientX, clientY)
-    // 悬停在角色身上时显示属性面板。复用命中结果，因此"光标在透明区域"
-    // 不会误触发面板 —— 与鼠标穿透行为一致。
-    setStatsVisible(hit)
-    const ignore = !hit
+
+    const raw = hitTest(clientX, clientY)
+
+    /*
+     * 先判断"用户是否真的移动了光标"。
+     *
+     * 滞回只该滤掉**同一位置**上因动画换帧造成的抖动；真实的移动必须立刻响应。
+     * 实测症状（加这个判断的原因）：先停在会显示面板的点，再移到不该显示的点，
+     * 采样序列是 `1000000000…` —— 第一次仍读到旧状态，要 3 次采样才翻过来。
+     */
+    let moved = false
+    if (lastHitProbe === null) {
+      moved = true
+    } else {
+      const dx = clientX - lastHitProbe.x
+      const dy = clientY - lastHitProbe.y
+      moved = dx * dx + dy * dy > HIT_MOVE_RESET_PX * HIT_MOVE_RESET_PX
+    }
+    lastHitProbe = { x: clientX, y: clientY }
+
+    /*
+     * 滞回：只有"与当前稳定值不同"的采样连续出现够多次，才真的翻转。
+     *
+     * ⚠️ 两种情况直接采纳、不等确认：
+     *   · 还没有确定过的状态（首帧、或刚从拖拽恢复）—— 否则启动后面板慢半拍；
+     *   · 光标真的移动了 —— 那是用户的意图，不该被去抖拖住。
+     */
+    if (!hasHitStable || moved) {
+      hasHitStable = true
+      hitStable = raw
+      hitPendingCount = 0
+    } else if (raw === hitStable) {
+      hitPendingCount = 0
+    } else {
+      hitPendingCount += 1
+      if (hitPendingCount < HIT_CONFIRM_SAMPLES) return // 还在确认中：状态保持不变
+      hitStable = raw
+      hitPendingCount = 0
+    }
+
+    // 悬停在角色身上时显示属性面板。复用（滞回后的）命中结果，
+    // 因此"光标在透明区域"不会误触发面板 —— 与鼠标穿透行为一致。
+    setStatsVisible(hitStable)
+    const ignore = !hitStable
     if (ignore === lastIgnoreState) return
     lastIgnoreState = ignore
     window.pet.setIgnoreMouse(ignore)
@@ -1047,6 +1150,65 @@ function updateHitTest(clientX, clientY) {
     // 忽略：命中测试失败不该影响交互。
   }
 }
+
+/**
+ * 测试用：读回滞回状态。
+ * @returns {{ stable: boolean|null, pending: number, samples: number }}
+ */
+window.__petTestHitHysteresis = () => ({
+  stable: hitStable,
+  pending: hitPendingCount,
+  samples: HIT_CONFIRM_SAMPLES,
+  hasStable: hasHitStable,
+})
+
+/**
+ * 测试用：把滞回状态重置成"尚未确定"。
+ *
+ * 为什么需要：滞回的物理量是"连续采样次数"，而采样发生在真实的 mousemove 流里。
+ * 想从零验证"首次立即采纳"与"边界抖动被滤掉"这两件事，就必须能把状态清干净。
+ */
+window.__petTestResetHitHysteresis = () => {
+  hitStable = null
+  hitPendingCount = 0
+  hasHitStable = false
+  lastHitProbe = null
+  return true
+}
+
+/**
+ * 测试用：**不经事件**直接驱动一次命中判定（走完整的 `updateHitTest` 路径）。
+ *
+ * ## 为什么需要它
+ *
+ * 用户报的"光标不在桌宠身上时属性面板闪烁"，根因是**同一坐标上
+ * `hitTest()` 的结果会随动画帧变化**（实测 240 个采样点里 22 个会变，
+ * 详见 `HIT_CONFIRM_SAMPLES` 的注释）。
+ *
+ * 复现/验证这件事需要在**同一个坐标**上连续采样 —— 而合成 `mousemove`
+ * 每次都要跨 CDP 往返，既慢又引入时序偏差。这个钩子让一整轮采样
+ * 在渲染进程里跑完，节奏可控。
+ *
+ * ## 返回值刻意只含纯数据
+ *
+ * 它可能被 `executeJavaScript` 送回主进程，而 Electron 的 IPC
+ * **无法克隆函数**（带上函数会报 "An object could not be cloned"）——
+ * 所以不要在这里返回 `hitTest` 之类的函数。
+ *
+ * @param {number} clientX
+ * @param {number} clientY
+ * @returns {{hit: boolean, stable: boolean|null, pending: number, statsVisible: boolean}}
+ */
+window.__petTestDriveHit = (clientX, clientY) => {
+  updateHitTest(clientX, clientY)
+  return {
+    hit: hitTest(clientX, clientY),
+    stable: hitStable,
+    pending: hitPendingCount,
+    statsVisible,
+  }
+}
+
 
 // ---------------------------------------------------------------- 点击反馈
 /*
@@ -1091,6 +1253,17 @@ function updateHitTest(clientX, clientY) {
 stage.addEventListener('mousedown', (e) => {
   if (e.button !== 0) return
   dragging = true
+  /*
+   * 拖拽期间 `updateHitTest` 直接 return（不更新穿透/面板），
+   * 所以恢复时必须把滞回**重置成"尚未确定"**，让松手后第一次
+   * mousemove 立即采纳 —— 否则会沿用拖拽前的旧状态，
+   * 表现为"拖到别处松手后，面板还赖着显示/隐藏一阵子"。
+   */
+  hitStable = null
+  hitPendingCount = 0
+  hasHitStable = false
+  // 位置也要清掉：否则松手后第一次采样会与自己比较、判成"没移动"而走滞回。
+  lastHitProbe = null
   // 只记起点，不做判定 —— 判定留到 mouseup 之后（借鉴参考项目）。
   dragStart = { x: e.screenX, y: e.screenY }
   document.body.classList.add('dragging')

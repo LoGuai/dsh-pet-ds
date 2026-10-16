@@ -5055,6 +5055,54 @@ async function verifyIdleAndMood(check, wait, readLayout) {
       `命中角色=${String(leaveProbe && leaveProbe.opaque)}，帧元素=${JSON.stringify(leaveProbe && leaveProbe.rect)}`,
   )
 
+  // ---- 9) 命中判定的滞回：同一坐标上不得随动画帧抖 ----
+  //
+  // 用户报的现象是"光标不在桌宠身上时属性面板闪烁"。
+  // 根因是 `hitTest()` 用**当前动画帧**的掩膜，而站立动画循环播放、
+  // 各帧轮廓不同（发丝/裙摆/尾巴在动），于是同一坐标的命中结果会随帧变化。
+  //
+  // ⚠️ 这条断言必须**在同一坐标上连续采样**才有意义：
+  //   · 采样间隔要跨越多帧动画（60ms 足够）；
+  //   · 中间**不能移动光标** —— 滞回在"光标真的移动了"时是刻意跳过的，
+  //     移动会掩盖抖动，测出来必然是稳定。
+  //
+  // 用的坐标是之前实测最容易抖的一个（帧矩形内相对偏移 (8, 207)）。
+  {
+    const fr = await wc.executeJavaScript(
+      `(() => { const d = window.__petTestLayoutDiag(); return d.frameRect })()`,
+      true,
+    )
+    if (fr && fr.width > 0) {
+      // 挑一个在帧内、且实测会抖的点。
+      const probeX = Math.round(fr.left + 8)
+      const probeY = Math.round(fr.top + 207)
+      const seq = await wc.executeJavaScript(
+        `(async () => {
+           const out = [];
+           // 先重置滞回，保证从"未确定"起步 —— 否则会沿用上一个用例留下的状态。
+           window.__petTestResetHitHysteresis();
+           for (let i = 0; i < 16; i += 1) {
+             // 同一坐标反复驱动；注意每次都会走完整的 updateHitTest（含滞回）。
+             out.push(window.__petTestDriveHit(${String(probeX)}, ${String(probeY)}).statsVisible ? 1 : 0);
+             await new Promise((r) => setTimeout(r, 60));
+           }
+           return out;
+         })()`,
+        true,
+      )
+      let flips = 0
+      for (let i = 1; i < seq.length; i += 1) if (seq[i] !== seq[i - 1]) flips += 1
+      check(
+        '同一坐标上属性面板不随动画帧闪烁（命中判定有滞回）',
+        flips === 0,
+        `翻转 ${String(flips)} 次；采样序列 ${seq.join('')}` +
+          (flips === 0 ? '' : '（>0 说明滞回没生效，面板会闪）'),
+      )
+    } else {
+      check('同一坐标上属性面板不随动画帧闪烁（命中判定有滞回）', false, '拿不到帧矩形')
+    }
+  }
+
   /*
    * 点击部位放在**最后**做。
    *
