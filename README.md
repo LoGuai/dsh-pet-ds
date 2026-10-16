@@ -152,6 +152,78 @@ DSH 自己以 `ELECTRON_RUN_AS_NODE=1` 运行（它把 Electron 当 Node 用）�
 - `pet:get-initial` 下发 `logicalWidth`，渲染进程只读它做布局；
 - **没有任何通道能让渲染进程改窗口尺寸**（`preload.js` 里刻意没有 resize）。
 
+## 生命周期：跟 DSH 一起起、一起关
+
+用户要求：「给桌宠加上启用插件后开启dsh自启动，和退出dsh时自动关闭」。
+
+| 行为 | 配置 | 状态 |
+|---|---|---|
+| **插件启用时自动叫起桌宠** | `autoStart: true` | 本来就有（延迟 3 秒避开 boot 高峰） |
+| **退出 DSH 时自动关闭桌宠** | `stopOnUnload: true` | 本次从 `false` 改成 `true` |
+
+> ⚠️ `autoStart` 的语义是"**插件被启用后**自动把桌宠叫起来"。
+> **不是**"DSH 随 Windows 开机自启动" —— DSH 本身没有开机自启动
+> （注册表启动项与启动文件夹里都没有）。所以现在桌宠只在 DSH 开着时存在。
+
+### `stopOnUnload` 这条路为什么可靠
+
+读 DSH 打包源码确认：DSH 退出时会走
+
+```js
+const dispose = () => disposal ??= (async () => {
+  for (const release of [() => app.current?.fiber.dispose(), disposeProxy]) try { ... }
+const shutdown = createProcessShutdown(dispose);
+```
+
+`fiber.dispose()` 会执行本插件所有 `ctx.effect` 的清理器 —— 也就是
+"关闭桌宠"那段代码。
+
+**但有个时间预算**：
+
+```js
+const PROCESS_SHUTDOWN_TIMEOUT_MS = 5e3;   // 整个 dispose 只有 5 秒
+```
+
+所以停止动作必须在 5 秒内完成。为此改了两处：
+
+**一、`supervisor.stop()` 从同步改成异步 —— 会等到桌宠真的消失。**
+
+原先它是同步的：把 `quit` 命令塞进队列就返回，**不等桌宠来取**。
+而调用方紧接着就退出进程 —— 命令还没送到，宿主就没了，
+**桌宠留成孤儿**。实测确认过：开发宿主退出后桌宠仍在跑。
+
+现在它等到桌宠的 pid 真的不存在为止，超时则 `taskkill /F /T` 兜底。
+
+**二、两个宿主都 `await` 这个停止。**
+
+`ctx.effect` 的清理器现在**返回那个 Promise**，让 DSH 的 dispose 能等它。
+
+> 桌宠走的是 25 秒长轮询，而状态一变（队列里进了命令）服务端会立刻唤醒
+> 挂起的轮询，所以命令基本**立即**送达 —— 5 秒预算够用。
+
+### ⚠️ 两个平台坑（都实测过）
+
+**一、Windows 上 `process.kill(pid, 'SIGINT')` 不会触发 Node 的信号处理器。**
+
+用最小样例确认：子进程监听 `SIGINT` 后收到该调用，**处理器一次都没跑**，
+进程直接以 `exitCode 1` 结束。也就是说 `Supervisor.stop()` 里
+"非 Windows 用 `SIGTERM`"那条分支在 Windows 上从来走不通 ——
+所以 Windows 下主用 `taskkill /F /T`。
+
+**二、`taskkill`（不带 `/F`）对无窗口的控制台程序不触发退出处理。**
+
+所以**没法从外部验证**"宿主优雅退出 → 清理器关掉桌宠"这条链。
+解法是给开发宿主加一个 **stdin 触发**（收到一行 `quit` 就走与 Ctrl+C
+完全相同的 `shutdown()`），自动化测试用它
+（`node scripts/dev/verify-stop-on-unload.mjs`）。
+
+### 已知边界
+
+`stopOnUnload` 依赖 DSH **优雅退出**。若 DSH 被强杀（任务管理器结束进程、
+崩溃），清理器不会跑，桌宠会留下 —— 这是设计上的取舍，
+因为"桌宠在 DSH 没开时也能显示余额"是之前明确要求过的
+（桌宠自己取余额，不依赖 DSH）。两者不可兼得，所以选了优雅退出这条路。
+
 ## 拖拽是怎么实现的（含踩坑记录）
 
 拖拽是本项目最容易写错的地方，这里记录结论，避免以后重蹈覆辙。
@@ -266,7 +338,7 @@ DSH 安装目录下的 `DeepSeek Harness.exe` 本身就是 Electron，但它是*
 | 拖拽期间 | **禁止其他动画触发**（菜单 / 随机动作 / 点击互动一律被忽略） |
 | 拖拽边界 | 窗口**完整**限制在屏幕工作区内，边界不出屏 |
 | 光标悬停 | 桌宠**下方**显示属性面板（目前是心情量度条） |
-| 右键 | 菜单：说句话 / **动作** / **点击部位**（清单） / **尺寸**（5 档） / 回到初始位置 / 退出桌宠 |
+| 右键 | 菜单：**对话** / **动作**（含「触碰{部位}」） / **尺寸**（5 档） / 置顶 / 回到初始位置 / 退出桌宠 |
 | 鼠标穿透 | 光标落在角色透明区域时放行给桌面，不挡住其他窗口 |
 | 自动 | 6fps 逐帧站立动画无限循环；闲置时随机触发一个动作 |
 
@@ -1886,6 +1958,7 @@ because it violates the Content Security Policy directive: "default-src 'none'"
 | `node scripts/dev/probe.mjs` | 自动化冒烟验证，8 项断言 |
 | `node scripts/dev/mock-host.mjs --pet-arg --selftest` | **桌宠侧自检**：合成鼠标事件驱动一次完整拖拽，断言「被拎起来」与随机台词生效，并把 4 轮截图写到 `_research/drag-*.png` |
 | `node scripts/dev/install-electron.mjs` | 安装 Electron 到 `$DSH_HOME/electron/` |
+| `node scripts/dev/verify-stop-on-unload.mjs` | **验证「宿主退出时关掉桌宠」**：起开发宿主 → 等桌宠起来 → 用 stdin 触发宿主优雅退出 → 断言桌宠进程消失（2 项断言） |
 | `scripts/dev/shot.cs` | 截图桌宠窗口（含周边桌面，便于判断透明）；需 `csc` 编译 |
 | `scripts/dev/listwin.cs` | 列出所有可见窗口及所属进程，用于定位窗口 |
 

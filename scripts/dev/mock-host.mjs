@@ -91,7 +91,12 @@ async function shutdown(code) {
   // 假余额定时器也要收掉，否则它会给一个已经关掉的桥接写消息。
   if (fakeBalanceTimer) clearInterval(fakeBalanceTimer)
   try {
-    const result = supervisor.stop(() => bridge.enqueueCommand('quit'))
+    /*
+     * ⚠️ 必须 **await** —— `stop()` 现在会等到桌宠真的消失（软退出或强杀兜底）。
+     * 不 await 的话紧接着的 `process.exit()` 会在命令送达前就把宿主干掉，
+     * 桌宠留在桌面上变成孤儿（实测踩过）。
+     */
+    const result = await supervisor.stop(() => bridge.enqueueCommand('quit'))
     log(`停止桌宠：${JSON.stringify(result)}`)
   } catch (err) {
     log(`停止桌宠出错：${String(err)}`)
@@ -241,6 +246,32 @@ process.on('SIGINT', () => {
   log('收到 Ctrl+C，退出')
   void shutdown(0)
 })
+
+/*
+ * stdin 收到一行 `quit` 时也走一遍完整退出流程。
+ *
+ * ⚠️ 为什么需要这个入口：**Windows 上无法从外部触发 Node 的信号处理器**。
+ * 实测确认 `process.kill(pid, 'SIGINT')` 只会让进程直接结束（exitCode 1），
+ * 监听器一次都不会跑；`taskkill`（不带 /F）对无窗口的控制台程序同样不触发。
+ * 于是"宿主优雅退出 → 清理器关掉桌宠"这条链**没法从外部验证**，
+ * 而它恰恰是 `stopOnUnload` 依赖的那条路。
+ *
+ * stdin 是能在所有平台上可靠触发的通道，所以自动化测试用它
+ * （见 scripts/dev/verify-stop-on-unload.mjs）。
+ */
+let stdinBuf = ''
+process.stdin.setEncoding('utf8')
+process.stdin.on('data', (chunk) => {
+  stdinBuf += chunk
+  if (!stdinBuf.includes('\n')) return
+  const first = stdinBuf.split('\n')[0].trim()
+  stdinBuf = ''
+  if (first === 'quit') {
+    log('收到 stdin 退出指令，走完整退出流程')
+    void shutdown(0)
+  }
+})
+process.stdin.resume()
 process.on('uncaughtException', (err) => {
   log(`uncaughtException: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`)
 })

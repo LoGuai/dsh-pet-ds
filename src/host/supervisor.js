@@ -12,7 +12,7 @@
  *     避免直接 kill 掉不是我们启动的进程。
  */
 
-import { spawn } from 'node:child_process'
+import { spawn, execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { delimiter, join } from 'node:path'
 
@@ -249,50 +249,103 @@ export class Supervisor {
   }
 
   /**
-   * 请求停止桌宠。
-   * @param {() => boolean} requestSoftQuit 通过状态接口下发 quit 的软退出回调；
-   *        返回 true 表示桌宠不是我们启动的，已改走软退出。
-   * @returns {{ ok: boolean, status: 'stopped'|'quit-requested'|'not-running', pid?: number|null, error?: string }}
+   * 请求停止桌宠 —— **并等到它真的消失**。
+   *
+   * ## 为什么要"等"
+   *
+   * 原先这里是**同步**的：下发 `quit` 命令后立刻返回，不等桌宠来取。
+   * 而调用方（宿主卸载清理）紧接着就会 `process.exit()` ——
+   * 命令还没被取走，宿主就没了，**桌宠留在桌面上变成孤儿**。
+   * 实测确认过：开发宿主退出后桌宠仍在跑。
+   *
+   * 桌宠走的是 25 秒长轮询，而状态一变（队列里进了命令）服务端会立刻唤醒
+   * 挂起的轮询，所以命令基本是**立即**送达的 —— 等它一会儿是划算的。
+   * 但等不能无限等：DSH 给整个 dispose 的预算是 **5 秒**，
+   * 所以超时后**硬杀兜底**。
+   *
+   * @param {() => boolean} requestSoftQuit 通过状态接口下发 quit 的回调
+   * @param {object} [options]
+   * @param {number} [options.softQuitTimeoutMs] 软退出最多等多久（默认 1500ms）
+   * @returns {Promise<{ ok: boolean, status: 'stopped'|'quit-requested'|'not-running',
+   *                     pid?: number|null, forced?: boolean, error?: string }>}
    */
-  stop(requestSoftQuit) {
+  async stop(requestSoftQuit, options = {}) {
+    const timeoutMs = Number.isFinite(Number(options.softQuitTimeoutMs))
+      ? Math.max(200, Number(options.softQuitTimeoutMs))
+      : 1500
+
+    // 我们自己起的子进程：直接终止最可靠。
     if (this._procAlive()) {
       const pid = this._proc.pid
-      try {
-        process.kill(pid)
-        this._proc = null
-        /*
-         * ⚠️ 停止后必须**把判活记录一并清干净**。
-         *
-         * 不清的话，"最近 30 秒来轮询过"那个窗口还在 —— 紧接着调用 `start()`
-         * 就会因为 `isRunning()` 为真而回 `already-running`，而它给出的 pid
-         * 其实已经死了。表现就是**"关掉之后立刻再启动，没有任何反应"**。
-         * 这是本项目最影响开发体验的一个缺陷（在用正式版频繁重启桌宠时天天撞）。
-         */
-        this._lastPollAt = 0
-        this._lastPid = null
-        this._log(`桌宠已关闭 pid=${String(pid)}`)
-        return { ok: true, status: 'stopped', pid: pid ?? null }
-      } catch (err) {
-        // kill 失败通常意味着进程已经没了 —— 仍然清掉记录，让下一次 start 能起来。
-        this._proc = null
-        this._lastPollAt = 0
-        this._lastPid = null
-        this._log(`关闭桌宠失败（进程可能已退出）：${err instanceof Error ? err.message : String(err)}`)
-        return { ok: true, status: 'not-running', pid: pid ?? null }
-      }
+      const killed = this._terminate(pid)
+      this._forget()
+      this._log(killed ? `桌宠已关闭 pid=${String(pid)}` : `桌宠可能已提前退出 pid=${String(pid)}`)
+      return { ok: true, status: killed ? 'stopped' : 'not-running', pid: pid ?? null }
     }
 
+    // 不是我们起的（例如用户自己双击运行）→ 只能先软退出。
     if (this.polledRecently() && this._pidExists(this._lastPid)) {
-      // 不是我们启动的（例如用户自己双击运行）→ 只能软退出。
+      const pid = this._lastPid
       requestSoftQuit()
-      this._lastPollAt = 0
-      return { ok: true, status: 'quit-requested', pid: this._lastPid }
+      const gone = await this._waitForExit(pid, timeoutMs)
+      if (gone) {
+        this._forget()
+        return { ok: true, status: 'quit-requested', pid: pid ?? null }
+      }
+      // 软退出超时：硬杀兜底，否则宿主一退出它就成孤儿了。
+      const killed = this._terminate(pid)
+      this._forget()
+      this._log(`软退出超时，已强制结束桌宠 pid=${String(pid)}（killed=${String(killed)}）`)
+      return { ok: true, status: 'quit-requested', pid: pid ?? null, forced: true }
     }
 
-    // 什么也没在跑：顺手清掉陈旧记录。
+    this._forget()
+    return { ok: true, status: 'not-running' }
+  }
+
+  /**
+   * 终止一个进程。
+   *
+   * Windows 上 `process.kill` 对 detached 子进程**不一定可靠**（实测：
+   * 调用返回了但进程仍在跑），所以主用 `taskkill /F /T`。
+   *
+   * @returns {boolean} 是否成功发出了终止（不代表进程已消失）
+   */
+  _terminate(pid) {
+    const n = Number(pid)
+    if (!Number.isInteger(n) || n <= 0) return false
+    try {
+      if (process.platform === 'win32') {
+        // /T 连同子进程（Electron 的 renderer/gpu 进程）一起结束。
+        execFileSync('taskkill', ['/PID', String(n), '/T', '/F'], {
+          stdio: 'ignore',
+          timeout: 3000,
+        })
+      } else {
+        process.kill(n, 'SIGTERM')
+      }
+      return true
+    } catch {
+      // taskkill 在进程已消失时会返回非 0 —— 那不算失败。
+      return false
+    }
+  }
+
+  /** 等一个 pid 消失，最多等 timeoutMs。 */
+  async _waitForExit(pid, timeoutMs) {
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      if (!this._pidExists(pid)) return true
+      await new Promise((r) => setTimeout(r, 100))
+    }
+    return !this._pidExists(pid)
+  }
+
+  /** 清掉判活记录，让紧接着的 `start()` 能起来。 */
+  _forget() {
+    this._proc = null
     this._lastPollAt = 0
     this._lastPid = null
-    return { ok: true, status: 'not-running' }
   }
 
   /** 运行状态摘要，供 DSHpet_status 工具展示。 */

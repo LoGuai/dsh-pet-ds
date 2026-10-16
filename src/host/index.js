@@ -45,8 +45,22 @@ const DEFAULTS = Object.freeze({
   startDelayMs: 3000,
   /** 打印桌宠子进程的输出，排障用。 */
   debug: false,
-  /** 宿主卸载时是否顺手关掉桌宠。默认 false：桌宠是桌面常驻小玩意。 */
-  stopOnUnload: false,
+  /**
+   * 宿主卸载（含 DSH 退出）时是否顺手关掉桌宠。
+   *
+   * ⚠️ 默认值从 `false` 改成了 **`true`**（用户要求：
+   * "给桌宠加上…退出dsh时自动关闭"）。
+   *
+   * 原先默认 false 的理由是"桌宠是桌面常驻小玩意，宿主重启不该把它带走"。
+   * 用户明确要求反过来：**退出 DSH 就关掉桌宠**。
+   *
+   * 这条路是可靠的：DSH 退出时会走 `app.current.fiber.dispose()`，
+   * 那会执行本插件所有 `ctx.effect` 的清理器（已读 DSH 打包源码确认）。
+   * 唯一的约束是它外面套着一个 **5 秒**的预算
+   * （`PROCESS_SHUTDOWN_TIMEOUT_MS = 5e3`）—— 而桌宠用的是长轮询，
+   * quit 命令基本能立即送达，所以这个预算足够。
+   */
+  stopOnUnload: true,
   /**
    * 桌宠窗口宽度（CSS 像素）。高度默认按 1:1 取，后续接入立绘素材后改为按比例。
    * 名字里的"宠物"保持中文注释说明，配置键用英文。
@@ -248,14 +262,24 @@ export function apply(ctx, config) {
   })
   ctx.effect(() => () => {
     if (cfg.stopOnUnload) {
+      /*
+       * ⚠️ 这里返回 Promise 是有意的：`stop()` 会**等到桌宠真的消失**
+       * （软退出成功，或超时后强杀兜底）。
+       *
+       * 为什么必须等：DSH 退出时外面套着 5 秒预算
+       * （`PROCESS_SHUTDOWN_TIMEOUT_MS`），而原先 `stop()` 是同步的 ——
+       * 只把 quit 命令塞进队列就返回，紧接着进程就退出了，
+       * **命令根本没送到桌宠**，桌宠留成孤儿（实测确认）。
+       */
       try {
-        supervisor.stop(() => {
+        return supervisor.stop(() => {
           bridge.enqueueCommand('quit')
         })
       } catch (err) {
         say(`关闭桌宠失败：${errText(err)}`)
       }
     }
+    return undefined
   })
 
   // ------------------------------------------------- 工作状态的粗粒度联动

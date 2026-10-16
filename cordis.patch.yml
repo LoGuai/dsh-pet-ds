@@ -27,8 +27,9 @@
         startDelayMs: 3000
         # 打印桌宠子进程输出，排障时改成 true。
         debug: false
-        # 宿主卸载时是否顺手关掉桌宠。默认 false：桌宠是桌面常驻小玩意。
-        stopOnUnload: false
+        # 宿主卸载（含 DSH 退出）时是否顺手关掉桌宠。
+        # 用户要求"退出dsh时自动关闭"，所以是 true。
+        stopOnUnload: true
         # 余额低于该值时桌宠下方的余额面板转为"告急"配色。
         lowBalanceThreshold: 10
         # 余额刷新与消费播报周期（秒）。用户指定 5 分钟 = 300 秒；下限 5。
