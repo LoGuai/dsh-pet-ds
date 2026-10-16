@@ -5,8 +5,11 @@
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
 > **约定：每次保存新版本都必须更新本文件。** 详见 [RELEASE.md](./RELEASE.md)
-> 的「发布检查清单」。每个版本的详细叙述在同目录的
+> 的「三、更新 `CHANGELOG.md`」。每个版本的详细叙述在同目录的
 > `RELEASE-NOTES-v<版本>.md`，这里是索引与速览。
+>
+> 这条约定有**自动检查**兜着（`npm run test:changelog`，已接入 `npm test`）：
+> 版本号在 `package.json` 里改了、这里却没有对应段落，测试会红。
 
 ## [未发布]
 
