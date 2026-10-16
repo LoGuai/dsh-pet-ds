@@ -1,6 +1,6 @@
 {
   "name": "dsh-pet-ds",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "DSH 桌宠：一个独立的桌面透明窗口宠物，显示 DeepSeek 账户余额与 DSH 工作状态。宿主半侧负责数据与事件，桌宠界面运行在独立的 Electron 进程中。",
   "type": "module",
   "license": "MIT",
@@ -14,7 +14,8 @@
   },
   "icon": "assets/icon.svg",
   "scripts": {
-    "install-plugin": "node scripts/install.mjs",
+    "install-plugin": "node install.mjs",
+    "install:agent": "node install.mjs --json",
     "install:electron": "node scripts/dev/install-electron.mjs",
     "build:package": "node scripts/dev/build-package.mjs",
     "dev": "node scripts/dev/mock-host.mjs",
@@ -27,10 +28,14 @@
     "pet-app",
     "client",
     "assets",
+    "install.mjs",
     "scripts/install.mjs",
+    "scripts/dev/probe-import-resolution.mjs",
+    "scripts/dev/install-electron.mjs",
     "cordis.patch.yml",
     "README.md",
     "INSTALL.md",
+    "INSTALL-AGENT.md",
     "LICENSE"
   ],
   "comment": [

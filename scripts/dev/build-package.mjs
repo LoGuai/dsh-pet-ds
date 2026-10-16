@@ -25,7 +25,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -125,9 +125,26 @@ check('含配置 schema src/host/config-schema.js', has('src/host/config-schema.
 check('含客户端 client/client.js（设置页那一栏靠它）', has('client/client.js'))
 check('含桌宠应用 pet-app/', countUnder('pet-app') > 0, `${countUnder('pet-app')} 个文件`)
 check('含安装指引 INSTALL.md', has('INSTALL.md'))
+/*
+ * agent 安装入口与它的说明**必须进包** —— 这份包的一个明确用途就是
+ * "由 agent 自行安装"，缺了它们 agent 就没有可直接执行的入口。
+ */
+check('含 agent 安装入口 install.mjs', has('install.mjs'))
+check('含 agent 安装说明 INSTALL-AGENT.md', has('INSTALL-AGENT.md'))
+check('含解析链验证脚本 probe-import-resolution.mjs', has('scripts/dev/probe-import-resolution.mjs'))
 check('含 README.md', has('README.md'))
 check('含 LICENSE', has('LICENSE'))
 check('含安装器 scripts/install.mjs', has('scripts/install.mjs'))
+
+// 产物文件名里带版本号 —— 与 package.json 对不上会让人拿错包。
+{
+  const pkgJson = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))
+  check(
+    '产物文件名含 package.json 的版本号',
+    tarball.includes(`-${pkgJson.version}.tgz`),
+    `version=${pkgJson.version}`,
+  )
+}
 
 // 动画素材：每个动作一个子目录，含 manifest.json
 const animEntries = entries.filter((e) => e.startsWith('assets/animations/'))

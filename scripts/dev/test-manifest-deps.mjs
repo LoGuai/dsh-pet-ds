@@ -185,6 +185,28 @@ test('dsh.client 的 exports["./client"] 指向真实存在的文件', () => {
   assert.ok(statSync(abs).isFile(), `exports["./client"] 指向的文件不存在：${rel}`)
 })
 
+test('版本号在三处保持一致', () => {
+  /*
+   * 版本号有三份，天然容易漂移：
+   *  · package.json 的 version          —— 安装包的版本
+   *  · pet-app/package.json 的 version  —— 桌宠窗口进程的版本
+   *  · src/host/index.js 的 VERSION     —— 随桥接状态下发给桌宠
+   *
+   * 漂移了会出现"界面显示 0.1.0、包却是 0.1.2"这种对不上号的怪事，
+   * 而排查时第一眼就会看这个号。
+   */
+  const petPkg = JSON.parse(readFileSync(join(ROOT, 'pet-app', 'package.json'), 'utf8'))
+  const hostSrc = readFileSync(join(ROOT, 'src', 'host', 'index.js'), 'utf8')
+  const m = /const VERSION = '([^']+)'/.exec(hostSrc)
+  assert.ok(m, 'src/host/index.js 里找不到 `const VERSION = \'...\'`')
+  assert.equal(petPkg.version, pkg.version, 'pet-app/package.json 的版本与主包不一致')
+  assert.equal(m[1], pkg.version, 'src/host/index.js 的 VERSION 与主包不一致')
+})
+
+test('版本号形如 x.y.z', () => {
+  assert.match(pkg.version, /^\d+\.\d+\.\d+$/, `版本号格式不对：${pkg.version}`)
+})
+
 console.log(`\n结果：${String(passed)}/${String(passed + failed)} 通过`)
 if (failed > 0) {
   console.log('\n扫到的外部依赖：')

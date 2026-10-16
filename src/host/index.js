@@ -79,7 +79,15 @@ export const name = 'dsh-pet-ds'
  */
 export const inject = ['tools', 'credentials']
 
-const VERSION = '0.1.0'
+/**
+ * 协议版本号 —— 会随桥接状态接口一起下发给桌宠。
+ *
+ * ⚠️ 必须与 `package.json` 的 `version` 保持一致。
+ * `scripts/dev/test-manifest-deps.mjs` 会断言这一点：
+ * 漂移了会出现"界面显示 0.1.0、包却是 0.1.2"这种对不上号的怪事，
+ * 而排查时第一眼就会看这个号。
+ */
+const VERSION = '0.1.2'
 
 /**
  * 插件入口。

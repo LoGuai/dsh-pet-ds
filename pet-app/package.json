@@ -1,7 +1,7 @@
 {
   "name": "dsh-pet-ds-pet",
   "productName": "DSH Pet",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "DSH 桌宠的独立桌面窗口进程（透明置顶小窗）",
   "private": true,
   "type": "commonjs",
