@@ -36,7 +36,10 @@
     "README.md",
     "INSTALL.md",
     "INSTALL-AGENT.md",
-    "LICENSE"
+    "LICENSE",
+    "LICENSE-ART.md",
+    "RELEASE.md",
+    "RELEASE-NOTES-v0.1.2.md"
   ],
   "comment": [
     "本阶段（阶段 4 最小框架）刻意不设置构建步骤：src 下的 .js 就是运行代码，",

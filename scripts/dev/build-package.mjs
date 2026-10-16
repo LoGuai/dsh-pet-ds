@@ -1,27 +1,38 @@
 /**
- * 生成**可分发的安装包**（`.tgz`），并**验证包内容完整性**。
+ * 生成**两种可分发的产物**，并**验证内容完整性**：
  *
- * ## 为什么要单独一个脚本
+ *   1. `dist/dsh-pet-ds-<版本>.tgz`        —— `pnpm pack`，按 `files` 白名单，用于 `pnpm add`
+ *   2. `dist/dsh-pet-ds-<版本>-source.zip` —— `git archive`，按版本库，
+ *      与 GitHub Release 的 `Source code (zip)` **格式一致**
  *
- * `pnpm pack` 一条命令就能出包，但"包能不能装"取决于**里面有没有该有的东西**：
+ * ## 为什么打完包要逐项断言
+ *
+ * "包能不能装"取决于**里面有没有该有的东西**：
  *  · 少了 `cordis.patch.yml` → DSH 不认它是 bundle 插件，装上也看不见；
  *  · 少了 `client/` → 设置页那一栏不出现（而且不报错）；
  *  · 少了 `pet-app/` → 插件加载得了，但桌宠窗口起不来；
  *  · 少了动画素材 → 桌宠能起来但没画面。
  *
  * 这几种失败都**不会在打包时报错**，而是在用户那边表现为"装了没用"。
- * 所以这里打完包**逐项断言**，把问题挡在发布之前。
+ * 所以这里打完逐项断言，把问题挡在发布之前。
  *
- * ## 包会很大（约 112MB），主体是动画素材
+ * ⚠️ 教训来自可用的第三方插件（`Yoshino-JF/dsh-deepseek-pet` 的 v0.2.4 发布说明）：
+ * 桌宠本体曾被 `.gitignore` 排除，于是从 GitHub 源码安装时缺了它 ——
+ * 插件能激活、健康检查回 200，但**桌宠不会出现**。
+ * **仓库里必须包含运行所需的一切**，源码归档才自足。本仓库的素材
+ * （116 个文件 / 112MB）就是**提交进版本库**的，正是为了这一点。
  *
- * 素材不在版本库里（授权仅限作者本人），但**必须进安装包** ——
- * 否则用户装了看不到桌宠。仓库与安装包的区别就在这里：
- *  · 仓库：源码 + 文档（约 1MB）；
- *  · 安装包：源码 + 文档 + **全部素材**（约 112MB）。
+ * ## 两种产物的差别
  *
- * 产物写到 `dist/`（已 gitignore）。
+ * | 产物 | 选取规则 | 用途 |
+ * |---|---|---|
+ * | `.tgz` | `package.json` 的 `files` 白名单 | `pnpm add` / 插件市场 |
+ * | `-source.zip` | git 版本库（`git archive`） | 上传为 Source code / 手动安装 |
+ *
+ * 改 `files` 字段时要记得两边都验一遍。
  *
  * 运行：node scripts/dev/build-package.mjs
+ *      （两个产物总是都生成 —— 发布时要一起核对，分开跑容易漏掉一边）
  */
 
 import { execFileSync } from 'node:child_process'
@@ -134,6 +145,9 @@ check('含 agent 安装说明 INSTALL-AGENT.md', has('INSTALL-AGENT.md'))
 check('含解析链验证脚本 probe-import-resolution.mjs', has('scripts/dev/probe-import-resolution.mjs'))
 check('含 README.md', has('README.md'))
 check('含 LICENSE', has('LICENSE'))
+check('含 LICENSE-ART.md（美术素材单独授权）', has('LICENSE-ART.md'))
+check('含 RELEASE.md（发布流程）', has('RELEASE.md'))
+check('含本版本发布说明 RELEASE-NOTES-*.md', entries.some((e) => /^RELEASE-NOTES-v.*\.md$/.test(e)))
 check('含安装器 scripts/install.mjs', has('scripts/install.mjs'))
 
 // 产物文件名里带版本号 —— 与 package.json 对不上会让人拿错包。
@@ -170,6 +184,104 @@ if (animActions.size > 0) {
   console.log('动画动作：' + [...animActions].sort().join(', '))
 }
 
-console.log(`\n结果：${failed === 0 ? '包内容校验全部通过' : failed + ' 项未通过'}`)
-console.log(`产物：${tarball}`)
+// ---------------------------------------------------------------- 源码 zip
+/*
+ * `git archive` 导出**版本库**里的内容 —— 与 GitHub Release 页面那个
+ * `Source code (zip)` **格式一致**（GitHub 也是用同一机制生成的）。
+ *
+ * 为什么还要自己生成一份：GitHub 打 tag 后会自动给，但
+ *  · 本地要先核对归档内容（尤其"素材是不是真的进版本库了"）；
+ *  · 有些环境不走 GitHub，需要直接分发源码归档。
+ *
+ * ⚠️ 只含**被跟踪**的文件，所以 `node_modules` / `.cache` / `dist` / `_research`
+ * 天然不会进去；而 `assets/animations` 是提交进版本库的，**会**进去 ——
+ * 这正是"源码归档必须自足"那条教训的要求。
+ */
+const wantSourceZip = true // 两个产物总是都出：发布时要一起核对，分开跑容易漏掉一边
+console.log('\n生成源码归档（git archive，与 GitHub 的 Source code 格式一致）…')
+
+let sourceZip = null
+{
+  const pkgJson = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))
+  const name = pkgJson.name
+  const version = pkgJson.version
+  /* 顶层目录名与 GitHub 的归档习惯一致：`<包名>-<版本>/`。 */
+  const prefix = `${name}-${version}/`
+  const out = join(OUT_DIR, `${name}-${version}-source.zip`)
+
+  try {
+    /*
+     * 指定 tag 时优先用 tag（发布对象就是它）；
+     * 没有该 tag 就退回 HEAD（本地核对用）。
+     */
+    const tag = `v${version}`
+    let treeish = tag
+    try {
+      execFileSync('git', ['rev-parse', '--verify', `refs/tags/${tag}`], { cwd: ROOT, stdio: 'ignore' })
+    } catch {
+      treeish = 'HEAD'
+      check(`存在标签 ${tag}`, false, `没找到，退回 HEAD 导出（发布前请先打标签）`)
+    }
+    execFileSync('git', ['archive', '--format=zip', `--prefix=${prefix}`, '-o', out, treeish], {
+      cwd: ROOT,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    sourceZip = existsSync(out) ? out : null
+  } catch (err) {
+    check('git archive 生成源码 zip', false, err instanceof Error ? err.message : String(err))
+  }
+
+  if (sourceZip) {
+    const mb = (statSync(sourceZip).size / 1024 / 1024).toFixed(2)
+    check('git archive 生成源码 zip', true, `${out} (${mb} MB)`)
+
+    // 列条目并做**同一套**内容断言 —— 源码归档也必须自足。
+    let zipEntries = []
+    try {
+      const listing = execFileSync('tar', ['-tf', sourceZip], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+      zipEntries = String(listing)
+        .split(/\r?\n/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .map((s) => s.replace(new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`), ''))
+    } catch (err) {
+      check('能读出源码 zip 内容', false, err instanceof Error ? err.message : String(err))
+    }
+
+    if (zipEntries.length > 0) {
+      const zHas = (rel) => zipEntries.some((e) => e === rel || e.startsWith(rel + '/'))
+      const zCount = (p) => zipEntries.filter((e) => e.startsWith(p + '/')).length
+      console.log(`  （源码归档共 ${zipEntries.length} 个条目）`)
+      check('源码 zip 含 package.json', zHas('package.json'))
+      check('源码 zip 含 cordis.patch.yml', zHas('cordis.patch.yml'))
+      check('源码 zip 含 install.mjs（agent 安装入口）', zHas('install.mjs'))
+      check('源码 zip 含 INSTALL-AGENT.md', zHas('INSTALL-AGENT.md'))
+      check('源码 zip 含 LICENSE-ART.md', zHas('LICENSE-ART.md'))
+      check('源码 zip 含 RELEASE-NOTES-*.md', zipEntries.some((e) => /^RELEASE-NOTES-v.*\.md$/.test(e)))
+      check('源码 zip 含宿主与客户端', zHas('src/host/index.js') && zHas('client/client.js'))
+      check('源码 zip 含桌宠应用', zCount('pet-app') > 0, `${zCount('pet-app')} 个文件`)
+
+      /*
+       * ⚠️ 这一条是**发布质量的关键**：素材必须进版本库。
+       * 参考项目的 v0.2.4 就是栽在这里 —— 桌宠本体被 .gitignore 排除，
+       * 于是从源码安装时"插件能激活但桌宠不出现"。
+       */
+      const zAnim = zipEntries.filter((e) => e.startsWith('assets/animations/'))
+      const zActions = new Set(zAnim.map((e) => e.split('/')[2]).filter((s) => s && !s.includes('.')))
+      check(
+        '源码 zip 含动画素材（否则装了没画面）',
+        zActions.size > 0,
+        `${zActions.size} 个动作，${zAnim.length} 个文件`,
+      )
+      check('源码 zip 不含 node_modules/', !zHas('node_modules'))
+      check('源码 zip 不含 dist/', !zHas('dist'))
+      check('源码 zip 不含 .cache/', !zHas('.cache'))
+    }
+  }
+}
+
+console.log(`\n结果：${failed === 0 ? '内容校验全部通过' : failed + ' 项未通过'}`)
+console.log(`产物：`)
+console.log(`  ${tarball}   ← pnpm 安装包`)
+if (sourceZip) console.log(`  ${sourceZip}   ← 源码归档（可作 Source code 上传）`)
 process.exitCode = failed === 0 ? 0 : 1
