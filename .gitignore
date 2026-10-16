@@ -11,6 +11,10 @@ runtime/
 # 调查阶段的临时产物（保留作为证据，不随包发布）
 _research/
 
+# 打包产物（约 112MB，主要是动画素材）：由 `pnpm pack` 生成，不入版本库。
+# 重新生成：node scripts/dev/build-package.mjs
+dist/
+
 # 会话初期的权限修复备份（保留供回滚，勿删）
 acl-backup-*.json
 acl-backup-*.json.ps1

@@ -16,6 +16,7 @@
   "scripts": {
     "install-plugin": "node scripts/install.mjs",
     "install:electron": "node scripts/dev/install-electron.mjs",
+    "build:package": "node scripts/dev/build-package.mjs",
     "dev": "node scripts/dev/mock-host.mjs",
     "dev:debug": "node scripts/dev/mock-host.mjs --debug",
     "probe": "node scripts/dev/probe.mjs",
