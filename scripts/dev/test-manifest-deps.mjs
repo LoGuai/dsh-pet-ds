@@ -203,8 +203,32 @@ test('版本号在三处保持一致', () => {
   assert.equal(m[1], pkg.version, 'src/host/index.js 的 VERSION 与主包不一致')
 })
 
-test('版本号形如 x.y.z', () => {
-  assert.match(pkg.version, /^\d+\.\d+\.\d+$/, `版本号格式不对：${pkg.version}`)
+test('版本号是合法 semver（可发布到 npm）', () => {
+  /*
+   * ⚠️ 第一版这里写的是 `^\d+\.\d+\.\d+$` —— **过严**。
+   * semver 允许 `-预发布` 与 `+构建` 后缀，而本仓库用了 `0.1.3-fix`
+   * 这种"补丁版"命名，被那条断言误判成失败。
+   *
+   * 现在按 semver 的正式规则校验（足以挡住真实会出问题的写法）：
+   *   ✅ 0.1.3 / 0.1.3-fix / 0.1.3-fix.1 / 0.1.3+build
+   *   ❌ 0.1.3fix（`3fix` 不是数字 —— npm publish 会报 Invalid version）
+   *   ❌ 1.0（只有两段）
+   */
+  const SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/
+  assert.match(pkg.version, SEMVER, `版本号不是合法 semver：${pkg.version}`)
+})
+
+test('版本号没把后缀直接粘在补丁号后面（常见误写）', () => {
+  /*
+   * `0.1.3fix` 这种写法看着像版本号，其实**不合法**：
+   * semver 要求预发布部分用 `-` 连接。粘在一起会让 npm 直接拒绝发布，
+   * 而肉眼很难发现少了个连字符。
+   */
+  assert.doesNotMatch(
+    pkg.version,
+    /^\d+\.\d+\.\d+[A-Za-z]/,
+    `版本号疑似漏了连字符（应为 0.1.3-fix 而非 0.1.3fix）：${pkg.version}`,
+  )
 })
 
 console.log(`\n结果：${String(passed)}/${String(passed + failed)} 通过`)
