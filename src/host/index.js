@@ -186,6 +186,12 @@ export function apply(ctx, config) {
     lowBalanceThreshold: cfg.lowBalanceThreshold,
     // 余额刷新周期透传给桌宠（取数主责在桌宠侧，它得知道自己多久刷一次）。
     balanceRefreshSeconds: cfg.refreshSeconds,
+    /*
+     * 桌宠日志文件。**始终**落盘 —— 桌宠的 log() 走 stderr，
+     * 不落盘的话"余额不更新"这类问题完全无从观察（我是踩过才加的）。
+     * 放在 DSH home 下，便于让用户直接发给我看。
+     */
+    petLogPath: dshHome ? join(dshHome, 'logs', 'dsh-pet-ds.log') : null,
     log: say,
   })
 

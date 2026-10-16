@@ -13,8 +13,8 @@
  */
 
 import { spawn, execFileSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
-import { delimiter, join } from 'node:path'
+import { appendFileSync, existsSync, mkdirSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { delimiter, dirname, join } from 'node:path'
 
 /** 桌宠超过这么久没来取状态，就认为它已经关了。 */
 const ALIVE_WINDOW_MS = 30_000
@@ -57,6 +57,22 @@ export class Supervisor {
         : 300
     this._log = options.log ?? (() => {})
     /**
+     * 桌宠日志文件路径。
+     *
+     * **为什么默认就写文件**（而不是只在 debug 时才留日志）：
+     *
+     * 桌宠把日志写 stderr（`pet-app/main.js` 的 `log()`）。原先非 debug 模式下
+     * 用 `stdio: 'ignore'`，这些日志**直接被丢弃** —— 于是"余额不更新"
+     * 这类问题只能靠猜：看不到它有没有取到数、取到多少、失败在哪一步。
+     * 我为了定位一次"余额不更新"，不得不自己拿相同参数另起一个副本才能看到日志，
+     * 那不该是排障的常态。
+     *
+     * 现在**始终**把 stderr 落盘到 `<logDir>/pet.log`（超过 1 MB 轮转一次）。
+     * 代价可忽略（日志很少），收益是任何异常都能事后查。
+     */
+    this.petLogPath = options.petLogPath ?? null
+
+    /**
      * 桌宠进程退出时的回调。
      * 用途之一：自检模式的桌宠跑完就退出，此时开发宿主必须能感知并一并收尾，
      * 否则会留下一个只监听端口、没有桌宠可服务的孤儿进程（实测踩过这个坑）。
@@ -70,6 +86,32 @@ export class Supervisor {
     this._lastPollAt = 0
     /** 最近一次自报的 pid。 */
     this._lastPid = null
+  }
+
+  /**
+   * 把一行桌宠日志落盘（带时间戳），必要时轮转。
+   *
+   * 全程 try/catch：**日志失败绝不能影响桌宠本体**。
+   * @param {string} line
+   */
+  _writePetLog(line) {
+    if (!this.petLogPath) return
+    try {
+      const dir = dirname(this.petLogPath)
+      if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+      /* 超过 1 MB 就轮转一份 .1，避免长年运行把磁盘写满。 */
+      if (existsSync(this.petLogPath) && statSync(this.petLogPath).size > 1024 * 1024) {
+        try {
+          renameSync(this.petLogPath, `${this.petLogPath}.1`)
+        } catch {
+          /* 轮转失败就继续追加，不做别的 */
+        }
+      }
+      const stamp = new Date().toISOString().slice(11, 19)
+      appendFileSync(this.petLogPath, `${stamp} ${line}\n`, 'utf8')
+    } catch {
+      /* 忽略：日志写入失败不影响桌宠 */
+    }
   }
 
   /** 记录一次桌宠取状态（由 Bridge Server 在 /state 命中时调用）。 */
@@ -212,15 +254,40 @@ export class Supervisor {
       const child = spawn(this.electronPath, args, {
         detached: true,
         windowsHide: true,
-        stdio: this.debug ? ['ignore', 'pipe', 'pipe'] : 'ignore',
+        /*
+         * **始终**接住 stderr（`pipe`），不再在非 debug 时用 `'ignore'`。
+         *
+         * 桌宠的 `log()` 全写 stderr；丢掉它就没法排障（见 petLogPath 的注释）。
+         * 我们会**一直把管道读干**并落盘，所以不会因为缓冲区满而卡住子进程。
+         * stdout 没有用途，保持 `'ignore'`。
+         */
+        stdio: ['ignore', 'ignore', 'pipe'],
         env,
         // 不要把 DSH 的 cwd 传给桌宠，避免影响它解析相对路径。
         cwd: this.petAppDir,
       })
 
-      if (this.debug && child.stdout && child.stderr) {
-        child.stdout.on('data', (b) => this._log(`[pet:out] ${String(b).trimEnd()}`))
-        child.stderr.on('data', (b) => this._log(`[pet:err] ${String(b).trimEnd()}`))
+      /*
+       * 桌宠 stderr → 日志文件（始终）+ 宿主日志（debug 时）。
+       *
+       * ⚠️ 这里**必须**持续消费这个流：管道写满（约 64KB）会让桌宠的
+       * `process.stderr.write` 阻塞，进而卡住它。所以即使不 debug 也要读，
+       * 只是不往宿主日志里打。
+       */
+      if (child.stderr) {
+        child.stderr.setEncoding?.('utf8')
+        child.stderr.on('data', (chunk) => {
+          const text = String(chunk)
+          for (const raw of text.split(/\r?\n/)) {
+            const line = raw.trimEnd()
+            if (!line) continue
+            this._writePetLog(line)
+            if (this.debug) this._log(`[pet:err] ${line}`)
+          }
+        })
+        child.stderr.on('error', () => {
+          /* 读流出错不影响桌宠 */
+        })
       }
 
       child.on('error', (err) => {

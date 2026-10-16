@@ -27,7 +27,9 @@
     "verify:install-bundle": "node scripts/dev/verify-install-bundle.mjs",
     "build:installer": "node scripts/dev/build-installer.mjs",
     "test:setup": "node scripts/dev/test-setup-extract.mjs && node scripts/dev/test-setup-pnpm.mjs",
-    "sign:installer": "node scripts/dev/sign-installer.mjs"
+    "sign:installer": "node scripts/dev/sign-installer.mjs",
+    "probe:balance": "node scripts/dev/probe-balance-live.mjs",
+    "probe:refresh": "node scripts/dev/probe-balance-refresh.mjs"
   },
   "files": [
     "src",
@@ -71,7 +73,9 @@
     "install.cmd",
     "scripts/dev/check-cmd-ascii.mjs",
     "scripts/dev/test-doubleclick.mjs",
-    "scripts/dev/test-doubleclick.ps1"
+    "scripts/dev/test-doubleclick.ps1",
+    "scripts/dev/probe-balance-live.mjs",
+    "scripts/dev/probe-balance-refresh.mjs"
   ],
   "comment": [
     "本阶段（阶段 4 最小框架）刻意不设置构建步骤：src 下的 .js 就是运行代码，",
