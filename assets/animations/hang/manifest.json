@@ -138,6 +138,24 @@
         "src": "7.png",
         "out": "frame_07.png",
         "srcBounds": [
+          209,
+          29,
+          1044,
+          1219
+        ],
+        "placedAt": [
+          32,
+          7
+        ],
+        "outTop": 7,
+        "outFoot": 1148,
+        "outW": 802,
+        "outH": 1142
+      },
+      {
+        "src": "8.png",
+        "out": "frame_08.png",
+        "srcBounds": [
           229,
           30,
           1017,
@@ -153,40 +171,22 @@
         "outH": 1145
       },
       {
-        "src": "8.png",
-        "out": "frame_08.png",
-        "srcBounds": [
-          229,
-          31,
-          1018,
-          1223
-        ],
-        "placedAt": [
-          54,
-          5
-        ],
-        "outTop": 5,
-        "outFoot": 1148,
-        "outW": 758,
-        "outH": 1144
-      },
-      {
         "src": "9.png",
         "out": "frame_09.png",
         "srcBounds": [
           228,
           29,
-          1017,
-          1224
+          1018,
+          1223
         ],
         "placedAt": [
-          54,
-          2
+          53,
+          3
         ],
-        "outTop": 2,
-        "outFoot": 1148,
-        "outW": 758,
-        "outH": 1147
+        "outTop": 3,
+        "outFoot": 1147,
+        "outW": 759,
+        "outH": 1145
       },
       {
         "src": "10.png",
@@ -210,19 +210,19 @@
         "src": "11.png",
         "out": "frame_11.png",
         "srcBounds": [
-          212,
-          31,
-          1041,
-          1203
+          211,
+          23,
+          1034,
+          1207
         ],
         "placedAt": [
-          34,
-          24
+          37,
+          13
         ],
-        "outTop": 24,
+        "outTop": 13,
         "outFoot": 1148,
-        "outW": 796,
-        "outH": 1125
+        "outW": 790,
+        "outH": 1136
       },
       {
         "src": "12.png",
