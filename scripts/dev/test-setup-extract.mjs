@@ -32,7 +32,17 @@ import { runSetup } from './setup-runner.mjs'
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(HERE, '..', '..')
 
-const SETUP = join(ROOT, 'dist', 'setup.exe')
+/*
+ * 用**非提权版**跑自动化测试。
+ *
+ * 正式版 `setup.exe` 带 `requireAdministrator` 清单，Windows 会在**加载 exe
+ * 之前**就弹 UAC —— 自动化测试跑几次就弹几次，不可接受。
+ * `setup-noelevate.exe` 的安装逻辑与正式版完全相同，只是不求提权。
+ *
+ * 生成测试版：`DSH_PET_SETUP_NO_ELEVATE=1 node scripts/dev/build-installer.mjs`
+ */
+const SETUP_ELEVATED = join(ROOT, 'dist', 'setup.exe')
+const SETUP = join(ROOT, 'dist', 'setup-noelevate.exe')
 
 /*
  * ⚠️ 目标目录**必须放在工作区内**。
@@ -47,11 +57,13 @@ const target = process.argv[2] ? resolve(process.argv[2]) : join(ROOT, '.cache',
 const log = (m) => console.log(m)
 
 if (!existsSync(SETUP)) {
-  log(`✗ 找不到 ${SETUP}`)
-  log('  先跑：node scripts/dev/build-installer.mjs')
+  log(`✗ 找不到测试用的安装程序：${SETUP}`)
+  log('  先生成（会额外产出非提权版，不影响正式产物）：')
+  log('    $env:DSH_PET_SETUP_NO_ELEVATE=1; node scripts/dev/build-installer.mjs')
+  log(`  （正式版在 ${SETUP_ELEVATED}，但它带 requireAdministrator，跑测试会弹 UAC）`)
   process.exit(1)
 }
-log(`setup.exe：${(statSync(SETUP).size / 1024 / 1024).toFixed(2)} MB`)
+log(`测试用安装程序：${SETUP.split(/[\\/]/).pop()} — ${(statSync(SETUP).size / 1024 / 1024).toFixed(2)} MB`)
 log(`目标目录：${target}`)
 
 /*

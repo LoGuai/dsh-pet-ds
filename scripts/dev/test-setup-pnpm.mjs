@@ -34,7 +34,13 @@ import { runSetup } from './setup-runner.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(HERE, '..', '..')
-const SETUP = join(ROOT, 'dist', 'setup.exe')
+
+/*
+ * 用**非提权版**：正式版带 `requireAdministrator`，Windows 会在加载 exe
+ * 之前就弹 UAC，自动化测试跑几次就弹几次。非提权版安装逻辑完全相同。
+ * 生成：`$env:DSH_PET_SETUP_NO_ELEVATE=1; node scripts/dev/build-installer.mjs`
+ */
+const SETUP = join(ROOT, 'dist', 'setup-noelevate.exe')
 
 /*
  * 沙箱放在仓库内的 `.cache` 下（写到仓库外会被文件沙箱拒）。

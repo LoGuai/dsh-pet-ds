@@ -34,6 +34,91 @@ namespace DshPetSetup
 {
     internal static class Program
     {
+        /**
+         * 本进程是否已获得管理员权限。
+         *
+         * `WindowsPrincipal.IsInRole(Administrator)` 在 UAC 下对
+         * "属于管理员组但未提升"的进程返回 false —— 正是我们要判定的。
+         */
+        internal static bool IsElevated()
+        {
+            try
+            {
+                var id = System.Security.Principal.WindowsIdentity.GetCurrent();
+                var pr = new System.Security.Principal.WindowsPrincipal(id);
+                return pr.IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
+            }
+            catch
+            {
+                /* 判定不了就当作已提升，避免反复自我重启把用户烦死 */
+                return true;
+            }
+        }
+
+        /**
+         * 兜底：若没提升权限，用 `runas` 重新启动自己并退出。
+         *
+         * ## 正常情况下走不到这里
+         *
+         * 构建时已经把 `requireAdministrator` 编进清单了（见 installer/setup.manifest），
+         * Windows 在**加载 exe 之前**就会弹 UAC。所以本函数通常只是白跑一次判定。
+         *
+         * ## 那为什么还要留
+         *
+         * 清单可能因为构建环境缺 `csc /win32manifest` 支持、或有人手工改过 exe
+         * 而不生效。那时若什么都不做，安装会在**解压到一半**时才因权限不足失败
+         * —— 报错晚且难懂。这里有兜底，至少能提升成功、继续装完。
+         *
+         * ## `--elevated` 防死循环
+         *
+         * 重启时带上 `--elevated`；若那个子进程**仍然**没提升（例如用户点了
+         * "否"、或策略禁止提升），它不会再重启一次，而是直接继续 ——
+         * 否则会无限自我重启。
+         *
+         * @returns true 表示"已经重启了子进程，本进程应当立刻退出"
+         */
+        private static bool TryElevate(string[] args)
+        {
+            if (IsElevated()) return false;
+            foreach (var a in args ?? new string[0])
+            {
+                if (a == "--elevated") return false;   // 已经是重试过的，不再重启
+            }
+
+            try
+            {
+                var exe = System.Reflection.Assembly.GetExecutingAssembly().Location;
+                var psi = new ProcessStartInfo
+                {
+                    FileName = exe,
+                    UseShellExecute = true,      // runas 需要 ShellExecute
+                    Verb = "runas",              // 触发 UAC
+                    WorkingDirectory = Path.GetDirectoryName(exe) ?? Environment.CurrentDirectory,
+                };
+                /*
+                 * 参数要**逐个加引号**：安装目录可能含空格
+                 * （例如 `C:\Program Files\DSH-Pet`），不加引号会被拆成多个参数。
+                 */
+                var quoted = new List<string>();
+                foreach (var a in args ?? new string[0]) quoted.Add("\"" + a.Replace("\"", "\\\"") + "\"");
+                quoted.Add("\"--elevated\"");
+                psi.Arguments = string.Join(" ", quoted.ToArray());
+
+                Process.Start(psi);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                /*
+                 * 最常见的是用户点了 UAC 的"否"（抛 Win32Exception 1223 = 操作被取消）。
+                 * 不当作致命错误：继续以当前权限跑，让安装流程自己给出
+                 * "写入被拒"的明确报错（比在这里静默退出好）。
+                 */
+                Console.Error.WriteLine("（未能提升权限：" + ex.Message + "）");
+                return false;
+            }
+        }
+
         [STAThread]
         private static void Main(string[] args)
         {
@@ -54,9 +139,14 @@ namespace DshPetSetup
                     Environment.ExitCode = 2;
                     return;
                 }
+                /* 静默模式也先确保权限 —— 自动化里更需要一次到位。 */
+                if (TryElevate(args)) return;
                 Environment.ExitCode = Installer.Run(args[1], Console.WriteLine) ? 0 : 1;
                 return;
             }
+
+            /* 界面模式：启动前先确保有管理员权限（通常清单已经处理了）。 */
+            if (TryElevate(args)) return;
 
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
@@ -661,9 +751,23 @@ namespace DshPetSetup
                      *
                      * （pnpm 的提示里也这么建议：CI 下设 CI=true 或
                      *   confirmModulesPurge=false。）
+                     *
+                     * 3) `--config.auto-install-peers=false`
+                     *
+                     * 插件把 `@deepseek-ai/cordis` 与 `@deepseek-ai/dsh-tools`
+                     * 声明为 peerDependencies，而这两个包是 **DSH 在运行时注入**的
+                     * （打包在 DSH 的 app.asar 里；profile 的 node_modules 里没有）。
+                     * pnpm 默认会去装 peer，于是想从 npm 源抓
+                     * `@deepseek-ai/dsh-tools@>=0.2.0` —— 源上只有
+                     * `0.2.0-rc.2`(next) 与 `0.2.1-alpha.5`(alpha)，没有稳定版，
+                     * 会以 `ERR_PNPM_NO_MATCHING_VERSION` 失败。
+                     *
+                     * 实测 `pnpm install`（本程序走的这条）目前不受影响，
+                     * 而 `pnpm add`（install-pet.ps1 走的）会失败。这里一并加上，
+                     * 免得将来 pnpm 改了默认行为又踩一次。
                      */
                     Arguments =
-                        "\"" + pnpm[1] + "\" install --ignore-workspace --config.confirmModulesPurge=false",
+                        "\"" + pnpm[1] + "\" install --ignore-workspace --config.confirmModulesPurge=false --config.auto-install-peers=false",
                     WorkingDirectory = cwd,
                     UseShellExecute = false,
                     RedirectStandardOutput = true,

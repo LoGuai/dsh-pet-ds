@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  setup.exe 的应用程序清单。
+
+  ## 为什么需要它
+
+  用户反馈：运行安装程序时触发 Windows 安全提醒，然后**没有权限完成安装**。
+
+  根因：`csc` 默认嵌的清单里是 `requestedExecutionLevel level="asInvoker"`
+  —— **不请求提升**。于是进程以普通用户权限运行，遇到需要管理员权限的
+  写入位置（例如装到 `C:\Program Files`、其它用户目录、或系统盘根目录）
+  就会失败，表现为"没有权限进行安装访问"。
+
+  ## 为什么用嵌入清单而不是"运行时自我提升"
+
+  另一种做法是在代码里检测并 `Process.Start(runas)` 重启自己。但它有两个毛病：
+    · **会闪两个窗口**（先起一个非提升的，再起一个提升的）；
+    · 若用户拒绝 UAC，第一个进程还得自己收拾，提示逻辑容易写歪。
+
+  嵌入清单是**系统级**的：Windows 在加载 exe 之前就先弹 UAC，
+  只弹一次、只有一个进程。这是安装程序的标准做法。
+
+  ## 为什么是 requireAdministrator 而不是 highestAvailable
+
+  `highestAvailable` 在"用户属于管理员组但 UAC 开启"时也会提升，
+  但对**标准用户**账号则不提升 —— 那种情况下安装仍会失败，
+  而且失败得很晚（已经解压完一半）。`requireAdministrator` 会在
+  **一开始**就明确要求管理员，标准用户会立刻看到"需要管理员权限"，
+  而不是装到一半报错。安装程序就该这样。
+
+  ## dpiAware
+
+  界面在高 DPI 下不糊。`true/pm` 是 WinForms 的常规选择。
+-->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <assemblyIdentity
+      version="1.0.0.0"
+      processorArchitecture="*"
+      name="DshPetSetup"
+      type="win32" />
+
+  <description>DSH 桌宠插件安装程序</description>
+
+  <!-- 关键：启动时就要求管理员权限（Windows 会先弹一次 UAC） -->
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+    <security>
+      <requestedPrivileges>
+        <requestedExecutionLevel level="requireAdministrator" uiAccess="false" />
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+
+  <!-- 声明兼容的 Windows 版本（否则会被当成老程序做兼容性包装） -->
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <!-- Windows 10 / 11 -->
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}" />
+      <!-- Windows 8.1 -->
+      <supportedOS Id="{1f676c76-80e1-4239-95bb-83d0f6d0da78}" />
+      <!-- Windows 8 -->
+      <supportedOS Id="{4a2f28e3-53b9-4441-ba9c-d69d4a4a6e38}" />
+      <!-- Windows 7 -->
+      <supportedOS Id="{35138b9a-5d96-4fbd-8e2d-a2440225f93a}" />
+    </application>
+  </compatibility>
+
+  <!-- 高 DPI 下界面不糊 -->
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>
+    </windowsSettings>
+  </application>
+</assembly>

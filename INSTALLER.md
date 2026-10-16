@@ -1,42 +1,175 @@
-# 安装程序（setup.exe）
+# 安装方法
 
-一个**单文件、双击即用**的图形安装程序：把桌宠插件装到你指定的任意目录，
-并自动配置 DSH。
+本仓库提供**两种**安装方式。**推荐用第一种。**
 
-| 产物 | 大小 | 说明 |
-|---|---|---|
-| `dist/setup.exe` | 约 114 MB | 自带插件包体**与依赖树**，拷到哪都能跑 |
+| 方式 | 产物 | 安全提醒 | 建议 |
+|---|---|---|---|
+| **PowerShell 脚本（推荐）** | `install-pet.ps1` + `register-profile.mjs` + `.tgz` | **无** | 默认用这个 |
+| 图形安装程序（可选） | `dist/setup.exe`（114 MB） | **会弹 SmartScreen** | 只在需要"单文件、不依赖本地环境"时用 |
 
-> **为什么不依赖网络**：包体（含 `node_modules`）整个内嵌在 exe 里。
-> 所以目标机不需要联网、也不需要预装 pnpm —— 装完插件就能用。
+> **为什么脚本是首选**：`setup.exe` 未签名，Windows Defender SmartScreen 会拦它
+> （"Windows 已保护你的电脑"），而**签名也解决不了** —— 见下面「权限与安全提醒」。
+> PowerShell 脚本不经过 SmartScreen，双击/右键运行即可，没有这个摩擦。
 
 ---
 
-## 怎么用
+## 方式一：PowerShell 脚本（推荐）
 
-双击 `setup.exe`，界面里：
+需要三个文件放在**同一个目录**里：
 
-1. 选**安装目录**（默认 `%LOCALAPPDATA%\DSH-Pet`，可改成任意目录）；
-2. 点「开始安装」；
-3. 装完重启 DSH。
+```
+install-pet.ps1          一键安装脚本
+register-profile.mjs     登记 profile 配置（脚本会调用它）
+dsh-pet-ds-<版本>.tgz     插件包体
+```
 
-插件本体落在你所选目录下的 **`dsh-pet-ds\`** 子目录里
-（例如选 `D:\DSH-Pet` → 插件在 `D:\DSH-Pet\dsh-pet-ds`）。
+然后任选一种运行：
 
-### 命令行（给自动化用）
+```powershell
+# 1) 右键 install-pet.ps1 → "使用 PowerShell 运行"
+# 2) 在 PowerShell 里：
+powershell -ExecutionPolicy Bypass -File .\install-pet.ps1
+# 3) 指定包体或配置目录：
+.\install-pet.ps1 -Tgz D:\path\to\dsh-pet-ds-0.1.3-fix.tgz
+.\install-pet.ps1 -DshHome C:\Users\me\.dsh -Profile desktop
+# 4) 只检查、不改任何东西：
+.\install-pet.ps1 -WhatIf
+```
+
+它会做 4 步并在屏幕上逐条报告：
+
+```
+[1/4] 插件包体          找 .tgz（脚本旁边，或 -Tgz 指定）
+[2/4] DSH 配置目录      找 $DSH_HOME / ~/.dsh 与目标 profile
+[3/4] Node 与 pnpm      用 DSH 自带的运行时
+[4/4] 安装              用 pnpm 装进 profile，再登记进 bundles / dependencies
+```
+
+装完**重启 DSH** 即可。
+
+### 它改了什么
+
+只改 profile 的 `package.json` **两处**，且**改前自动备份**为
+`package.json.bak-before-dsh-pet-ds`：
+
+```jsonc
+{
+  "dsh": { "profile": { "bundles": [ ..., "dsh-pet-ds" ] } },
+  "dependencies": { "dsh-pet-ds": "file:D:/path/to/dsh-pet-ds-0.1.3-fix.tgz" }
+}
+```
+
+### 为什么用 `.ps1` 而不是 `.cmd` 或 `.exe`
+
+- **不用 `.exe`**：SmartScreen 会拦，签名也救不了（见下）。
+- **不用 `.cmd`**：`cmd.exe` 按**系统 ANSI 代码页**读 `.cmd`（中文 Windows 上是
+  GBK），UTF-8 存的中文会乱码并把语法搞碎；写 `chcp 65001` 也没用。
+  我按这条路实现过一版，实测碎成一堆 `'ho' is not recognized as an internal command`，
+  而且它在内部 `set "DSH_HOME="` 清空了传入的变量、导致沙箱测试**改到了真实 profile**
+  —— 一个会误伤用户配置的载体不值得留。PowerShell 读 UTF-8 BOM 没有这些问题。
+
+### 三个必需的 pnpm 开关
+
+```powershell
+pnpm add <tgz> --ignore-workspace --config.confirmModulesPurge=false --config.auto-install-peers=false
+```
+
+| 开关 | 不写会怎样 |
+|---|---|
+| `--ignore-workspace` | pnpm 向上找 `pnpm-workspace.yaml` 工作区根，把安装归到工作区去做，profile 里什么都没有 |
+| `--config.confirmModulesPurge=false` | 非交互环境里 pnpm 问"要不要清空 node_modules"并放弃：`ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY` |
+| `--config.auto-install-peers=false` | pnpm 会去 npm 源抓 `@deepseek-ai/dsh-tools`（它是**运行时注入**的 peer），而源上没有匹配版本 → `ERR_PNPM_NO_MATCHING_VERSION`，整次安装失败 |
+
+---
+
+## 方式二：图形安装程序 setup.exe（可选）
+
+| 产物 | 大小 |
+|---|---|
+| `dist/setup.exe` | 约 114 MB |
+
+双击后选安装目录（默认 `%LOCALAPPDATA%\DSH-Pet`）→ 点「开始安装」。
+插件落在所选目录下的 `dsh-pet-ds\` 子目录。
+
+**特点**：包体整个内嵌在 exe 里，所以目标机**不需要联网、也不需要预装 pnpm**。
+
+**代价**：未签名 → **每次运行都会被 SmartScreen 拦一次**（见下）。
+
+也支持命令行：
 
 ```powershell
 setup.exe --silent   D:\DSH-Pet     # 无界面安装
 setup.exe --selftest D:\some\dir    # 只解压并逐项自检（不动 DSH 配置）
 ```
 
-两种模式都有退出码：`0` = 成功。
+---
 
-> ⚠️ 这两种模式是**给自动化与排障用的**，界面模式下不需要它们。
+## 权限与安全提醒
+
+会遇到两个**完全不同**的提示，很容易混为一谈，分开讲。
+
+### 一、UAC「你要允许此应用对你的设备进行更改吗？」
+
+**只在使用 `setup.exe` 时出现，点「是」即可。**
+
+它的清单里写了 `requireAdministrator`（见 `installer/setup.manifest`），
+所以 Windows 在**加载它之前**就弹一次 UAC。这样"权限不足"会在**一开始**
+就说清，而不是解压到一半才失败。
+
+> 用 **`install-pet.ps1`（方式一）不会有这个提示** —— 它只写你自己的用户目录，
+> 不需要管理员权限。
+
+### 二、SmartScreen「Windows 已保护你的电脑」
+
+**这个跟权限无关** —— 是**发布者信誉**的问题，管理员权限也过不去。
+**只有 `setup.exe` 会触发**；PowerShell 脚本不会。
+
+**怎么立刻用上**：点 **「更多信息」** → 会展开出 **「仍要运行」** → 点它。
+
+> 「仍要运行」**必须点开「更多信息」才会出现**。第一眼只看到「不运行」是正常的。
+
+也可以：右键 `setup.exe` → **属性** → 「常规」页底部若有 **「解除锁定」**，勾上并确定。
+
+**为什么签名也救不了**：
+
+微软官方文档 [SmartScreen reputation for Windows app developers](
+https://learn.microsoft.com/windows/apps/package-and-deploy/smartscreen-reputation)
+写得很明确：
+
+| 证书类型 | 首次下载/运行的行为 |
+|---|---|
+| 微软商店 | ✅ **无警告**（微软重新签名） |
+| 有效证书（OV / **EV**） | ⚠️ **仍会警告**，只是显示已验证的发布者名 |
+| **未签名** | ⚠️ 警告「Windows 已保护你的电脑」 |
+| **自签名** | ⚠️ **与未签名完全相同** |
+
+两个反直觉但很重要的事实：
+
+- **自签名证书毫无帮助** —— 与不签名行为一模一样。所以本项目刻意**不**往你的
+  "受信任的根证书颁发机构"里塞证书：没用，只是污染信任库。
+- **EV 证书也不再豁免** —— 文档原话："Years ago, signing files with an Extended
+  Validation (EV) code signing certificate would result in positive SmartScreen
+  reputation by default, but **this behavior no longer exists**."
+
+真正能免警告的只有两条：**发到微软商店**，或**攒文件哈希信誉**
+（文档说需要 "several weeks and hundreds of clean installs from a wide audience"）。
+
+### 签名脚本
+
+```powershell
+node scripts/dev/sign-installer.mjs -Check                 # 看当前签名状态
+node scripts/dev/sign-installer.mjs -Cert <指纹或主题名>    # 用已有证书签
+node scripts/dev/sign-installer.mjs -SelfSigned            # 生成自签名证书并签
+```
+
+签名仍值得做（显示发布者名、完整性、企业分发、信誉可继承），
+但**目的不是消除 SmartScreen 警告**。
+
+⚠️ 签名会**改写 exe 字节**，必须在 `build-installer.mjs` **之后**跑。
 
 ---
 
-## 它做了哪五步
+## setup.exe 的五步流程
 
 ```
 [1/5] 检查安装目录          路径必须绝对、可创建

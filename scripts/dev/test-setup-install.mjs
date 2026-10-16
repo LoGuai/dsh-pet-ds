@@ -31,7 +31,17 @@ import { fileURLToPath } from 'node:url'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(HERE, '..', '..')
-const SETUP = join(ROOT, 'dist', 'setup.exe')
+
+/*
+ * 用**非提权版**跑自动化测试。
+ *
+ * 正式版 `setup.exe` 带 `requireAdministrator` 清单，Windows 会在**加载 exe
+ * 之前**就弹 UAC —— 自动化测试跑几次就弹几次，不可接受。
+ * `setup-noelevate.exe` 的安装逻辑与正式版完全相同，只是不求提权。
+ *
+ * 生成测试版：`$env:DSH_PET_SETUP_NO_ELEVATE=1; node scripts/dev/build-installer.mjs`
+ */
+const SETUP = join(ROOT, 'dist', 'setup-noelevate.exe')
 
 const log = (m) => console.log(m)
 let failed = 0
