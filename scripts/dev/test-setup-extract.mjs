@@ -58,9 +58,19 @@ const log = (m) => console.log(m)
 
 if (!existsSync(SETUP)) {
   log(`✗ 找不到测试用的安装程序：${SETUP}`)
-  log('  先生成（会额外产出非提权版，不影响正式产物）：')
-  log('    $env:DSH_PET_SETUP_NO_ELEVATE=1; node scripts/dev/build-installer.mjs')
-  log(`  （正式版在 ${SETUP_ELEVATED}，但它带 requireAdministrator，跑测试会弹 UAC）`)
+  log('')
+  log('  它由构建脚本产出（默认同时产出正式版与这个测试版）：')
+  log('    node scripts/dev/build-installer.mjs')
+  log('')
+  log('  注意：`build-package.mjs` 只生成载荷，**不会**产出任何 exe。')
+  log('  所以只跑过 build-package 的话，这里就会缺文件。')
+  if (!existsSync(SETUP_ELEVATED)) {
+    log(`  （正式版 ${SETUP_ELEVATED.split(/[\\/]/).pop()} 也不存在 —— 还没构建过安装器）`)
+  } else {
+    log(`  （正式版在 ${SETUP_ELEVATED}，但它带 requireAdministrator，跑测试会弹 UAC）`)
+  }
+  log('')
+  log('  若只想跳过这一步：设 DSH_PET_SETUP_NO_TEST_BUILD=1 再构建。')
   process.exit(1)
 }
 log(`测试用安装程序：${SETUP.split(/[\\/]/).pop()} — ${(statSync(SETUP).size / 1024 / 1024).toFixed(2)} MB`)

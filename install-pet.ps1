@@ -233,16 +233,47 @@ else {
 
 # ---- 4b) 登记进 profile 配置
 Write-Step '- 登记进 profile 配置 ...'
-$register = Join-Path $ScriptDir 'register-profile.mjs'
-if (-not (Test-Path -LiteralPath $register)) {
-    # 在仓库里直接跑时，脚本可能在 scripts\ 下
-    $alt = Join-Path $ScriptDir 'scripts\register-profile.mjs'
-    if (Test-Path -LiteralPath $alt) { $register = $alt }
+
+<#
+  找 register-profile.mjs —— **依次试多种布局**，而不是假定一种。
+
+  为什么：本脚本会以好几种形态到达用户手里，各自的文件位置不同：
+
+    平铺（zip 解压后常见的形态）
+        install-pet.ps1
+        register-profile.mjs
+        dsh-pet-ds-<版本>.tgz
+
+    嵌套（npm 包 / .tgz 解开的形态 —— npm 的 files 没法把子目录文件摊到根）
+        install-pet.ps1
+        scripts\register-profile.mjs
+        dsh-pet-ds-<版本>.tgz
+
+    两者都在上一层（用户在子目录里直接跑）
+        <父目录>\install-pet.ps1 与 <父目录>\scripts\register-profile.mjs
+
+  写死一种布局就会在另一种上失败，而这种失败既难懂又容易归错因。所以逐个试。
+#>
+$registerCandidates = @(
+    (Join-Path $ScriptDir 'register-profile.mjs'),
+    (Join-Path $ScriptDir 'scripts\register-profile.mjs'),
+    (Join-Path (Split-Path -Parent $ScriptDir) 'register-profile.mjs'),
+    (Join-Path (Split-Path -Parent $ScriptDir) 'scripts\register-profile.mjs')
+)
+$register = $null
+foreach ($cand in $registerCandidates) {
+    if ($cand -and (Test-Path -LiteralPath $cand)) { $register = (Resolve-Path -LiteralPath $cand).Path; break }
 }
-if (-not (Test-Path -LiteralPath $register)) {
-    Write-Err "找不到 register-profile.mjs（应与本脚本同目录）：$register"
+if (-not $register) {
+    Write-Err '找不到 register-profile.mjs'
+    Write-Host ''
+    Write-Host '      它应当与 install-pet.ps1 放在一起（或位于其 scripts\ 子目录里）。'
+    Write-Host '      已找过这些位置：'
+    foreach ($cand in $registerCandidates) { Write-Host "        $cand" }
+    Write-Host ''
     exit 1
 }
+Write-Step "  使用 $register"
 
 & $node $register $profileDir $Tgz $PluginName
 if ($LASTEXITCODE -ne 0) {
