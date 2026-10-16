@@ -2,14 +2,63 @@
 
 把 **DSH 桌宠**（`dsh-pet-ds`）装进 DeepSeek Harness。
 
-安装分**两条路**，任选一条：
+## 先看你手里是什么
 
-| 方式 | 适合谁 | 耗时 |
-|---|---|---|
-| [A. 用安装器（推荐）](#a-用安装器推荐) | 大部分人 | 1 条命令 |
-| [B. 完全手动](#b-完全手动) | 想自己掌控每一步 / 排查问题 | 3 步 |
+| 你拿到的 | 怎么装 |
+|---|---|
+| **一个目录**（源码 / 解包后的目录） | 进去跑 `node install.mjs` —— 见下 A |
+| **一个 `.tgz` 安装包** | **先解包**，再跑包里那个 `install.mjs` —— 见下 A′ |
+| 想自己完全手动 | 见下 B |
 
-两条路**做的事完全一样**（改两个字段 + 装依赖），安装器只是替你做了并顺手检查环境。
+> ### ⚠️ `pnpm add <tgz>` **装不完整**（实测）
+>
+> `pnpm add dsh-pet-ds-0.1.2.tgz` 会**成功**，而且看起来什么都做了：
+> 插件文件装进 profile ✓、插件自带依赖装好 ✓、从 profile 能解析到入口 ✓。
+>
+> 但它**不会**把插件登记进 `dsh.profile.bundles` ——
+> **而那是 DSH 认插件的唯一依据**。少了这一步，DSH 根本不会加载它，
+> 表现是"装完了，但插件页里没有这个插件"。
+>
+> 登记 `bundles` 正是 `install.mjs` 第 3 步做的事。所以：**别只用 `pnpm add`**。
+
+---
+
+## A. 有目录：用安装器（推荐）
+
+在**插件目录**（含 `package.json` 的那层）执行：
+
+```bash
+node install.mjs            # agent 入口：装 + 验，退出码 0 = 成功
+node scripts/install.mjs    # 给人看的详细版：五步 + 解释
+```
+
+## A′. 只有 `.tgz`：先解包
+
+`install.mjs` **不能**直接从 `.tgz` 安装 —— 它要读目录里的
+`cordis.patch.yml` / `src/host/index.js` 来验证，没解包没得读。
+但 `install.mjs` **已经打进包里**了，所以在包根，流程就两步：
+
+```bash
+# 1) 解包（解出 package/ 目录；顶层前缀就是 npm tarball 规范的 package/）
+tar -xzf dsh-pet-ds-0.1.2.tgz
+
+# 2) 跑包内的 agent 入口
+node package/install.mjs
+```
+
+`package/install.mjs` 就是上面 A 里那个 `install.mjs`，能力完全一样：
+登记 `bundles` + 装依赖（**profile 与插件目录各一次**）+ 验证解析链。
+
+> 想验证它到底改了什么，先加 `--dry-run`：
+> ```bash
+> node package/install.mjs --dry-run
+> ```
+
+## B. 完全手动
+
+见本文后半的 [B. 完全手动](#b-完全手动)。
+
+安装器做的事 = **改两个字段 + 装依赖**，它只是替你做了并顺手检查环境。
 
 ---
 

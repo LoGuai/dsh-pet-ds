@@ -27,6 +27,25 @@
  * node scripts/install.mjs --no-pnpm       # 跳过 pnpm install（自己手动装）
  * node scripts/install.mjs --uninstall     # 从 profile 里移除本插件
  * ```
+ *
+ * ## ⚠️ 只拿到 `.tgz` 时怎么办
+ *
+ * 本脚本**不能**直接从 `.tgz` 安装 —— 它要读插件目录里的
+ * `cordis.patch.yml` / `src/host/index.js` 来验证，没解包就没得读。
+ *
+ * 但 `install.mjs` **已经打进包里**了，所以流程是"解包 → 跑包内的 install.mjs"：
+ *
+ * ```bash
+ * tar -xzf dsh-pet-ds-0.1.2.tgz          # 解出 package/ 目录
+ * node package/install.mjs               # 它在包根，一条命令装完
+ * ```
+ *
+ * 顺带说明：**`pnpm add <tgz>` 装不完整**。实测它会把文件装进 profile、
+ * 连插件自带依赖也装好、从 profile 也能解析到入口 —— 但它**不会**
+ * 把插件登记进 `dsh.profile.bundles`，而那是 DSH 认插件的**唯一依据**。
+ * 少了那一步，DSH 根本不会加载它（表现："装完了但插件页里没有"）。
+ *
+ * 登记 `bundles` 正是本脚本第 3 步做的事，所以解包后跑它即可。
  */
 
 import { createRequire } from 'node:module'

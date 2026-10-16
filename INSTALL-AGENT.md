@@ -3,6 +3,18 @@
 > 这份是**给自动化 / agent 读**的：只要一条命令 + 退出码，不需要理解 DSH 内部概念。
 > 给人看的详细版见 [INSTALL.md](./INSTALL.md)。
 
+## 先看手里是什么
+
+| 拿到的东西 | 怎么做 |
+|---|---|
+| 一个目录（含 `package.json`） | `node install.mjs` |
+| 一个 `.tgz` 安装包 | `tar -xzf <包>` 然后 `node package/install.mjs` |
+
+> ⚠️ **不要用 `pnpm add <tgz>` 代替安装。** 实测它会成功，也会把文件和依赖
+> 都装好（插件自带依赖也装、从 profile 也解析得到入口），但它**不登记
+> `dsh.profile.bundles`** —— 而那是 DSH 认插件的唯一依据。少了它 DSH 不会
+> 加载插件，表现是"装完了但插件页里没有"。
+
 ## 一条命令
 
 ```bash

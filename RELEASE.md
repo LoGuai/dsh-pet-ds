@@ -106,9 +106,29 @@ node install.mjs
 
 | 产物 | 生成方式 | 用途 | 大小 |
 |---|---|---|---|
-| `dist/dsh-pet-ds-0.1.2.tgz` | `pnpm pack`（按 `files` 字段） | `pnpm add` / 插件市场安装 | 约 112 MB |
-| `dist/dsh-pet-ds-0.1.2-source.zip` | `git archive`（按版本库） | 上传为 Source code / 手动安装 | 约 100+ MB |
+| `dist/dsh-pet-ds-0.1.2.tgz` | `pnpm pack`（按 `files` 字段） | 解包后跑 `install.mjs`（**不能只用 `pnpm add`**，见下） | 约 112 MB |
+| `dist/dsh-pet-ds-0.1.2-source.zip` | `git archive`（按版本库） | 上传为 Source code / 手动安装 | 约 112 MB |
 
 两者内容大体相同，但**选取规则不同**：
 `.tgz` 按 `package.json` 的 `files` 白名单，`.zip` 按 git 版本库。
 改 `files` 字段时记得两边都验一遍。
+
+### ⚠️ `.tgz` 的安装方式（实测）
+
+`pnpm add <tgz>` 会**成功**，而且看起来什么都做了：文件装进 profile、
+插件自带依赖装好、从 profile 能解析到入口。
+
+**但它不登记 `dsh.profile.bundles`** —— 而那是 DSH 认插件的唯一依据。
+少了这一步，DSH 不加载插件（表现："装完了但插件页里没有"）。
+
+正确用法是把 `install.mjs` 打进包（`files` 里有 `install.mjs`），
+使用者解包后跑它：
+
+```bash
+tar -xzf dsh-pet-ds-0.1.2.tgz
+node package/install.mjs
+```
+
+所以 `files` 里**必须**保留 `install.mjs` 与 `scripts/install.mjs` ——
+`build-package.mjs` 有断言守着这两条。
+
