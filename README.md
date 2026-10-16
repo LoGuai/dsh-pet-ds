@@ -1455,6 +1455,46 @@ DSH 的设置表单**不是插件自己注册的**，而是从插件的 `Config`
 `scripts/dev/test-client-settings.mjs` 拿它们与宿主 schema **逐项比对**，
 漂移就红。**改字段或默认值时这两个注释必须一起改。**
 
+### ⚠️⚠️ `schemastery` **必须**声明为依赖（否则插件完全不加载）
+
+这是本项目最难查的一个故障。症状与"模块里有个拼错的名字"一模一样：
+
+```
+模型工具消失（unknown tool "DSHpet_status"）
+桥接端口 47845 不监听
+桌宠不出现
+插件自己一行日志都没有
+```
+
+**根因**：宿主 `Config` 要 `import z from '@deepseek-ai/schemastery'`，
+但 `package.json` 没声明这个依赖。
+
+DSH 会给自己的一部分包（`@deepseek-ai/dsh-tools`、`@deepseek-ai/cordis` 等）
+**注入**模块解析，但**不是全部** —— `schemastery` 就不在其中。
+验证方法：从 profile 解析它得到 `MODULE_NOT_FOUND`；而 `dsh-tools`
+同样解析不到、却一直可用 —— 差别就在"注入了没有"。
+
+**修法**：像可用的第三方插件那样，把它写成真实依赖。
+
+```jsonc
+"dependencies": { "@deepseek-ai/schemastery": "^3.18.1" }
+```
+
+然后重跑一次安装（依赖要真的装进 profile 的 `node_modules`）：
+
+```bash
+node scripts/install.mjs
+```
+
+> 对照参考实现：[dsh-deepseek-pet](https://github.com/txlznbzsdj-collab/dsh-deepseek-pet)
+> 的 `package.json` 里明确写着这条依赖，它的 `index.js` 也正是
+> `import Schema from "@deepseek-ai/schemastery"`。
+> **能跑的第三方插件就是这么做的** —— 这点值得单独记。
+
+`scripts/dev/test-manifest-deps.mjs` 现在会拦住这类问题：扫源码里所有
+裸标识符 import，要求逐个在清单里声明（宿主提供的那类必须放
+`peerDependencies`，不许放 `dependencies`）。
+
 ### ⚠️ 客户端不依赖任何 Harness Client 包
 
 DSH 官方 UI 规范明令禁止第三方插件 `require('@deepseek-ai/dsh-client-ui-primitives')`
