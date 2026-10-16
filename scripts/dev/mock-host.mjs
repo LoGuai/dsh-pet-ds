@@ -123,20 +123,25 @@ log(`Electron: ${electron ? `${electron.path}（${electron.source}）` : '未找
 bridge.setWorkStatus('idle', '')
 
 /**
- * 假余额 —— 用来目视确认下方那个**常驻余额面板**与**消费播报**是通的。
+ * 假余额 —— 开发宿主曾经用它来驱**余额面板**与**消费播报**。
  *
- * 开发宿主没有真实 API Key（也不该有），所以这里给一个明确的**假值**。
- * 生产环境下余额由宿主的 balance.js 从官方接口取，与这里无关。
+ * ⚠️ **现在余额已经不归宿主管了**：按用户要求，余额取数搬到了桌宠侧
+ * （桌宠自己读 `$DSH_HOME/.credentials.yaml` 并直连接口）。所以开发宿主里
+ * 这个桌宠显示的是**真实余额**，这里塞的假值对面板毫无影响。
+ *
+ * 那它还有什么用？**验证"取不到数"这条分支**：
+ *   `--no-balance` + `--balance-broadcast`  → 用假快照覆盖面板
  *
  * 参数：
- *   `--no-balance`        不给余额，用来看"取不到数时面板显示 `--`"
- *   `--balance=23.45`     起始余额（默认 23.45）
- *   `--balance-step=-5`   每轮变化量（默认 0 = 不变）
- *   `--balance-every=5`   每几秒变一次（默认 5）
+ *   `--no-balance`           不往桥接里塞余额
+ *   `--balance=23.45`        假余额起始值（默认 23.45）
+ *   `--balance-step=-5`      每轮变化量（默认 0 = 不变）
+ *   `--balance-every=5`      每几秒变一次（默认 5）
+ *   `--balance-broadcast`    **照旧往桥接里塞**（默认关闭，见下）
  *
- * 播报验证的用法：`--balance=23.45 --balance-step=-5` —— 每 5 秒余额掉 5 元，
- * 桌宠应当念"刚才花掉了¥5，还有¥18.45，有些吃紧。"（档位随余额下降而变）。
- * 传正值（`--balance-step=20`）可验证**充值不会被播报成消耗**。
+ * 为什么默认关闭：桌宠自己会取真实余额并**自己播报**。开发宿主若同时
+ * 往桥接里塞假值并播报，屏幕上就会出现"假余额播报"与"真余额播报"打架 ——
+ * 那验证不了任何东西。所以默认只保留参数解析，不碰桥接。
  */
 const balanceEnabled = !argv.includes('--no-balance')
 const argValue = (name, dflt) => {
@@ -148,6 +153,13 @@ const argValue = (name, dflt) => {
 let fakeBalance = argValue('balance', 23.45)
 const fakeBalanceStep = argValue('balance-step', 0)
 const fakeBalanceEverySec = Math.max(1, argValue('balance-every', 5))
+
+/**
+ * 是否真的往桥接里塞假余额。
+ *
+ * 需要**同时**满足：没给 `--no-balance`、且显式给了 `--balance-broadcast`。
+ */
+const balanceBroadcast = balanceEnabled && argv.includes('--balance-broadcast')
 
 /** 组一份余额快照并写入桥接。 */
 function pushFakeBalance() {
@@ -164,26 +176,30 @@ function pushFakeBalance() {
   })
 }
 
-if (balanceEnabled) {
+if (balanceBroadcast) {
   pushFakeBalance()
-  log(`已放一条假余额（¥${fakeBalance.toFixed(2)}）；用 --no-balance 可关掉`)
+  log(
+    `已放一条**假**余额（¥${fakeBalance.toFixed(2)}）—— 这只影响 /state 快照，` +
+      `桌宠面板显示的是它自己取的真实余额。用 --no-balance 可关掉`,
+  )
   if (fakeBalanceStep !== 0) {
-    log(`假余额每 ${String(fakeBalanceEverySec)} 秒变化 ${String(fakeBalanceStep)}（用来验证播报）`)
+    log(`假余额每 ${String(fakeBalanceEverySec)} 秒变化 ${String(fakeBalanceStep)}`)
   }
+} else {
+  log('未广播假余额（默认）：余额由桌宠自己取，开发宿主不插手')
 }
 
 /**
- * 假余额的定时变化。
+ * 假余额的定时变化（**仅 `--balance-broadcast` 时启用**）。
  *
- * ⚠️ 这里**也走 `bridge.setMessage()`**，也就是与生产代码同一个播报通道 ——
- * 不是另写一套。这样开发宿主能真正验证"余额变化 → 一次性消息 → 桌宠念出来"
- * 这条链路，而不是只验证到余额面板更新。
+ * ⚠️ 这里走 `bridge.setMessage()`，也就是与旧的生产代码同一个播报通道 ——
+ * 用来验证"一次性消息 → 桌宠念出来"这条链路。
  *
- * 用的是 `buildBalanceAnnouncement`（共享核心的纯逻辑），
- * 所以分档与"充值不算消耗"的行为与生产完全一致。
+ * 但它现在**默认关闭**：桌宠自己会取真实余额并自己播报，
+ * 开发宿主再播一遍就会与真播报打架，屏幕上两句都是余额、分不清哪句是真的。
  */
 let fakeBalanceTimer = null
-if (balanceEnabled && fakeBalanceStep !== 0) {
+if (balanceBroadcast && fakeBalanceStep !== 0) {
   fakeBalanceTimer = setInterval(() => {
     const prev = fakeBalance
     fakeBalance = Math.max(0, fakeBalance + fakeBalanceStep)

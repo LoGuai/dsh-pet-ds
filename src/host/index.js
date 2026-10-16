@@ -22,7 +22,6 @@ import { BridgeServer } from './bridge-server.js'
 import { Supervisor } from './supervisor.js'
 import { electronHelpText, resolveElectron } from './electron-locate.js'
 import { createBalanceFetcher } from './balance.js'
-import { buildBalanceAnnouncement, shouldAnnounceBalance } from '../shared-core/balance-announce.js'
 import { PROTOCOL_VERSION } from '../shared-core/protocol.js'
 
 export const name = 'dsh-pet-ds'
@@ -159,13 +158,19 @@ export function apply(ctx, config) {
 
   // ---------------------------------------------------------------- 余额监控
   /*
-   * 取数、缓存、错误处理都在 balance.js 里；这里只负责"定时拉一次并写进桥接快照"。
+   * ⚠️ **余额取数的主责已经搬到桌宠侧**（用户要求："让桌宠插件自身能实时自动
+   * 更新余额监控，不需要进行别的操作"）。桌宠自己读 `$DSH_HOME/.credentials.yaml`
+   * 拿密钥、自己直连接口、自己判断播报、自己推给渲染进程。
    *
-   * 之所以定时任务放在宿主：桌宠是独立进程，它只通过回环接口读快照，
-   * 从不直接碰 API Key（见 balance.js 开头的说明）。
+   * 所以这里**不再定时拉取、也不再播报** —— 否则两个进程各拉一次、各播一次，
+   * 用户会听到两遍、接口也会被多打一倍。留下这个 fetcher 实例只为
+   * `DSHpet_balance` 工具服务：工具是用户显式查询，仍然需要能拿到数。
    *
-   * 刷新节奏与缓存时长一致（默认 60 秒）。`fresh: true` 强制刷新仅供
-   * `DSHpet_balance` 工具用（用户显式要"现在这个数"时才绕过缓存）。
+   * 这么搬的收益：**改取数/播报逻辑只需重启桌宠，不用重启 DSH**；
+   * 而且 DSH 没开时桌宠照样能显示余额。
+   *
+   * 取数算法本身在 `shared-core/balance.js`，**两边共用同一份**（没有复制），
+   * 所以口径不会漂移。
    */
   const balance = createBalanceFetcher({
     refreshSeconds: cfg.refreshSeconds,
@@ -175,20 +180,12 @@ export function apply(ctx, config) {
   })
 
   /**
-   * 上一次成功取到的余额（数字），用于算"这 5 分钟花掉多少"。
+   * 拉一次余额（**仅供 `DSHpet_balance` 工具**）。
    *
-   * `null` 表示还没成功取过 —— 首次不播报（没有可比的上一次），
-   * 见下面 refreshBalance 里的说明。
-   * @type {number | null}
-   */
-  let lastBalanceTotal = null
-
-  /**
-   * 拉一次余额并写入桥接快照。失败也写 —— 快照里带 error，界面能显示"取数失败"。
+   * 顺带写进桥接快照：别的消费者（巡检脚本、将来的工具）仍能从
+   * `/state` 读到余额，不必知道它实际是桌宠在维护。
    *
-   * 拿到新余额后顺带**算一次播报**（用户要求）：告诉桌宠这 5 分钟花掉多少、
-   * 还剩多少、该说哪句台词。播报内容由 shared-core/balance-announce.js 计算 ——
-   * 那是纯逻辑，有单测覆盖分档的每个边界。
+   * @param {boolean} [fresh] true = 忽略缓存强制刷新
    */
   const refreshBalance = async (fresh = false) => {
     try {
@@ -197,58 +194,18 @@ export function apply(ctx, config) {
         fresh,
       })
       bridge.setBalance(snap)
-
-      /*
-       * 只在**真的取到数**时才播报。
-       *
-       * `fetchedAt > 0` 表示拿到过至少一次成功结果；取数失败时它是上一次的时间戳，
-       * 而 `error` 非空。这两种情况都不该播报 —— 否则用户会听到
-       * "刚才花掉了¥0，还有¥0" 这种由故障产生的假话。
-       */
-      const ok = Boolean(snap) && snap.fetchedAt > 0 && snap.error === null
-      if (ok) {
-        const nextTotal = Number(snap.total)
-        const ann = buildBalanceAnnouncement({
-          // 首次成功取数时 prevTotal 为 null → 视为"没花"，只报剩余与档位。
-          prevTotal: lastBalanceTotal,
-          nextTotal,
-          currency: snap.currency,
-        })
-        /*
-         * 播不播由 `shouldAnnounceBalance()` 决定 —— 那是共享核心里的纯函数，
-         * 有单测逐种情形钉住。这里只负责照它的结论执行。
-         *
-         * 两种情况不播：**首次取数**（没有"上一次"可比）与**余额没变**
-         * （用户要求："如果 5 分钟内没有余额变化，则不播放提示"）。
-         * 注意**充值要播**：余额确实变了，不说的话用户会奇怪"钱怎么突然多了"。
-         */
-        const verdict = shouldAnnounceBalance({ prevTotal: lastBalanceTotal, nextTotal })
-        if (verdict.announce) {
-          bridge.setMessage(ann.text)
-          say(`余额播报：${ann.text}（${verdict.reason}，${String(ann.tier)} 档）`)
-        } else {
-          say(`跳过播报（${verdict.reason}）当前 ¥${snap.total}`)
-        }
-        if (Number.isFinite(nextTotal)) lastBalanceTotal = nextTotal
-      }
       return snap
     } catch (err) {
       // balance.get() 本身不 reject，这里是防御性的兜底。
-      say(`余额刷新异常（已忽略）：${errText(err)}`)
+      say(`余额查询异常（已忽略）：${errText(err)}`)
       return balance.peek()
     }
   }
 
-  // 按 refreshSeconds 周期刷新。
-  const balanceTimer = setInterval(() => {
-    void refreshBalance()
-  }, Math.max(5, cfg.refreshSeconds) * 1000)
-  // 立刻拉一次（不阻塞 apply）。
-  void refreshBalance()
-
-  ctx.effect(() => () => {
-    clearInterval(balanceTimer)
-  })
+  /*
+   * 刻意**不**在启动时拉一次、也不设定时器：桌宠会自己取。
+   * 宿主只在工具被调用时按需查询。
+   */
 
   /** 自动启动桌宠。所有异常就地吞掉，不影响宿主。 */
   const autoStartPet = () => {

@@ -41,6 +41,26 @@ const {
 /** 对话台词库（右键菜单「对话」用）。 */
 const { pickDialogueLine, dialogueLineCount, DIALOGUE_LINES } = require('../src/shared-core/dialogue.js')
 
+/** 余额取数：与宿主**共用同一份**（shared-core，ESM 经 require(esm) 加载）。 */
+const { createBalanceFetcher } = require('../src/shared-core/balance.js')
+/** 余额播报的纯逻辑：消耗计算、四档台词、播不播。 */
+const { buildBalanceAnnouncement, shouldAnnounceBalance } = require('../src/shared-core/balance-announce.js')
+/** 从 DSH 的凭据文件里读 API Key（桌宠侧专用，CJS）。 */
+const { readCredentialFromFile } = require('./credentials-file.js')
+
+/**
+ * 余额查询器实例。
+ *
+ * 缓存时长与刷新周期都是 5 分钟（用户指定），**共用同一个值** ——
+ * 分两处设只会在它们不一致时产生"播报的其实是缓存、根本没重新取数"这类难查问题。
+ */
+const balanceFetcher = createBalanceFetcher({
+  refreshSeconds: 300,
+  apiBase: readArg('balance-api-base') || undefined,
+  credential: readArg('balance-credential') || undefined,
+  log: (msg) => log(msg),
+})
+
 /**
  * 闲置随机动作的触发规则 —— **从动作库里取**，这里不再自己写一份。
  *
@@ -911,6 +931,13 @@ ipcMain.handle('pet:get-initial', () => ({
    * 单独预留是"余额面板与属性面板不遮挡"的结构性保证。
    */
   balanceZone: balanceZoneFor(logicalWidth),
+  /**
+   * 余额（**桌宠自己取的**，不再是宿主推来的）。
+   *
+   * 首屏可能还是 null（取数要一次网络往返）——那时渲染进程显示 `--`，
+   * 取到后由 `pet:balance` 推下去更新。
+   */
+  balance: currentBalancePayload(),
   /** 余额低于此值时面板转为"告急"配色。 */
   lowBalanceThreshold: LOW_BALANCE_THRESHOLD,
   /** 气泡字号（CSS 像素）。与气泡区一起随桌宠等比缩放。 */
@@ -1086,6 +1113,135 @@ function pushAffectionToRenderer() {
   } catch {
     // 忽略：推送失败不影响桌宠主体功能。
   }
+}
+
+// ---------------------------------------------------------------- 余额监控（桌宠自取）
+/*
+ * 需求（用户指定）：**桌宠自己实时自动更新余额监控，不需要别的操作。**
+ *
+ * 所以余额取数**从宿主搬到了桌宠侧**：
+ *  · 桌宠自己读 `$DSH_HOME/.credentials.yaml` 拿 API Key；
+ *  · 自己按周期直连 DeepSeek `/user/balance`；
+ *  · 自己判断"变了才播报"，自己推给渲染进程。
+ *
+ * 好处很实际：**改取数/播报逻辑只需重启桌宠，不用重启 DSH**；
+ * 而且 DSH 没开时桌宠照样能显示余额。
+ *
+ * 取数算法本身在 `src/shared-core/balance.js`（宿主与桌宠**共用同一份**，
+ * 没有复制），这里只负责"读凭据 + 定时 + 播报 + 推送"。
+ */
+
+/** 余额快照（最近一次取到的，含 error/stale 标记）。 */
+let balanceSnapshot = null
+
+/**
+ * 上一次成功取到的余额（数字），用于算"这段时间花掉多少"。
+ * `null` 表示还没成功取过 —— 首次不播报（没有可比的上一次）。
+ */
+let lastBalanceTotal = null
+
+/** 上一次播报的台词，用于避免连续两句一模一样。 */
+let lastBalanceMessage = null
+
+/** 余额刷新定时器。 */
+let balanceTimer = null
+
+const BALANCE_POLL_INTERVAL_MS = (() => {
+  const raw = Number(readArg('balance-refresh'))
+  return Number.isFinite(raw) && raw >= 5 ? raw * 1000 : 300 * 1000
+})()
+
+/**
+ * 给渲染进程的余额载荷。
+ *
+ * `lowBalanceThreshold` 一并带上：阈值是用户配置，宿主通过 `--low-balance=`
+ * 下发；没下发时用桌宠自己的默认值。
+ */
+function currentBalancePayload() {
+  return {
+    snapshot: balanceSnapshot,
+    lowBalanceThreshold: LOW_BALANCE_THRESHOLD,
+  }
+}
+
+/** 把余额推给渲染进程。 */
+function pushBalanceToRenderer() {
+  if (!win || win.isDestroyed()) return
+  try {
+    win.webContents.send('pet:balance', currentBalancePayload())
+  } catch {
+    // 忽略：推送失败不影响桌宠主体功能。
+  }
+}
+
+/**
+ * 拉一次余额：读凭据 → 取数 → 必要时播报 → 推给渲染进程。
+ *
+ * @param {boolean} [fresh] true = 忽略缓存强制刷新
+ */
+async function refreshBalanceOnce(fresh = false) {
+  try {
+    const snap = await balanceFetcher.get({
+      // 凭据由桌宠自己从 DSH 的凭据文件里读（密钥只留在主进程）。
+      resolveCredential: async (name) => {
+        const r = readCredentialFromFile({ credential: name })
+        return r.ok ? { value: r.value } : null
+      },
+      fresh,
+    })
+    balanceSnapshot = snap
+
+    /*
+     * 播报判断（用户要求）：只在余额**真的变了**时才说。
+     * 判据用共享核心的纯函数，口径与宿主曾经用的完全一致。
+     */
+    if (snap && snap.fetchedAt > 0 && snap.error === null) {
+      const nextTotal = Number(snap.total)
+      const verdict = shouldAnnounceBalance({ prevTotal: lastBalanceTotal, nextTotal })
+      if (verdict.announce) {
+        const ann = buildBalanceAnnouncement({
+          prevTotal: lastBalanceTotal,
+          nextTotal,
+          currency: snap.currency,
+        })
+        // 极端情况下（例如余额在两个值之间来回跳）避免连续重复同一句。
+        if (ann.text !== lastBalanceMessage) {
+          lastBalanceMessage = ann.text
+          if (win && !win.isDestroyed()) {
+            win.webContents.send('pet:say', { text: ann.text, bubbleMs: 9000 })
+          }
+          log(`余额播报：${ann.text}（${verdict.reason}，${String(ann.tier)} 档）`)
+        }
+      } else {
+        log(`跳过播报（${verdict.reason}）当前 ¥${String(snap.total)}`)
+      }
+      if (Number.isFinite(nextTotal)) lastBalanceTotal = nextTotal
+    } else if (snap && snap.error) {
+      log(`余额取数失败：${snap.error}`)
+    }
+
+    pushBalanceToRenderer()
+    return snap
+  } catch (err) {
+    // 取数路径整体兜住：余额失败绝不能影响桌宠主体功能。
+    log(`余额刷新异常（已忽略）：${err instanceof Error ? err.message : String(err)}`)
+    return balanceSnapshot
+  }
+}
+
+/**
+ * 启动余额监控：立刻拉一次，之后按周期自动刷新。
+ *
+ * 全程无需任何人工操作 —— 这是用户明确要求的
+ * （"让桌宠插件自身能实时自动更新余额监控，不需要进行别的操作"）。
+ */
+function startBalanceMonitor() {
+  if (balanceTimer) return
+  void refreshBalanceOnce()
+  balanceTimer = setInterval(() => {
+    void refreshBalanceOnce()
+  }, BALANCE_POLL_INTERVAL_MS)
+  log(`余额监控已启动：每 ${String(Math.round(BALANCE_POLL_INTERVAL_MS / 1000))} 秒自动刷新`)
 }
 
 /**
@@ -1772,6 +1928,11 @@ app.whenReady().then(() => {
     }
     createWindow()
     void pollLoop()
+    /*
+     * 余额监控**桌宠自己起**（用户要求："让桌宠插件自身能实时自动更新余额监控，
+     * 不需要进行别的操作"）。它不依赖宿主是否在线，也不需要在 DSH 里做任何操作。
+     */
+    startBalanceMonitor()
     if (SELFTEST) void runSelfTest()
     if (TEST_DRAG_FOLLOW) void runDragFollowTest()
     if (WATCH_SLEEP_S !== null) void watchSleep(WATCH_SLEEP_S)

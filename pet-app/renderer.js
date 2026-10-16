@@ -1487,11 +1487,21 @@ async function boot() {
   try {
     const initial = await window.pet.getInitial()
     if (initial && initial.state) applyState(initial.state)
-    // 余额面板：阈值由主进程下发（源头是插件配置 lowBalanceThreshold）。
+    /*
+     * 余额：**由桌宠主进程自己取**（读凭据文件 + 直连接口），随初始载荷带下来。
+     *
+     * 首次启动时它可能还是 `null` —— 取数要一次网络往返，`getInitial` 不等它。
+     * 那时面板显示 `--`，取到后由 `pet:balance` 推下来刷新。
+     */
+    if (initial && initial.balance) {
+      const b = initial.balance
+      if (b.snapshot !== undefined) balanceState = b.snapshot ?? null
+      if (Number.isFinite(b.lowBalanceThreshold)) lowBalanceThreshold = b.lowBalanceThreshold
+    }
     if (initial && Number.isFinite(initial.lowBalanceThreshold)) {
       lowBalanceThreshold = initial.lowBalanceThreshold
     }
-    // 首屏先画一次：宿主的第一份快照还没到，此时显示 `--` 而不是空白。
+    // 首屏先画一次：即便还没有余额数据，也要把 `--` 画出来而不是留空白。
     renderBalance()
     // 布局参数由主进程下发，渲染进程只读它们做布局，绝不回报自己的 innerWidth。
     if (initial) {
@@ -1628,23 +1638,43 @@ function applyState(state) {
 
 window.pet.on('pet:state', (state) => {
   try {
-    // 余额随每一份宿主快照一起到（宿主侧定时刷新，桌宠只是显示）。
-    if (state && 'balance' in state) {
-      balanceState = state.balance ?? null
-      hostOffline = false
-      renderBalance()
-    }
     applyState(state)
   } catch {
     // 忽略：单个状态处理失败不应让桌宠停止工作。
   }
 })
 
+/**
+ * 余额（**由桌宠主进程自己取**，不再来自宿主快照）。
+ *
+ * 用户要求"让桌宠插件自身能实时自动更新余额监控，不需要进行别的操作"，
+ * 所以取数搬到了桌宠主进程；渲染进程只是被动接收并显示。
+ */
+window.pet.on('pet:balance', (payload) => {
+  try {
+    if (!payload) return
+    if (payload.snapshot !== undefined) {
+      balanceState = payload.snapshot ?? null
+      // 主进程能取到数就说明它活着，顺手清掉离线的降级标记。
+      if (balanceState) hostOffline = false
+    }
+    if (Number.isFinite(payload.lowBalanceThreshold)) {
+      lowBalanceThreshold = payload.lowBalanceThreshold
+    }
+    renderBalance()
+  } catch {
+    // 忽略：余额渲染失败不该影响其它功能。
+  }
+})
+
 window.pet.on('pet:offline', () => {
   offlineTag.hidden = false
-  // 宿主离线时把余额面板标灰（数字保留最后一次取到的值）。
-  hostOffline = true
-  renderBalance()
+  /*
+   * 宿主离线**不再**把余额面板标灰。
+   *
+   * 余额现在由桌宠自己取，与宿主在不在线无关 —— 宿主离线时余额照样是真实值，
+   * 标灰反而会让人以为"余额不可信了"。
+   */
 })
 
 window.pet.on('pet:say', (payload) => {
