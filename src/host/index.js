@@ -124,6 +124,8 @@ export function apply(ctx, config) {
     commandUrl: bridge.commandUrl(),
     debug: cfg.debug,
     lowBalanceThreshold: cfg.lowBalanceThreshold,
+    // 余额刷新周期透传给桌宠（取数主责在桌宠侧，它得知道自己多久刷一次）。
+    balanceRefreshSeconds: cfg.refreshSeconds,
     log: say,
   })
 

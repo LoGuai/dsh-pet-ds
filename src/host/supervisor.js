@@ -42,6 +42,19 @@ export class Supervisor {
     this.lowBalanceThreshold = Number.isFinite(Number(options.lowBalanceThreshold))
       ? Number(options.lowBalanceThreshold)
       : 10
+    /**
+     * 余额刷新周期（秒），下发给桌宠用 `--balance-refresh=` 接收。
+     *
+     * **余额取数的主责在桌宠侧**（桌宠自己读凭据、自己直连接口、自己播报），
+     * 所以"多久刷一次"必须由桌宠知道。宿主只是把用户配置透传下去。
+     *
+     * 下限 5 秒：接口有限流，更密没有意义；而且这个下限也方便开发期
+     * 把它临时调小来观察刷新行为（不必改代码）。
+     */
+    this.balanceRefreshSeconds =
+      Number.isFinite(Number(options.balanceRefreshSeconds)) && Number(options.balanceRefreshSeconds) >= 5
+        ? Number(options.balanceRefreshSeconds)
+        : 300
     this._log = options.log ?? (() => {})
     /**
      * 桌宠进程退出时的回调。
@@ -70,24 +83,89 @@ export class Supervisor {
     return this._lastPollAt > 0 && Date.now() - this._lastPollAt < ALIVE_WINDOW_MS
   }
 
-  /** 我们 spawn 的子进程是否仍活着。 */
-  _ownedAlive() {
-    return Boolean(this._proc) && this._proc.exitCode === null && !this._proc.killed
+  /**
+   * 一个 pid 对应的进程**现在是否真的存在**。
+   *
+   * 用 `process.kill(pid, 0)`：信号 0 不真的发信号，只做存在性与权限检查。
+   * pid 非法或进程已不存在会抛错 → 返回 false。
+   *
+   * ⚠️ 只看"我们自己的桌宠进程"是安全的：pid 来自桌宠在 `/state` 里的自报，
+   * 或来自我们 spawn 的子进程。**绝不**拿它去判断别的进程。
+   */
+  _pidExists(pid) {
+    const n = Number(pid)
+    if (!Number.isInteger(n) || n <= 0) return false
+    try {
+      process.kill(n, 0)
+      return true
+    } catch {
+      return false
+    }
   }
 
-  /** 桌宠是否在跑：我们起的进程活着，或最近还在轮询。 */
+  /**
+   * 我们 spawn 的子进程句柄，**并且那个 pid 现在真的存在**。
+   *
+   * ⚠️ 为什么要额外查 pid，而不是只看 `_proc.exitCode === null`：
+   * Node 的 `exitCode` 只有在 `'exit'` 事件抵达后才被填上。桌宠是被
+   * `detached` 启动的，它的退出事件在某些路径下会晚到甚至不到 ——
+   * 于是句柄看起来"还活着"，而进程其实早就没了。
+   * 实测踩过：`stop` 报成功，紧接着 `start` 回 `already-running`，
+   * 但系统里**一个 electron 进程都没有**。
+   */
+  _procAlive() {
+    if (!this._proc) return false
+    if (this._proc.exitCode !== null || this._proc.killed) return false
+    return this._pidExists(this._proc.pid)
+  }
+
+  /**
+   * 桌宠是否在跑 —— **唯一权威判据**。
+   *
+   * 规则：**一个 pid 只有在它现在真的存在时才算活。**
+   *
+   * 这是把原先三套互相冲突的信号收敛成一条的结果：
+   *  · 子进程句柄（`exitCode`）—— 退出事件可能晚到甚至不到；
+   *  · "最近 30 秒来轮询过"的窗口 —— 记录可能被污染的 pid 刷新；
+   *  · 自报的 pid —— 原先完全不校验存在性。
+   *
+   * 三者各自都能单独说错话，合起来就出现"三个窗口都没有、却报 already-running"
+   * 这种自相矛盾的状态。**过期就清掉记录**，让后续判断不被陈旧的窗口干扰。
+   */
   isRunning() {
-    return this._ownedAlive() || this.polledRecently()
+    if (this._procAlive()) return true
+
+    // 句柄已失效 —— 顺手清掉，免得它继续参与判断。
+    if (this._proc) this._proc = null
+
+    if (!this.polledRecently()) return false
+
+    // 自报 pid 不存在 → 窗口是陈旧的，清掉。
+    if (!this._pidExists(this._lastPid)) {
+      this._lastPollAt = 0
+      this._lastPid = null
+      return false
+    }
+    return true
   }
 
   /**
    * 当前有效的 pid。
-   * 注意：必须与 isRunning() 配套使用 —— 当 isRunning() 为真仅仅因为"最近在轮询"时，
-   * this._proc 是 null，直接读 this._proc.pid 会抛 TypeError。
+   *
+   * 与 `isRunning()` 共用同一条判据：**必须现在真的存在**。
+   * 原先的实现只看"子进程句柄 + 轮询时间窗"，两者都可以单独说错话。
+   * 于是可能返回一个早就死掉的 pid —— 那会让 `DSHpet_status` 报出一个
+   * 查不到任何进程的号码（实测出现过 `pid 1` 这种明显荒谬的值，
+   * 来自诊断请求里 `?pid=1` 污染）。
    */
   livePid() {
-    if (this._ownedAlive()) return this._proc.pid ?? null
-    return this.polledRecently() ? this._lastPid : null
+    if (this._proc && this._proc.exitCode === null && !this._proc.killed) {
+      const p = this._proc.pid
+      if (this._pidExists(p)) return p ?? null
+      this._proc = null
+    }
+    if (this.polledRecently() && this._pidExists(this._lastPid)) return this._lastPid
+    return null
   }
 
   /**
@@ -126,6 +204,7 @@ export class Supervisor {
       const args = [
         this.petAppDir,
         `--low-balance=${String(this.lowBalanceThreshold)}`,
+        `--balance-refresh=${String(this.balanceRefreshSeconds)}`,
         ...extraArgs,
       ]
       if (this.debug) args.push('--enable-logging')
@@ -176,24 +255,43 @@ export class Supervisor {
    * @returns {{ ok: boolean, status: 'stopped'|'quit-requested'|'not-running', pid?: number|null, error?: string }}
    */
   stop(requestSoftQuit) {
-    if (this._ownedAlive()) {
+    if (this._procAlive()) {
       const pid = this._proc.pid
       try {
         process.kill(pid)
         this._proc = null
+        /*
+         * ⚠️ 停止后必须**把判活记录一并清干净**。
+         *
+         * 不清的话，"最近 30 秒来轮询过"那个窗口还在 —— 紧接着调用 `start()`
+         * 就会因为 `isRunning()` 为真而回 `already-running`，而它给出的 pid
+         * 其实已经死了。表现就是**"关掉之后立刻再启动，没有任何反应"**。
+         * 这是本项目最影响开发体验的一个缺陷（在用正式版频繁重启桌宠时天天撞）。
+         */
+        this._lastPollAt = 0
+        this._lastPid = null
         this._log(`桌宠已关闭 pid=${String(pid)}`)
         return { ok: true, status: 'stopped', pid: pid ?? null }
       } catch (err) {
-        return { ok: false, status: 'stopped', error: err instanceof Error ? err.message : String(err) }
+        // kill 失败通常意味着进程已经没了 —— 仍然清掉记录，让下一次 start 能起来。
+        this._proc = null
+        this._lastPollAt = 0
+        this._lastPid = null
+        this._log(`关闭桌宠失败（进程可能已退出）：${err instanceof Error ? err.message : String(err)}`)
+        return { ok: true, status: 'not-running', pid: pid ?? null }
       }
     }
 
-    if (this.polledRecently()) {
+    if (this.polledRecently() && this._pidExists(this._lastPid)) {
       // 不是我们启动的（例如用户自己双击运行）→ 只能软退出。
       requestSoftQuit()
+      this._lastPollAt = 0
       return { ok: true, status: 'quit-requested', pid: this._lastPid }
     }
 
+    // 什么也没在跑：顺手清掉陈旧记录。
+    this._lastPollAt = 0
+    this._lastPid = null
     return { ok: true, status: 'not-running' }
   }
 
@@ -201,7 +299,7 @@ export class Supervisor {
   describe() {
     return {
       running: this.isRunning(),
-      owned: this._ownedAlive(),
+      owned: this._procAlive(),
       pid: this.livePid(),
       lastPollAt: this._lastPollAt > 0 ? new Date(this._lastPollAt).toISOString() : null,
       electronPath: this.electronPath,
