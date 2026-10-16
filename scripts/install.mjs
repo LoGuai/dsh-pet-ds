@@ -410,16 +410,42 @@ function main() {
   } else {
     const pnpm = findPnpm(dshHome)
     if (!pnpm) {
-      warn('找不到 pnpm。请自己在 profile 目录里跑一次 pnpm install：')
+      warn('找不到 pnpm。请自己在下面两个目录里各跑一次 pnpm install：')
       info(`cd "${profile.dir}" && pnpm install`)
+      info(`cd "${PLUGIN_ROOT}" && pnpm install`)
     } else {
       info(`用 ${pnpm.node} 执行 ${pnpm.script}`)
-      const res = runPnpm(pnpm, profile.dir)
-      if (res.ok) ok('pnpm install 完成')
+
+      /*
+       * ⚠️ 两个目录都要装，顺序不能省。
+       *
+       * **为什么插件目录自己也要装**（这是踩过的坑，`failed to import`）：
+       * ESM 解析裸标识符时，从**引用方文件**所在目录往上找 `node_modules`。
+       * 插件的真实路径是 `PLUGIN_ROOT`（profile 里那条链接指向它），
+       * 所以 `import '@deepseek-ai/schemastery'` 会去
+       * `PLUGIN_ROOT/node_modules` 找 —— **profile 的 `node_modules` 不在解析链上**。
+       *
+       * 只装 profile 那侧的话，依赖确实装好了，但插件**导入阶段就失败**，
+       * 表现为 DSH 插件页提示 "failed to import"、模型工具消失、
+       * 桥接端口不监听，而插件自己一行日志都没有。
+       *
+       * 对照：profile 里另外两个第三方插件（dshmarket、dsh-paper-reader）
+       * 都是**真实目录**且**各自带 node_modules**，所以它们能加载。
+       */
+      const resProfile = runPnpm(pnpm, profile.dir)
+      if (resProfile.ok) ok('profile 的 pnpm install 完成')
       else {
-        warn('pnpm install 失败，请手动在 profile 目录里跑一次：')
+        warn('profile 的 pnpm install 失败，请手动跑一次：')
         info(`cd "${profile.dir}" && pnpm install`)
-        if (res.tail) info(res.tail)
+        if (resProfile.tail) info(resProfile.tail)
+      }
+
+      const resPlugin = runPnpm(pnpm, PLUGIN_ROOT)
+      if (resPlugin.ok) ok('插件目录的 pnpm install 完成（依赖要能被 ESM 解析到）')
+      else {
+        warn('插件目录的 pnpm install 失败，请手动跑一次：')
+        info(`cd "${PLUGIN_ROOT}" && pnpm install`)
+        if (resPlugin.tail) info(resPlugin.tail)
       }
     }
   }
@@ -493,6 +519,45 @@ function main() {
   } catch (err) {
     bad(`从 profile 解析不到 ${PLUGIN_NAME}：${err instanceof Error ? err.message : String(err)}`)
     info('DSH 现在看不到这个插件。先让 pnpm install 成功，再重启 DSH。')
+  }
+
+  /*
+   * 5b-2) **插件自己的**裸标识符能不能解析 —— 这一条是本项目踩过的坑。
+   *
+   * ESM 解析裸标识符时，从**引用方文件**所在目录往上找 `node_modules`。
+   * 插件的真实路径是 PLUGIN_ROOT（profile 里那条链接指向它），
+   * 所以 `import '@deepseek-ai/schemastery'` 会去 `PLUGIN_ROOT/node_modules` 找 ——
+   * **profile 的 node_modules 不在解析链上**。
+   *
+   * 只装 profile 那侧时，依赖装好了、上面 5b 也过了，但 DSH 加载插件时
+   * **导入阶段就失败**，报 `dsh-pet-ds (dsh-pet-ds): failed to import`，
+   * 而插件自己一行日志都没有。所以必须在这里单独验一次。
+   */
+  if (resolveOk) {
+    const mustResolve = ['@deepseek-ai/schemastery', '@deepseek-ai/dsh-tools', '@deepseek-ai/cordis']
+    const unresolved = []
+    for (const spec of mustResolve) {
+      let hit = null
+      try {
+        hit = createRequire(join(PLUGIN_ROOT, 'package.json')).resolve(spec)
+      } catch {
+        hit = null
+      }
+      if (!hit) unresolved.push(spec)
+    }
+    if (unresolved.length === 0) {
+      ok('插件自己的裸标识符依赖都能解析（ESM 会从插件目录往上找 node_modules）')
+    } else {
+      /*
+       * 这一条也是**致命**的：DSH 会在导入阶段就失败。
+       * 所以同样把 resolveOk 打掉，让结论与退出码如实反映。
+       */
+      resolveOk = false
+      bad(`插件目录解析不到这些依赖：${unresolved.join(', ')}`)
+      info(`DSH 加载时会报 "failed to import"。请在插件目录里跑一次 pnpm install：`)
+      info(`cd "${PLUGIN_ROOT}" && pnpm install`)
+      info('（ESM 从插件真实路径往上找 node_modules，profile 的那份不在解析链上）')
+    }
   }
 
   /*

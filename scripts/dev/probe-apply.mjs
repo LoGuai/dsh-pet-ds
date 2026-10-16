@@ -34,18 +34,35 @@ import { fileURLToPath } from 'node:url'
 const HERE = dirname(fileURLToPath(import.meta.url))
 
 /*
- * 注册解析钩子：把 `@deepseek-ai/*` 指向 DSH 的 app.asar。
+ * 注册解析钩子：让裸标识符按 **DSH 的真实优先级**解析
+ * （profile 的 node_modules 优先，其次 asar）。
  *
  * 不注册的话，插件的裸标识符 import 会一律失败
  * （`Cannot find package '@deepseek-ai/dsh-tools'`）—— 那是**探测方式的问题**，
  * 不是插件的问题，而它会掩盖我们真正想知道的"apply() 会不会抛"。
  */
 const ASAR = 'C:/Users/29845/AppData/Local/Programs/DeepSeek Harness/resources/app.asar'
+const PROFILE_DIR = 'C:/Users/29845/.dsh/profiles/desktop'
 process.env.DSH_PET_ASAR = ASAR
-const { register } = await import('node:module')
+process.env.DSH_PET_PROFILE_DIR = PROFILE_DIR
+const { register, createRequire } = await import('node:module')
 register(pathToFileURL(join(HERE, 'dsh-resolve-hook.mjs')).href, {
   parentURL: pathToFileURL(join(HERE, 'noop.mjs')).href,
 })
+
+// 报告关键包解析到哪份 —— "解析到 asar 副本"与"解析到 profile 里声明安装的那份"
+// 是两种不同局面，混起来会让排查跑偏。
+const probeReq = createRequire(join(PROFILE_DIR, 'package.json'))
+console.log('关键依赖解析（从 profile 出发）：')
+for (const spec of ['@deepseek-ai/schemastery', '@deepseek-ai/dsh-tools', '@deepseek-ai/cordis']) {
+  try {
+    console.log(`  ✓ ${spec}`)
+    console.log(`      → ${probeReq.resolve(spec)}`)
+  } catch (e) {
+    console.log(`  ✗ ${spec}  (${e.code ?? 'ERR'})`)
+  }
+}
+console.log('')
 
 const ENTRY = 'D:/dsh/pet/src/host/index.js'
 

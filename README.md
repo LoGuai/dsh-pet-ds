@@ -1495,6 +1495,45 @@ node scripts/install.mjs
 裸标识符 import，要求逐个在清单里声明（宿主提供的那类必须放
 `peerDependencies`，不许放 `dependencies`）。
 
+### ⚠️⚠️ 插件目录**自己**也要有 `node_modules`（`failed to import`）
+
+声明依赖还不够 —— 依赖必须能被 **ESM 从插件的真实路径**解析到。
+
+现象（比上面那条更容易误判，因为"依赖明明装好了"）：
+
+```
+插件页提示：启用失败：dsh: warning: 1 entry did not activate
+           dsh-pet-ds (dsh-pet-ds): failed to import
+模型工具消失、桥接端口不监听、插件自己一行日志都没有
+```
+
+**原理**：ESM 解析裸标识符时，从**引用方文件**所在目录开始逐级往上找
+`node_modules`。而本插件在 profile 里是**目录联接**：
+
+```
+profiles/desktop/node_modules/dsh-pet-ds   ← Junction
+         │
+         └──► D:\dsh\pet                    ← ESM 解析的真实锚点
+
+profiles/desktop/node_modules/@deepseek-ai/schemastery   ← 装在这里**没用**，
+                                                            它不在 D:\dsh\pet 的解析链上
+```
+
+**所以两个目录都要装**：
+
+```bash
+cd <profile 目录> && pnpm install     # 让 profile 认得这个插件
+cd <插件仓库>     && pnpm install     # 让插件的裸标识符能被解析
+```
+
+`scripts/install.mjs` 已改成**两个都装**，并在第 5 步单独验一次
+"插件自己的裸标识符能不能解析"（解析不到就判失败，不让它蒙混过去）。
+
+> **对照**：profile 里另外两个第三方插件（`dshmarket`、`@ggboy123/dsh-paper-reader`）
+> 都是**真实目录**、**各自带 `node_modules`**，所以它们能加载。
+> 本插件为了"改源码立即生效"用了联接，代价就是得自己装一份依赖。
+> 这也解释了为什么"照着别的插件抄 manifest"不一定够 —— 布局不同，解析链就不同。
+
 ### ⚠️ 客户端不依赖任何 Harness Client 包
 
 DSH 官方 UI 规范明令禁止第三方插件 `require('@deepseek-ai/dsh-client-ui-primitives')`
