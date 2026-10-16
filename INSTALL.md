@@ -6,17 +6,20 @@
 
 | 你拿到的 | 怎么装 |
 |---|---|
-| 想用 **DSH 官方的 `plugin_manager install_bundle`** | 见下 **0**（最省事，`.tgz` 直接装） |
+| 用 **DSH 官方的 `plugin_manager install_bundle`** | 见下 **0**（最省事，`.tgz` 直接装） |
 | **一个目录**（源码 / 解包后的目录） | 进去跑 `node install.mjs` —— 见下 A |
 | **一个 `.tgz` 安装包** | 也可以**先解包**再跑包里的 `install.mjs` —— 见下 A′ |
-| 想自己完全手动 | 见下 B |
+| 想自己完全手动（不用任何脚本） | 见 **[INSTALL-MANUAL.md](./INSTALL-MANUAL.md)** |
+
+> 本文件讲"用现成工具装"。**纯手工**那套（改哪两个字段、每步怎么验证、
+> 故障出在加载链的哪一段）单独写在 [INSTALL-MANUAL.md](./INSTALL-MANUAL.md)。
 
 ## 0. 用 DSH 官方的 `plugin_manager install_bundle`（推荐）
 
 **直接把这个 `.tgz` 的绝对路径交给它**就行，不用解包：
 
 ```
-install_bundle  target = D:\dsh\pet\dist\dsh-pet-ds-0.1.2.tgz
+install_bundle  target = D:\dsh\pet\dist\dsh-pet-ds-<版本>.tgz
 ```
 
 它会自己在 profile 目录里跑 `pnpm add <这个路径>`，然后读本包的
@@ -29,11 +32,11 @@ install_bundle  target = D:\dsh\pet\dist\dsh-pet-ds-0.1.2.tgz
 
 | 你写的 | 判为 | 说明 |
 |---|---|---|
-| `D:\…\dsh-pet-ds-0.1.2.tgz` | tarball | ✅ 本地 `.tgz` 的**绝对路径** |
-| `file:D:\…\dsh-pet-ds-0.1.2.tgz` | tarball | 等价写法 |
+| `D:\…\dsh-pet-ds-<版本>.tgz` | tarball | ✅ 本地 `.tgz` 的**绝对路径** |
+| `file:D:\…\dsh-pet-ds-<版本>.tgz` | tarball | 等价写法 |
 | `D:\…\dsh\pet` | path | 本地**目录**的绝对路径 |
 | `dsh-pet-ds` | registry | 发布到 npm 之后的包名 |
-| `dsh-pet-ds@0.1.2` | registry | 带版本范围 |
+| `dsh-pet-ds@<版本>` | registry | 带版本范围 |
 | `github:someone/repo` | git | git 简写 / `git+https://…` / `https://host/a/b` |
 | `https://…/x.tgz` | tarball | 远端 tarball |
 
@@ -73,7 +76,7 @@ install_bundle  target = D:\dsh\pet\dist\dsh-pet-ds-0.1.2.tgz
 
 > ### ⚠️ 单独用 `pnpm add <tgz>` 是**装不完整**的（实测）
 >
-> `pnpm add dsh-pet-ds-0.1.2.tgz` 会**成功**，而且看起来什么都做了：
+> `pnpm add dsh-pet-ds-<版本>.tgz` 会**成功**，而且看起来什么都做了：
 > 插件文件装进 profile ✓、插件自带依赖装好 ✓、从 profile 能解析到入口 ✓。
 >
 > 但它**不会**把插件登记进 `dsh.profile.bundles` ——
@@ -84,42 +87,19 @@ install_bundle  target = D:\dsh\pet\dist\dsh-pet-ds-0.1.2.tgz
 
 ---
 
-## A. 有目录：用安装器（推荐）
+### 三种形态速查
 
-在**插件目录**（含 `package.json` 的那层）执行：
+上面 **0** 适合什么，以及"只有目录"和"只有 `.tgz`"该走哪条：
 
-```bash
-node install.mjs            # agent 入口：装 + 验，退出码 0 = 成功
-node scripts/install.mjs    # 给人看的详细版：五步 + 解释
-```
+| 你拿到 | 用哪个 | 关键差别 |
+|---|---|---|
+| `.tgz` 安装包 | **0**（官方命令） | 一条命令，热生效，不用重启 |
+| 一个**目录**（源码 / 解包后） | **A** | 跑目录里的 `install.mjs` |
+| 只有 `.tgz`，但不想用官方命令 | **A′** | 先解包，再跑包里那个 `install.mjs` |
 
-## A′. 只有 `.tgz`：先解包
-
-`install.mjs` **不能**直接从 `.tgz` 安装 —— 它要读目录里的
-`cordis.patch.yml` / `src/host/index.js` 来验证，没解包没得读。
-但 `install.mjs` **已经打进包里**了，所以在包根，流程就两步：
-
-```bash
-# 1) 解包（解出 package/ 目录；顶层前缀就是 npm tarball 规范的 package/）
-tar -xzf dsh-pet-ds-0.1.2.tgz
-
-# 2) 跑包内的 agent 入口
-node package/install.mjs
-```
-
-`package/install.mjs` 就是上面 A 里那个 `install.mjs`，能力完全一样：
-登记 `bundles` + 装依赖（**profile 与插件目录各一次**）+ 验证解析链。
-
-> 想验证它到底改了什么，先加 `--dry-run`：
-> ```bash
-> node package/install.mjs --dry-run
-> ```
-
-## B. 完全手动
-
-见本文后半的 [B. 完全手动](#b-完全手动)。
-
-安装器做的事 = **改两个字段 + 装依赖**，它只是替你做了并顺手检查环境。
+> **A′ 为什么要解包**：`install.mjs` 要读目录里的 `cordis.patch.yml` /
+> `src/host/index.js` 做验证，没解包就没得读。但它**已经打进 `.tgz` 里**了，
+> 所以解包后直接跑包内那份即可，能力与 A 完全一样。
 
 ---
 
@@ -155,9 +135,11 @@ node scripts/dev/install-electron.mjs --version 38.2.0
 
 ### 3. 动画素材
 
-⚠️ **动画素材不在仓库里**（体积 112 MB，且授权只限作者本人）。
+**`.tgz` 与源码归档都已自带** `assets/animations/` —— 10 个动作、116 个文件（约 112 MB）。
+所以正常安装**不需要**做任何事。
 
-请把它们放到 `assets/animations/` 下，每个动作一个子目录：
+如果你是**单独拷源码**、没带素材，那么需要把它们放到 `assets/animations/` 下，
+每个动作一个子目录：
 
 ```
 assets/animations/
@@ -170,21 +152,47 @@ assets/animations/
   play-mc/
 ```
 
-没有素材时**插件能装、能加载，但桌宠起不来会报错**。安装器会在第 1 步就检查并告诉你。
+没有素材时**插件能装、能加载，但桌宠起不来**。安装器会在第 1 步就检查并告诉你。
+
+> 素材**已经提交进版本库**（这一点是刻意的）：否则从 GitHub 的
+> Source code 归档安装时会缺素材 —— 表现为"插件能激活、但桌宠不出现"。
+> 参考项目 `Yoshino-JF/dsh-deepseek-pet` 的 v0.2.4 就是栽在这上面。
+> 素材的授权单独写在 [LICENSE-ART.md](./LICENSE-ART.md)（代码是 MIT，素材不是）。
 
 ---
 
 ## A. 用安装器（推荐）
 
-在**插件仓库根目录**执行：
+**有目录**（源码仓库、或解包后的目录）时，在**那个目录**（含 `package.json` 的那层）执行：
 
 ```bash
-# 先看看它会改什么（不写任何文件）
-node scripts/install.mjs --dry-run
-
-# 确认无误后正式安装
-node scripts/install.mjs
+node install.mjs            # agent 入口：装 + 验，退出码 0 = 成功
+node scripts/install.mjs    # 给人看的详细版：五步 + 解释
 ```
+
+两个都是同一个安装流程，区别只在输出详略与退出码语义：
+
+| 脚本 | 输出 | 适合 |
+|---|---|---|
+| `install.mjs` | 简洁 + 一行 JSON（`--json`） | 自动化 / agent |
+| `scripts/install.mjs` | 五步、彩色、解释、失败给手动命令 | 人看 |
+
+### A′. 只有 `.tgz`、又不想用官方命令
+
+先解包，再跑**包内**那份 `install.mjs` —— 它已经打进包里了：
+
+```bash
+# 1) 解包（解出 package/ 目录；package/ 就是 npm tarball 规范的前缀）
+tar -xzf dsh-pet-ds-<版本>.tgz
+
+# 2) 跑包内的 agent 入口
+node package/install.mjs
+```
+
+> **为什么必须解包**：`install.mjs` 要读目录里的 `cordis.patch.yml` /
+> `src/host/index.js` 做验证，没解包没得读。
+> 解包后跑的那份与 A 里的是**同一个脚本**，能力完全一样。
+> 想先看它会改什么：`node package/install.mjs --dry-run`
 
 ### 它做了什么
 
@@ -192,8 +200,8 @@ node scripts/install.mjs
 [1/5] 检查插件本体      —— 入口、素材、cordis.patch.yml 是否齐
 [2/5] 定位 DSH 与 profile
 [3/5] 把插件登记进 profile   ← 改两个字段，首次改动前自动备份
-[4/5] 把依赖装进 node_modules  ← 跑 pnpm install
-[5/5] 验证 DSH 能解析到插件
+[4/5] 把依赖装进 node_modules  ← 跑 pnpm install（profile 与插件目录各一次）
+[5/5] 验证 DSH 能解析到插件，并检查插件自己的裸标识符依赖
 ```
 
 第 3 步**只改** profile 的 `package.json` 里两个字段：
@@ -238,107 +246,23 @@ node scripts/install.mjs --help
 
 ## B. 完全手动
 
-不想用安装器就照下面做。**三步**。
+**不想用任何脚本、每一步都自己来** —— 完整过程在单独的手动安装文档里：
 
-### 第 1 步：找到要装进哪个 profile
+→ **[INSTALL-MANUAL.md](./INSTALL-MANUAL.md)**
 
-```powershell
-# Windows PowerShell
-echo $env:DSH_HOME      # 一般是 C:\Users\<你>\.dsh
-echo $env:DSH_PROFILE   # 当前 profile 名，一般是 desktop
-```
+手动安装本质上只有**两处改动 + 一条命令**：
 
-profile 目录就是：
+1. profile 的 `package.json` → `dsh.profile.bundles` 里加 `dsh-pet-ds`；
+2. 同一文件的 `dependencies` 里加 `"dsh-pet-ds": "file:<插件绝对路径>"`；
+3. 在 profile 目录跑 `pnpm install`，然后重启 DSH。
 
-```
-$DSH_HOME\profiles\<profile 名>\
-```
+那份文档把每一步写成可复制的命令、**每步后面附验证命令**，并额外给出：
 
-如果环境变量是空的，就列一下：
+- DSH 的完整加载链路图（用来判断故障出在**哪一段**）；
+- 五个常见坑的**确切报错特征**（含 `failed to import` 的两种成因）；
+- 一份六项自检清单。
 
-```powershell
-dir "$env:USERPROFILE\.dsh\profiles"
-```
-
-> 有多个 profile 时**别猜** —— 装错的那个 DSH 里看不到插件。
-
-### 第 2 步：编辑 profile 的 `package.json`
-
-打开 `$DSH_HOME\profiles\<profile 名>\package.json`，加两处：
-
-```jsonc
-{
-  "name": "dsh-profile-desktop",
-  "private": true,
-
-  "dsh": {
-    "profile": {
-      "bundles": [
-        "@deepseek-ai/dsh-base",
-        "@deepseek-ai/dsh-web-app",
-        "dsh-pet-ds"                    // ← 加这一行
-      ]
-    }
-  },
-
-  "dependencies": {
-    "dsh-pet-ds": "file:D:/dsh/pet"     // ← 加这一行，换成你的仓库绝对路径
-  }
-}
-```
-
-#### ⚠️ 两个必须注意的地方
-
-**一、路径必须是绝对路径、且用正斜杠。**
-
-```
-✅ "file:D:/dsh/pet"
-❌ "file:../../dsh/pet"          ← 相对路径跨盘会解析失败
-❌ "file:D:\\dsh\\pet"           ← 反斜杠在依赖说明符里是转义字符
-```
-
-为什么不能用相对路径：profile 在 `~/.dsh/profiles/<名>/`，而插件仓库常常
-**在另一个盘**（例如 `D:\`）。相对路径跨盘算出来是个不存在的路径 —— 本机实测踩过。
-
-**二、编辑时别引入 BOM。**
-
-用 PowerShell 的 `Set-Content -Encoding utf8` 写出来的文件**带 UTF-8 BOM**
-（`EF BB BF`），而**带 BOM 的 JSON 是非法 JSON** —— DSH 会读不了这个 profile。
-
-BOM 是**不可见**的，所以这个问题很难自己发现。两个办法：
-
-- 用编辑器存成 **"UTF-8 无 BOM"**（VS Code 右下角可切）；
-- 或者干脆用安装器（它会主动剥掉 BOM，已经带 BOM 的文件也能正常处理）。
-
-检查是否带 BOM：
-
-```powershell
-$bytes = [System.IO.File]::ReadAllBytes("$env:USERPROFILE\.dsh\profiles\desktop\package.json")
-if ($bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) { "带 BOM（要清掉）" } else { "没有 BOM ✅" }
-```
-
-### 第 3 步：装依赖
-
-在 **profile 目录**里跑 `pnpm install`：
-
-```powershell
-cd "$env:USERPROFILE\.dsh\profiles\desktop"
-pnpm install
-```
-
-> DSH 自带一个 pnpm。不想用系统的那个就指定它：
-> `$DSH_HOME\dsh-runtimes\<运行时>\dependencies\pnpm\bin\pnpm.mjs`
-> （用同目录下的 `node\bin\node.exe` 执行）。
-
-装完检查一下能不能解析到：
-
-```powershell
-node -e "const{createRequire}=require('module');const r=createRequire('$env:USERPROFILE/.dsh/profiles/desktop/package.json');console.log(r.resolve('dsh-pet-ds'))"
-```
-
-应该打印出 `<仓库路径>\src\host\index.js`。
-
-然后**重启 DSH**。
+> 本文下面不再重复这套步骤 —— 两份都写会各自漂移，很快就对不上。
 
 ---
 
@@ -421,11 +345,16 @@ Get-Content "$env:USERPROFILE\.dsh\.credentials.yaml"
 
 ### 退出 DSH 时桌宠没关
 
-这条依赖 DSH **优雅退出**（走 `fiber.dispose()`）。
+这条靠配置项 **`stopOnUnload`（默认 `true`）**：DSH 卸载插件时会把桌宠一起收掉。
 
-**若 DSH 被强杀**（任务管理器结束进程、崩溃），清理器不会跑，桌宠会留下。
+它依赖 DSH **优雅退出**（走 `fiber.dispose()`）。**若 DSH 被强杀**
+（任务管理器结束进程、崩溃），清理器不会跑，桌宠会留下。
+
 这是有意的取舍 —— 因为"桌宠在 DSH 没开时也能显示余额"是明确要求过的
-（余额由桌宠自取），两者不可兼得。
+（余额由桌宠自取），两者不可兼得。残留的桌宠可以右键退出，或杀掉
+`electron.exe`。
+
+> `stopOnUnload` 可以在 DSH 的**设置页 → 桌宠 → 启动**里改，不用手改 YAML。
 
 ### 想改源码立即生效
 
@@ -452,14 +381,41 @@ node scripts/install.mjs --link
 
 ## 卸载
 
+### 推荐：用官方命令
+
+```
+plugin_manager( action="remove_bundle", target="dsh-pet-ds" )
+```
+
+实测它一步全清（这是我们验过的）：
+
+| 它做的事 | 结果 |
+|---|---|
+| 从 `bundles` 与 `dependencies` 移除 | ✓ |
+| 清 `node_modules` 与 `.pnpm` 条目 | 0 残留 |
+| 清 `pnpm-lock.yaml` 里的引用 | ✓ |
+| 关闭桥接端口 | ✓ |
+| **收掉桌宠进程**（走 `stopOnUnload`） | ✓ |
+| 生效 | `application: applied`，**不用重启** |
+
+### 或者用安装器
+
 ```bash
 node scripts/install.mjs --uninstall
 ```
 
 它会把 `dsh-pet-ds` 从 `bundles` 和 `dependencies` 里移除（**不会**动别的插件）。
+但它**不**清 `node_modules` 与 lock 文件 —— 之后自己跑一次
+`pnpm install`（在 profile 目录）让 pnpm 清理，然后**重启 DSH**。
 
-然后重启 DSH。残留的 `node_modules\dsh-pet-ds` 可以自己删，或跑一次
-`pnpm install` 让 pnpm 清理。
+### 想完全无残留
+
+桌宠自己的用户数据在 `%APPDATA%\DSH Pet\`（窗口尺寸、置顶）。
+那是**你的偏好设置**、不是插件文件；要清就手动删，删了下次要重调尺寸。
+（注：它会在下次启动桌宠时重建。）
+
+> 手动装的怎么卸？反向做一遍即可 —— 见
+> [INSTALL-MANUAL.md 第六节](./INSTALL-MANUAL.md)。
 
 ---
 

@@ -134,6 +134,7 @@ check('含 cordis.patch.yml（DSH 靠它识别为 bundle 插件）', has('cordis
 check('含宿主入口 src/host/index.js', has('src/host/index.js'))
 check('含配置 schema src/host/config-schema.js', has('src/host/config-schema.js'))
 check('含客户端 client/client.js（设置页那一栏靠它）', has('client/client.js'))
+check('含手动安装指引 INSTALL-MANUAL.md', has('INSTALL-MANUAL.md'))
 check('含桌宠应用 pet-app/', countUnder('pet-app') > 0, `${countUnder('pet-app')} 个文件`)
 check('含安装指引 INSTALL.md', has('INSTALL.md'))
 /*

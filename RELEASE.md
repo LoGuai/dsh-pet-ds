@@ -56,10 +56,10 @@ git status --porcelain --untracked-files=all   # 应为空
 
 ```bash
 git add -A
-git commit -m "v0.1.2：<一句话>"
-git tag -a v0.1.2 -m "v0.1.2 <一句话>"
+git commit -m "v<版本>：<一句话>"
+git tag -a v<版本> -m "v<版本> <一句话>"
 git push origin main
-git push origin v0.1.2
+git push origin v<版本>
 ```
 
 ## 五、生成可直接上传的源码归档（可选）
@@ -97,17 +97,17 @@ node install.mjs
 
 | 字段 | 填什么 |
 |---|---|
-| Tag | `v0.1.2`（已推上去的那个） |
-| Release title | `v0.1.2 — <一句话>` |
-| 正文 | `RELEASE-NOTES-v0.1.2.md` 的内容 |
+| Tag | `v<版本>`（已推上去的那个） |
+| Release title | `v<版本> — <一句话>` |
+| 正文 | `RELEASE-NOTES-v<版本>.md` 的内容 |
 | 附件 | **不需要**（与参考项目一致，用自动生成的 Source code 归档） |
 
 ## 附：两种产物别混用
 
 | 产物 | 生成方式 | 用途 | 大小 |
 |---|---|---|---|
-| `dist/dsh-pet-ds-0.1.2.tgz` | `pnpm pack`（按 `files` 字段） | 解包后跑 `install.mjs`（**不能只用 `pnpm add`**，见下） | 约 112 MB |
-| `dist/dsh-pet-ds-0.1.2-source.zip` | `git archive`（按版本库） | 上传为 Source code / 手动安装 | 约 112 MB |
+| `dist/dsh-pet-ds-<版本>.tgz` | `pnpm pack`（按 `files` 字段） | 解包后跑 `install.mjs`（**不能只用 `pnpm add`**，见下） | 约 112 MB |
+| `dist/dsh-pet-ds-<版本>-source.zip` | `git archive`（按版本库） | 上传为 Source code / 手动安装 | 约 112 MB |
 
 两者内容大体相同，但**选取规则不同**：
 `.tgz` 按 `package.json` 的 `files` 白名单，`.zip` 按 git 版本库。
@@ -125,7 +125,7 @@ node install.mjs
 使用者解包后跑它：
 
 ```bash
-tar -xzf dsh-pet-ds-0.1.2.tgz
+tar -xzf dsh-pet-ds-<版本>.tgz
 node package/install.mjs
 ```
 
