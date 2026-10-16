@@ -68,10 +68,18 @@ node scripts/dev/mock-host.mjs --debug
 # 3) 自动化冒烟验证（8 项断言）
 node scripts/dev/probe.mjs
 
-# 4) 全部单元测试
+# 4) 全部单元测试（17 组，183 条断言）
+npm test
+
+#    分组跑（排障时用）：
+node scripts/dev/test-changelog.mjs        # 更新日志覆盖当前版本（6 项）
+node scripts/dev/test-manifest-deps.mjs    # 依赖声明与版本一致（9 项）
+node scripts/dev/test-config-schema.mjs    # 配置 schema 与 DEFAULTS 一致（12 项）
+node scripts/dev/test-client-settings.mjs  # 设置页字段表（9 项）
+node scripts/dev/test-host-link.mjs        # 宿主入口可加载（12 项）
 node scripts/dev/test-install.mjs          # 安装器（12 项）
 node scripts/dev/test-dialogue.mjs         # 对话台词库（11 项）
-node scripts/dev/test-balance-announce.mjs # 余额播报（24 项）
+node scripts/dev/test-balance-announce.mjs # 余额播报 + 播报闸门（30 项）
 node scripts/dev/test-mood.mjs             # 心情（30 项）
 node scripts/dev/test-affection.mjs        # 好感（21 项）
 

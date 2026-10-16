@@ -14,8 +14,8 @@
 ## 一、发布前检查
 
 ```bash
-npm test                       # 10 组单测
-node scripts/dev/build-package.mjs   # 安装包 + 21 项内容校验
+npm test                       # 17 组单测 / 183 条断言（含更新日志检查）
+node scripts/dev/build-package.mjs   # 安装包 + 内容校验
 ```
 
 再确认这几个**容易被 .gitignore 吃掉**的东西在版本库里：
@@ -44,7 +44,45 @@ git status --porcelain --untracked-files=all   # 应为空
 `scripts/dev/test-manifest-deps.mjs` 会断言三者一致 ——
 漂移了会出现"界面显示 0.1.0、包却是 0.1.2"这种对不上号的怪事。
 
-## 三、写发布说明
+## 三、更新 `CHANGELOG.md`（**每次发版必须做**）
+
+> 用户明确要求：「此后每次保存新版本都要更新日志」。
+
+`CHANGELOG.md` 是**给人看的更新日志**，格式参照
+[Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
+每个版本一段，分「新增 / 变更 / 修复」。
+
+**在开发过程中**就把改动先记到 `## [未发布]` 段里（别攒到最后 —— 会忘）。
+**发版时**把 `[未发布]` 的内容移进对应版本段，并写上日期，然后把
+`[未发布]` 清回 `（暂无）`。
+
+这一步有**自动检查**兜着，忘了会红：
+
+```bash
+npm run test:changelog         # 单独跑
+npm test                       # 已包含它（放在最前，先确认日志更新了）
+```
+
+它断言四件事：
+
+1. `CHANGELOG.md` 存在且是 Keep a Changelog 的形状；
+2. 含当前版本号（取自 `package.json`）的段落 —— **改了版本号就必须加段落**；
+3. 该段落**不是空壳**（至少几行内容，防止写个空标题糊过去）；
+4. `[未发布]` 段是空的（有未归档改动时提醒你归档）。
+
+检查本身也带**金丝雀**（`test-changelog-canary.mjs`）：它故意把版本号改成
+日志里没有的值、再故意把版本段清空，断言检查**确实失败** ——
+否则一个"永远通过"的检查比没有检查更糟。
+
+`RELEASE-NOTES-v<版本>.md` 仍要写（作为该版本的详细叙述），
+但它与 `CHANGELOG.md` 分工不同：
+
+| 文件 | 作用 | 详略 |
+|---|---|---|
+| `CHANGELOG.md` | 更新日志：一次看遍所有版本变了什么 | 速览，按类型分条 |
+| `RELEASE-NOTES-v<版本>.md` | 该版本的设计取舍、验证过程、踩过的坑 | 详细 |
+
+## 四、写发布说明
 
 参照参考项目的做法：每个版本一份 `RELEASE-NOTES-v<版本>.md`
 （仓库里能看到 `RELEASE-NOTES-v0.2.12/13/14.md`），内容包含：
@@ -52,7 +90,7 @@ git status --porcelain --untracked-files=all   # 应为空
 
 这份内容同时贴进 GitHub Release 的正文。
 
-## 四、提交、打标签、推送
+## 五、提交、打标签、推送
 
 ```bash
 git add -A
@@ -62,7 +100,10 @@ git push origin main
 git push origin v<版本>
 ```
 
-## 五、生成可直接上传的源码归档（可选）
+> **本仓库目前没有配置远程**，所以 `git push` 那两行是留给将来的。
+> 本地是唯一副本 —— 重要节点应当另存一份 `git bundle` 备份。
+
+## 六、生成可直接上传的源码归档（可选）
 
 GitHub 会在打 tag 后**自动**给出 `Source code (zip)`，正常情况下不需要自己传。
 但如果你想先本地核对归档内容（或需要在没有 GitHub 的环境里分发），
@@ -93,7 +134,7 @@ node install.mjs
 
 就能装好。**这正是参考项目"源码归档必须自足"那条教训的含义。**
 
-## 六、GitHub Release 怎么填
+## 七、GitHub Release 怎么填
 
 | 字段 | 填什么 |
 |---|---|

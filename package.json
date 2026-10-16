@@ -23,13 +23,14 @@
     "dev": "node scripts/dev/mock-host.mjs",
     "dev:debug": "node scripts/dev/mock-host.mjs --debug",
     "probe": "node scripts/dev/probe.mjs",
-    "test": "node scripts/dev/test-manifest-deps.mjs && node scripts/dev/test-config-schema.mjs && node scripts/dev/test-client-settings.mjs && node scripts/dev/test-client-smoke.mjs && node --experimental-vm-modules scripts/dev/test-host-link.mjs && node --experimental-vm-modules scripts/dev/test-install-bundle-spec.mjs && node scripts/dev/test-install.mjs && node scripts/dev/test-setup-extract.mjs && node scripts/dev/check-cmd-ascii.mjs && node scripts/dev/test-install-ps1.mjs && node scripts/dev/test-doubleclick.mjs && node scripts/dev/test-dialogue.mjs && node scripts/dev/test-balance-announce.mjs && node scripts/dev/test-mood.mjs && node scripts/dev/test-affection.mjs",
+    "test": "node scripts/dev/test-changelog.mjs && node scripts/dev/test-changelog-canary.mjs && node scripts/dev/test-manifest-deps.mjs && node scripts/dev/test-config-schema.mjs && node scripts/dev/test-client-settings.mjs && node scripts/dev/test-client-smoke.mjs && node --experimental-vm-modules scripts/dev/test-host-link.mjs && node --experimental-vm-modules scripts/dev/test-install-bundle-spec.mjs && node scripts/dev/test-install.mjs && node scripts/dev/test-setup-extract.mjs && node scripts/dev/check-cmd-ascii.mjs && node scripts/dev/test-install-ps1.mjs && node scripts/dev/test-doubleclick.mjs && node scripts/dev/test-dialogue.mjs && node scripts/dev/test-balance-announce.mjs && node scripts/dev/test-mood.mjs && node scripts/dev/test-affection.mjs",
     "verify:install-bundle": "node scripts/dev/verify-install-bundle.mjs",
     "build:installer": "node scripts/dev/build-installer.mjs",
     "test:setup": "node scripts/dev/test-setup-extract.mjs && node scripts/dev/test-setup-pnpm.mjs",
     "sign:installer": "node scripts/dev/sign-installer.mjs",
     "probe:balance": "node scripts/dev/probe-balance-live.mjs",
-    "probe:refresh": "node scripts/dev/probe-balance-refresh.mjs"
+    "probe:refresh": "node scripts/dev/probe-balance-refresh.mjs",
+    "test:changelog": "node scripts/dev/test-changelog.mjs"
   },
   "files": [
     "src",
@@ -76,7 +77,10 @@
     "scripts/dev/test-doubleclick.ps1",
     "scripts/dev/probe-balance-live.mjs",
     "scripts/dev/probe-balance-refresh.mjs",
-    "RELEASE-NOTES-v0.1.4.md"
+    "RELEASE-NOTES-v0.1.4.md",
+    "CHANGELOG.md",
+    "scripts/dev/test-changelog.mjs",
+    "scripts/dev/test-changelog-canary.mjs"
   ],
   "comment": [
     "本阶段（阶段 4 最小框架）刻意不设置构建步骤：src 下的 .js 就是运行代码，",
