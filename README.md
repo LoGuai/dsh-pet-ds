@@ -35,6 +35,29 @@ DSH（Electron utility process）
 
 ## 快速开始
 
+### 装进 DSH
+
+```bash
+# 先看看会改什么（不写任何文件）
+node scripts/install.mjs --dry-run
+
+# 正式安装（改 profile 配置 + 装依赖 + 验证）
+node scripts/install.mjs
+
+# 装完重启 DSH 生效
+```
+
+**完整安装指引（含完全手动的做法、排障）见 [INSTALL.md](./INSTALL.md)。**
+
+装之前需要两样东西（安装器会检查并提示）：
+
+1. **Electron 运行时** —— 桌宠是个独立 Electron 窗口进程。
+   ⚠️ 必须装在工作区**之外**（工作区内的 `electron.exe` 启动即崩，原因见下）。
+2. **动画素材** —— ⚠️ 不在仓库里（112 MB，授权仅限作者本人）。
+   放到 `assets/animations/` 下，每个动作一个子目录。
+
+### 开发与自测
+
 ```powershell
 # 1) 安装 Electron 运行时（必须装在工作区之外，原因见下）
 node scripts/dev/install-electron.mjs --version 38.2.0
@@ -44,6 +67,16 @@ node scripts/dev/mock-host.mjs --debug
 
 # 3) 自动化冒烟验证（8 项断言）
 node scripts/dev/probe.mjs
+
+# 4) 全部单元测试
+node scripts/dev/test-install.mjs          # 安装器（12 项）
+node scripts/dev/test-dialogue.mjs         # 对话台词库（11 项）
+node scripts/dev/test-balance-announce.mjs # 余额播报（24 项）
+node scripts/dev/test-mood.mjs             # 心情（30 项）
+node scripts/dev/test-affection.mjs        # 好感（21 项）
+
+# 5) 验证「宿主退出时关掉桌宠」
+node scripts/dev/verify-stop-on-unload.mjs
 ```
 
 ## 开发工作流：**改完只重启桌宠**

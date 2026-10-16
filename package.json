@@ -13,17 +13,21 @@
   },
   "icon": "assets/icon.svg",
   "scripts": {
+    "install-plugin": "node scripts/install.mjs",
     "install:electron": "node scripts/dev/install-electron.mjs",
     "dev": "node scripts/dev/mock-host.mjs",
     "dev:debug": "node scripts/dev/mock-host.mjs --debug",
-    "probe": "node scripts/dev/probe.mjs"
+    "probe": "node scripts/dev/probe.mjs",
+    "test": "node scripts/dev/test-install.mjs && node scripts/dev/test-dialogue.mjs && node scripts/dev/test-balance-announce.mjs && node scripts/dev/test-mood.mjs && node scripts/dev/test-affection.mjs"
   },
   "files": [
     "src",
     "pet-app",
     "assets",
+    "scripts/install.mjs",
     "cordis.patch.yml",
     "README.md",
+    "INSTALL.md",
     "LICENSE"
   ],
   "comment": [
@@ -37,6 +41,11 @@
     "（EXCEPTION_BREAKPOINT @ IsLoadBrowserProcessSpecificV8SnapshotEnabled）。",
     "因此运行时必须装在工作区之外，用 npm run install:electron 装到 $DSH_HOME/electron/。",
     "详见 README 的『环境约束』一节。"
+  ],
+  "comment_install": [
+    "装进 DSH 用 `npm run install-plugin`（= node scripts/install.mjs）。",
+    "它只改 profile 的 package.json 里 dsh.profile.bundles 与 dependencies 两个字段，",
+    "然后跑 pnpm install，最后验证能解析到插件入口。完整指引见 INSTALL.md。"
   ],
   "dsh": {
     "bundle": {
