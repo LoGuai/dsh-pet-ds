@@ -1367,7 +1367,9 @@ window.addEventListener('mouseup', (e) => {
  * 播放"被拎起来"的拖拽动画（assets/animations/hang）。
  *
  * 素材约定与站立一致（864×1157、同一裁剪框、同一脚底基准线），
- * 10 帧 @6fps，`loop: false`，播完停在最后一帧。
+ * `loop: false`，播完**停在最后一帧**（拎着期间一直维持那个姿势）。
+ * 帧数与 fps 由 `manifest.json` 决定，这里不写死 —— 换美术素材时
+ * 不必改代码（帧数一致性由 `scripts/dev/test-animations.mjs` 守着）。
  *
  * 素材缺失时静默退回：仍然显示 CSS 的 `.lifted` 摆动占位，
  * 不留空白窗口（与一次性动作同样的降级策略）。
@@ -1438,7 +1440,7 @@ function finishDrag(e) {
   character.classList.remove('lifted')
 
   // 立刻中断拖拽动画并回到站立闲置动画（用户要求：松手即回闲置）。
-  // 注意这里不销毁 hang 素材 —— 下次拖拽还要用，而它只有 10 帧，
+  // 注意这里不销毁 hang 素材 —— 下次拖拽还要用，而它只有十几帧，
   // 留在内存里省掉每次拖拽的重新加载（与一次性动作"播完释放"的策略不同）。
   endDragAnimation()
 

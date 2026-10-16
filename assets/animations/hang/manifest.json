@@ -1,9 +1,11 @@
 {
-  "frameCount": 10,
+  "frameCount": 12,
   "fps": 6,
   "loop": false,
   "sourceCanvasHeight": 1157,
   "drawOffsetY": [
+    0,
+    0,
     0,
     0,
     0,
@@ -21,188 +23,224 @@
       "w": 864,
       "h": 1157
     },
-    "scale": 0.9812,
+    "scale": 0.959,
     "footBaseOutput": 1148,
     "perFrame": [
       {
         "src": "1.png",
         "out": "frame_01.png",
         "srcBounds": [
-          215,
-          20,
-          1040,
-          1175
+          228,
+          30,
+          1016,
+          1223
         ],
         "placedAt": [
-          27,
-          15
+          54,
+          4
         ],
-        "outTop": 15,
+        "outTop": 4,
         "outFoot": 1148,
-        "outW": 810,
-        "outH": 1134
+        "outW": 757,
+        "outH": 1145
       },
       {
         "src": "2.png",
         "out": "frame_02.png",
         "srcBounds": [
-          214,
-          16,
-          1047,
-          1161
+          226,
+          25,
+          1019,
+          1220
         ],
         "placedAt": [
-          23,
-          25
+          52,
+          2
         ],
-        "outTop": 25,
+        "outTop": 2,
         "outFoot": 1148,
-        "outW": 818,
-        "outH": 1124
+        "outW": 761,
+        "outH": 1147
       },
       {
         "src": "3.png",
         "out": "frame_03.png",
         "srcBounds": [
-          206,
-          26,
-          1040,
-          1178
+          228,
+          30,
+          1017,
+          1225
         ],
         "placedAt": [
-          22,
-          18
+          54,
+          2
         ],
-        "outTop": 18,
-        "outFoot": 1148,
-        "outW": 819,
-        "outH": 1131
+        "outTop": 2,
+        "outFoot": 1146,
+        "outW": 758,
+        "outH": 1145
       },
       {
         "src": "4.png",
         "out": "frame_04.png",
         "srcBounds": [
-          217,
-          26,
-          1041,
-          1194
+          228,
+          29,
+          1017,
+          1223
         ],
         "placedAt": [
-          27,
-          2
+          54,
+          3
         ],
-        "outTop": 2,
+        "outTop": 3,
         "outFoot": 1148,
-        "outW": 809,
-        "outH": 1147
+        "outW": 758,
+        "outH": 1146
       },
       {
         "src": "5.png",
         "out": "frame_05.png",
         "srcBounds": [
-          214,
-          26,
-          1042,
-          1163
+          228,
+          30,
+          1017,
+          1223
         ],
         "placedAt": [
-          25,
-          32
+          54,
+          4
         ],
-        "outTop": 32,
+        "outTop": 4,
         "outFoot": 1148,
-        "outW": 813,
-        "outH": 1117
+        "outW": 758,
+        "outH": 1145
       },
       {
         "src": "6.png",
         "out": "frame_06.png",
         "srcBounds": [
-          207,
-          27,
-          1059,
-          1183
+          228,
+          30,
+          1018,
+          1225
         ],
         "placedAt": [
-          13,
-          14
+          53,
+          2
         ],
-        "outTop": 14,
+        "outTop": 2,
         "outFoot": 1148,
-        "outW": 837,
-        "outH": 1135
+        "outW": 759,
+        "outH": 1147
       },
       {
         "src": "7.png",
         "out": "frame_07.png",
         "srcBounds": [
-          244,
-          96,
+          229,
+          30,
           1017,
-          1190
+          1223
         ],
         "placedAt": [
-          52,
-          75
+          54,
+          4
         ],
-        "outTop": 75,
+        "outTop": 4,
         "outFoot": 1148,
-        "outW": 759,
-        "outH": 1074
+        "outW": 757,
+        "outH": 1145
       },
       {
         "src": "8.png",
         "out": "frame_08.png",
         "srcBounds": [
-          261,
-          111,
-          991,
-          1197
+          229,
+          31,
+          1018,
+          1223
         ],
         "placedAt": [
-          73,
-          82
+          54,
+          5
         ],
-        "outTop": 82,
+        "outTop": 5,
         "outFoot": 1148,
-        "outW": 716,
-        "outH": 1067
+        "outW": 758,
+        "outH": 1144
       },
       {
         "src": "9.png",
         "out": "frame_09.png",
         "srcBounds": [
-          275,
-          140,
-          978,
-          1189
+          228,
+          29,
+          1017,
+          1224
         ],
         "placedAt": [
-          86,
-          119
+          54,
+          2
         ],
-        "outTop": 119,
+        "outTop": 2,
         "outFoot": 1148,
-        "outW": 691,
-        "outH": 1030
+        "outW": 758,
+        "outH": 1147
       },
       {
         "src": "10.png",
         "out": "frame_10.png",
         "srcBounds": [
-          268,
-          72,
-          988,
-          1170
+          228,
+          30,
+          1018,
+          1223
         ],
         "placedAt": [
-          78,
-          71
+          53,
+          4
         ],
-        "outTop": 71,
-        "outFoot": 1147,
-        "outW": 707,
-        "outH": 1077
+        "outTop": 4,
+        "outFoot": 1148,
+        "outW": 759,
+        "outH": 1145
+      },
+      {
+        "src": "11.png",
+        "out": "frame_11.png",
+        "srcBounds": [
+          212,
+          31,
+          1041,
+          1203
+        ],
+        "placedAt": [
+          34,
+          24
+        ],
+        "outTop": 24,
+        "outFoot": 1148,
+        "outW": 796,
+        "outH": 1125
+      },
+      {
+        "src": "12.png",
+        "out": "frame_12.png",
+        "srcBounds": [
+          228,
+          29,
+          1019,
+          1220
+        ],
+        "placedAt": [
+          53,
+          6
+        ],
+        "outTop": 6,
+        "outFoot": 1148,
+        "outW": 760,
+        "outH": 1143
       }
     ]
   }

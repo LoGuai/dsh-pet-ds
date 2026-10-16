@@ -3015,7 +3015,7 @@ async function verifyRealDrag(check, wait) {
     if (i % 4 === 0 || i === STEPS) measure(`第 ${String(i)} 步`)
   }
 
-  // 拖拽动画共 10 帧 @6fps ≈ 1.7 秒；此时早已播完，应当在最后一帧停住。
+  // 此时拖拽动画早已播完，应当在最后一帧停住（帧数由 manifest 决定，不写死）。
   dragAnimState.push({ at: '播完后', ...(await readState()) })
   log(
     `参考-拖拽动画: 起播后 active=${String(dragAnimState[0].activeAnimationId)}` +
@@ -3605,9 +3605,18 @@ async function verifyActionAssets(check) {
     `(async () => { const a = await loadAnimation('hang'); return a ? { frames: a.frameCount, fps: a.fps } : null })()`,
     true,
   )
+  /*
+   * ⚠️ 这里**刻意不写死帧数**。
+   *
+   * 原先写的是 `hangOk.frames === 10`，于是每次换美术素材（拖拽动画从
+   * 10 帧换成 12 帧）都会得到一次**无意义的假失败** —— 断言该守的是
+   * "素材能加载、且 manifest 声明与实际帧数一致"，不是某个具体数字。
+   *
+   * 真正的帧数一致性由下面的 manifest 校验负责。
+   */
   check(
-    '「拖拽」动画素材可加载',
-    hangOk !== null && hangOk.frames === 10 && hangOk.fps === 6,
+    '「拖拽」动画素材可加载（6fps）',
+    hangOk !== null && hangOk.fps === 6 && hangOk.frames > 0,
     hangOk ? `帧数 ${String(hangOk.frames)}，fps ${String(hangOk.fps)}` : '加载失败（素材缺失）',
   )
 
