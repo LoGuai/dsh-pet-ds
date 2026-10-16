@@ -6,11 +6,72 @@
 
 | 你拿到的 | 怎么装 |
 |---|---|
+| 想用 **DSH 官方的 `plugin_manager install_bundle`** | 见下 **0**（最省事，`.tgz` 直接装） |
 | **一个目录**（源码 / 解包后的目录） | 进去跑 `node install.mjs` —— 见下 A |
-| **一个 `.tgz` 安装包** | **先解包**，再跑包里那个 `install.mjs` —— 见下 A′ |
+| **一个 `.tgz` 安装包** | 也可以**先解包**再跑包里的 `install.mjs` —— 见下 A′ |
 | 想自己完全手动 | 见下 B |
 
-> ### ⚠️ `pnpm add <tgz>` **装不完整**（实测）
+## 0. 用 DSH 官方的 `plugin_manager install_bundle`（推荐）
+
+**直接把这个 `.tgz` 的绝对路径交给它**就行，不用解包：
+
+```
+install_bundle  target = D:\dsh\pet\dist\dsh-pet-ds-0.1.2.tgz
+```
+
+它会自己在 profile 目录里跑 `pnpm add <这个路径>`，然后读本包的
+`dsh.bundle` 与 `cordis.patch.yml`、把插件挂进配置树并启用。
+
+### 支持的 spec 形式
+
+`install_bundle` 的 `target` 接受这几种（这是 DSH 内部 `parseInstallSpec`
+的判据，`scripts/dev/test-install-bundle-spec.mjs` 直接调它验证过）：
+
+| 你写的 | 判为 | 说明 |
+|---|---|---|
+| `D:\…\dsh-pet-ds-0.1.2.tgz` | tarball | ✅ 本地 `.tgz` 的**绝对路径** |
+| `file:D:\…\dsh-pet-ds-0.1.2.tgz` | tarball | 等价写法 |
+| `D:\…\dsh\pet` | path | 本地**目录**的绝对路径 |
+| `dsh-pet-ds` | registry | 发布到 npm 之后的包名 |
+| `dsh-pet-ds@0.1.2` | registry | 带版本范围 |
+| `github:someone/repo` | git | git 简写 / `git+https://…` / `https://host/a/b` |
+| `https://…/x.tgz` | tarball | 远端 tarball |
+
+> ### ⚠️ 路径**必须绝对**
+>
+> 写成相对的会被拒。而且**报错措辞会骗人**（实测）：
+>
+> | 你写的 | 报错 |
+> |---|---|
+> | `./dist/x.tgz` | `a local path must be absolute` |
+> | `dist/x.tgz` | `not a package name the registry accepts` ← **看不出是路径问题** |
+>
+> 后一种容易让人以为"包名写错了"，其实只是**少写了盘符/根**。
+>
+> 原因在 DSH 源码注释里：浏览器的当前工作目录对用户没有意义，
+> 而按 profile 解析相对路径会指到 profile 里面去。
+
+### 装完还要做什么
+
+`install_bundle` 会**启用**这个 bundle 并 `reload()`。如果本插件此前
+**已经**在 profile 的 `dependencies` 里（例如你之前用安装器装过），
+`installBundle` 会返回 **`restart-required`** —— 那就**重启 DSH**。
+
+另外它只负责"让 DSH 认得并加载这个插件"，**插件自己的依赖**要能被解析到，
+否则加载时报 `failed to import`。本包的 `.tgz` 里已经带了正确的
+`package.json`，pnpm 会把插件自带依赖一并装好（`verify-install-bundle.mjs` 验证过）。
+
+> 想先自证"这个包能被 install_bundle 装"，不必真的装：
+> ```bash
+> node scripts/dev/verify-install-bundle.mjs
+> ```
+> 它会在**临时 profile** 上把 `installBundle` 的每一步真跑一遍
+> （pnpm add → 取包名 → 查 `dsh.bundle` → 读 patch → 查自带依赖），
+> 不动你的正式环境。
+
+---
+
+> ### ⚠️ 单独用 `pnpm add <tgz>` 是**装不完整**的（实测）
 >
 > `pnpm add dsh-pet-ds-0.1.2.tgz` 会**成功**，而且看起来什么都做了：
 > 插件文件装进 profile ✓、插件自带依赖装好 ✓、从 profile 能解析到入口 ✓。

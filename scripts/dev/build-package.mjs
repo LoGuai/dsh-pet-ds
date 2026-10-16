@@ -143,6 +143,13 @@ check('含安装指引 INSTALL.md', has('INSTALL.md'))
 check('含 agent 安装入口 install.mjs', has('install.mjs'))
 check('含 agent 安装说明 INSTALL-AGENT.md', has('INSTALL-AGENT.md'))
 check('含解析链验证脚本 probe-import-resolution.mjs', has('scripts/dev/probe-import-resolution.mjs'))
+/*
+ * `install_bundle` 契约的两个脚本也要进包：
+ *  · `verify-install-bundle.mjs` 让使用者**自证**这个包能被官方命令装；
+ *  · `test-install-bundle-spec.mjs` 钉住 DSH 的 spec 判据（离线可跑）。
+ */
+check('含 install_bundle 验证脚本 verify-install-bundle.mjs', has('scripts/dev/verify-install-bundle.mjs'))
+check('含 spec 契约测试 test-install-bundle-spec.mjs', has('scripts/dev/test-install-bundle-spec.mjs'))
 check('含 README.md', has('README.md'))
 check('含 LICENSE', has('LICENSE'))
 check('含 LICENSE-ART.md（美术素材单独授权）', has('LICENSE-ART.md'))
