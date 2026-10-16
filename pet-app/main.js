@@ -44,18 +44,39 @@ const { pickDialogueLine, dialogueLineCount, DIALOGUE_LINES } = require('../src/
 /** 余额取数：与宿主**共用同一份**（shared-core，ESM 经 require(esm) 加载）。 */
 const { createBalanceFetcher } = require('../src/shared-core/balance.js')
 /** 余额播报的纯逻辑：消耗计算、四档台词、播不播。 */
-const { buildBalanceAnnouncement, shouldAnnounceBalance } = require('../src/shared-core/balance-announce.js')
+const { buildBalanceAnnouncement, shouldAnnounceBalance, shouldRunAnnounceWindow } = require('../src/shared-core/balance-announce.js')
 /** 从 DSH 的凭据文件里读 API Key（桌宠侧专用，CJS）。 */
 const { readCredentialFromFile } = require('./credentials-file.js')
 
 /**
  * 余额查询器实例。
  *
- * 缓存时长与刷新周期都是 5 分钟（用户指定），**共用同一个值** ——
- * 分两处设只会在它们不一致时产生"播报的其实是缓存、根本没重新取数"这类难查问题。
+ * ## 取数周期与播报周期是**两件事**（用户要求）
+ *
+ *   · **取数**（面板显示的数值）：用户要求 **30 秒**一轮 —— 好让余额"看起来在动"。
+ *   · **播报**（花掉多少的提醒）：仍是 **5 分钟**一轮 —— 用户原话
+ *     "如果 5 分钟内没有余额变化，则不播放提示"。若跟着取数走，30 秒念一次
+ *     会变成复读机，而且把一次消耗拆成好几次小播报。
+ *
+ * 所以这里给取数设为 30 秒（`--balance-poll`），播报窗口另用
+ * `--balance-refresh`（默认 300）由 `shouldRunAnnounceWindow` 卡住。
+ *
+ * ⚠️ 取数周期必须**大于**查询器的缓存 TTL 才不会白跑网络；
+ * 这里每次取数都显式传 `fresh: true`（见 `refreshBalanceOnce`），
+ * 所以缓存只用于"同一瞬间的并发去重"，不会把 30 秒的刷新挡掉。
  */
+const BALANCE_POLL_SECONDS = (() => {
+  const raw = Number(readArg('balance-poll'))
+  /*
+   * 下限 5 秒：接口有限流，更密没有意义（也便于开发期临时调小做观察）。
+   * 没传时用 30（用户要求的新默认）。
+   */
+  return Number.isFinite(raw) && raw >= 5 ? raw : 30
+})()
+
 const balanceFetcher = createBalanceFetcher({
-  refreshSeconds: 300,
+  /* 缓存 TTL 跟随取数周期：两者一致时缓存只承担并发去重，不会拖慢刷新。 */
+  refreshSeconds: BALANCE_POLL_SECONDS,
   apiBase: readArg('balance-api-base') || undefined,
   credential: readArg('balance-credential') || undefined,
   log: (msg) => log(msg),
@@ -1143,10 +1164,31 @@ let lastBalanceTotal = null
 /** 上一次播报的台词，用于避免连续两句一模一样。 */
 let lastBalanceMessage = null
 
+/**
+ * 上一次**推进播报基准**的时间戳（毫秒）。
+ *
+ * 与 `lastBalanceTotal` 配套：只有在这个时间点"到点"时才会用当前余额
+ * 去比、并推进基准。取数可以 30 秒一次，但这个基准只每
+ * `BALANCE_ANNOUNCE_INTERVAL_MS` 推进一次（见 `shouldRunAnnounceWindow`）。
+ */
+let lastBalanceAnnounceAt = null
+
 /** 余额刷新定时器。 */
 let balanceTimer = null
 
-const BALANCE_POLL_INTERVAL_MS = (() => {
+/**
+ * 取数周期（毫秒）—— 面板显示用。用户要求 30 秒。
+ * 与查询器的 TTL 取同一个来源，避免"设了 30 秒却因缓存 5 分钟不刷新"。
+ */
+const BALANCE_POLL_INTERVAL_MS = BALANCE_POLL_SECONDS * 1000
+
+/**
+ * 播报窗口（毫秒）—— 用户要求"5 分钟内没有余额变化就不播"。
+ *
+ * ⚠️ 它**不再**等于取数周期：取数已加密到 30 秒，若播报也跟着加密，
+ * 每 30 秒都可能念一次，既吵又会把一次消耗拆成好几段播报。
+ */
+const BALANCE_ANNOUNCE_INTERVAL_MS = (() => {
   const raw = Number(readArg('balance-refresh'))
   return Number.isFinite(raw) && raw >= 5 ? raw * 1000 : 300 * 1000
 })()
@@ -1175,7 +1217,7 @@ function pushBalanceToRenderer() {
 }
 
 /**
- * 拉一次余额：读凭据 → 取数 → 必要时播报 → 推给渲染进程。
+ * 拉一次余额：读凭据 → 取数 → 到点则播报 → 推给渲染进程。
  *
  * @param {boolean} [fresh] true = 忽略缓存强制刷新
  */
@@ -1192,30 +1234,71 @@ async function refreshBalanceOnce(fresh = false) {
     balanceSnapshot = snap
 
     /*
-     * 播报判断（用户要求）：只在余额**真的变了**时才说。
-     * 判据用共享核心的纯函数，口径与宿主曾经用的完全一致。
+     * 播报判断（用户要求）：只在余额**真的变了**时才说，
+     * 且**每个播报窗口只看一次**（默认 5 分钟）。
+     *
+     * ⚠️ 两道闸门缺一不可：
+     *   1. `shouldRunAnnounceWindow` —— 距上次播报够 5 分钟了吗？
+     *      取数已加密到 30 秒，少了这道门就会每 30 秒念一次。
+     *   2. `shouldAnnounceBalance` —— 这次和**上一次到点时的余额**比，变了吗？
+     *      注意基准只在到点时推进，所以报的是"这 5 分钟花了多少"，
+     *      而不是"这 30 秒花了多少"。
      */
     if (snap && snap.fetchedAt > 0 && snap.error === null) {
       const nextTotal = Number(snap.total)
-      const verdict = shouldAnnounceBalance({ prevTotal: lastBalanceTotal, nextTotal })
-      if (verdict.announce) {
-        const ann = buildBalanceAnnouncement({
-          prevTotal: lastBalanceTotal,
-          nextTotal,
-          currency: snap.currency,
-        })
-        // 极端情况下（例如余额在两个值之间来回跳）避免连续重复同一句。
-        if (ann.text !== lastBalanceMessage) {
-          lastBalanceMessage = ann.text
-          if (win && !win.isDestroyed()) {
-            win.webContents.send('pet:say', { text: ann.text, bubbleMs: 9000 })
-          }
-          log(`余额播报：${ann.text}（${verdict.reason}，${String(ann.tier)} 档）`)
+      const gate = shouldRunAnnounceWindow({
+        now: Date.now(),
+        lastAt: lastBalanceAnnounceAt,
+        intervalMs: BALANCE_ANNOUNCE_INTERVAL_MS,
+      })
+
+      if (gate.reason === 'first') {
+        /*
+         * 首次：建立基准，但不播报（`shouldAnnounceBalance` 会以 'first' 拒掉）。
+         * 基准必须在这里就建立，否则第一次播报要等到两个窗口之后。
+         */
+        if (Number.isFinite(nextTotal)) {
+          lastBalanceTotal = nextTotal
+          lastBalanceAnnounceAt = Date.now()
         }
+        log(`余额基准已建立：¥${String(snap.total)}（每 ${String(Math.round(BALANCE_ANNOUNCE_INTERVAL_MS / 1000))} 秒检查一次是否播报）`)
+      } else if (gate.due) {
+        const verdict = shouldAnnounceBalance({ prevTotal: lastBalanceTotal, nextTotal })
+        if (verdict.announce) {
+          const ann = buildBalanceAnnouncement({
+            prevTotal: lastBalanceTotal,
+            nextTotal,
+            currency: snap.currency,
+          })
+          // 极端情况下（例如余额在两个值之间来回跳）避免连续重复同一句。
+          if (ann.text !== lastBalanceMessage) {
+            lastBalanceMessage = ann.text
+            if (win && !win.isDestroyed()) {
+              win.webContents.send('pet:say', { text: ann.text, bubbleMs: 9000 })
+            }
+            log(`余额播报：${ann.text}（${verdict.reason}，${String(ann.tier)} 档）`)
+          }
+        } else {
+          log(`跳过播报（${verdict.reason}）当前 ¥${String(snap.total)}`)
+        }
+        /* 到点就把基准推进到当前值，并重新计时。 */
+        if (Number.isFinite(nextTotal)) lastBalanceTotal = nextTotal
+        lastBalanceAnnounceAt = Date.now()
       } else {
-        log(`跳过播报（${verdict.reason}）当前 ¥${String(snap.total)}`)
+        /*
+         * 还没到播报窗口：**只更新面板数字，不动播报基准**。
+         * 基准留在 5 分钟前那个值上，于是这段消耗会在下次到点时一次报出来。
+         *
+         * 这条日志刻意保留：它是"闸门确实生效了"的唯一可见证据。
+         * 没有它，日志里只会出现播报行，看起来就像每轮都在播
+         * （我第一次测的时候就因此误判成 bug）。
+         */
+        log(
+          `播报窗口未到（还有 ${String(Math.ceil(gate.waitMs / 1000))} 秒）当前 ¥${String(snap.total)}，只更新面板`,
+        )
+        pushBalanceToRenderer()
+        return snap
       }
-      if (Number.isFinite(nextTotal)) lastBalanceTotal = nextTotal
     } else if (snap && snap.error) {
       log(`余额取数失败：${snap.error}`)
     }
@@ -1230,16 +1313,24 @@ async function refreshBalanceOnce(fresh = false) {
 }
 
 /**
- * 启动余额监控：立刻拉一次，之后按周期自动刷新。
+ * 启动余额监控：立刻拉一次，之后按 `BALANCE_POLL_INTERVAL_MS` 自动刷新。
  *
  * 全程无需任何人工操作 —— 这是用户明确要求的
  * （"让桌宠插件自身能实时自动更新余额监控，不需要进行别的操作"）。
+ *
+ * 取数与播报是两个节奏：这里每 30 秒取一次（面板及时），
+ * 播报由 `refreshBalanceOnce` 里的 `shouldRunAnnounceWindow` 卡到 5 分钟一次。
  */
 function startBalanceMonitor() {
   if (balanceTimer) return
-  void refreshBalanceOnce()
+  /*
+   * 首次显式 `fresh: true`：不能让查询器启动初期的空缓存/残留缓存影响首屏。
+   * 之后每轮也传 `true` —— 刷新节奏完全由本定时器决定，
+   * 缓存只用于"同一瞬间的并发去重"（见 `createBalanceFetcher` 的 inflight）。
+   */
+  void refreshBalanceOnce(true)
   balanceTimer = setInterval(() => {
-    void refreshBalanceOnce()
+    void refreshBalanceOnce(true)
   }, BALANCE_POLL_INTERVAL_MS)
   log(`余额监控已启动：每 ${String(Math.round(BALANCE_POLL_INTERVAL_MS / 1000))} 秒自动刷新`)
 }

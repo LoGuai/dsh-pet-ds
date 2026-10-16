@@ -41,6 +41,7 @@ export const VOLATILE_FIELDS = Object.freeze([
   'size',
   'alwaysOnTop',
   'lowBalanceThreshold',
+  'balancePollSeconds',
   'refreshSeconds',
 ])
 
@@ -104,7 +105,24 @@ export const Config = z.object({
     .default(10)
     .volatile()
     .description('余额低于此值时，桌宠下方的余额面板转为"告急"配色。'),
-  /** 余额刷新与播报周期（秒）。下限 5：接口有限流。 */
+  /**
+   * **取数**周期（秒）—— 面板上那个数字多久刷新一次。用户要求 30 秒。
+   *
+   * ⚠️ 与 `refreshSeconds`（**播报**周期）是两件事，别合并：
+   *   · 面板要及时，否则"余额看着一直不变"（用户就是这么反馈的）；
+   *   · 播报要克制，30 秒念一次会变成复读机、并把一次消耗拆成好几段。
+   *
+   * 下限 5：接口有限流。
+   */
+  balancePollSeconds: z
+    .number()
+    .min(5)
+    .max(3600)
+    .step(1)
+    .default(30)
+    .volatile()
+    .description('余额面板的刷新周期（秒）。默认 30。下限 5（接口有限流）。'),
+  /** 余额**播报**周期（秒）。下限 5：接口有限流。 */
   refreshSeconds: z
     .number()
     .min(5)
@@ -112,7 +130,7 @@ export const Config = z.object({
     .step(1)
     .default(300)
     .volatile()
-    .description('余额刷新与消费播报的周期（秒）。下限 5（接口有限流），默认 300（5 分钟）。'),
+    .description('余额消费播报的周期（秒）：距上次播报不足这个时间就不播，消耗会累积到下一次一起报。默认 300（5 分钟）。'),
   /** DeepSeek API 地址。非 volatile。 */
   apiBase: z
     .string()

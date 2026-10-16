@@ -52,8 +52,8 @@
  * **改字段或默认值时，那两个契约注释必须一起改**，否则单测会红。
  */
 
-// @dsh-pet-fields: autoStart, startDelayMs, stopOnUnload, size, alwaysOnTop, lowBalanceThreshold, refreshSeconds
-// @dsh-pet-defaults: {"autoStart":true,"startDelayMs":3000,"stopOnUnload":true,"size":260,"alwaysOnTop":true,"lowBalanceThreshold":10,"refreshSeconds":300}
+// @dsh-pet-fields: autoStart, startDelayMs, stopOnUnload, size, alwaysOnTop, lowBalanceThreshold, balancePollSeconds, refreshSeconds
+// @dsh-pet-defaults: {"autoStart":true,"startDelayMs":3000,"stopOnUnload":true,"size":260,"alwaysOnTop":true,"lowBalanceThreshold":10,"balancePollSeconds":30,"refreshSeconds":300}
 
 window.__ModuleLoader__.load({
   id: 'dsh-pet-ds',

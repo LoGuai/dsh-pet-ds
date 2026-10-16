@@ -130,3 +130,49 @@ export function shouldAnnounceBalance({ prevTotal, nextTotal }) {
   if (delta < 0) return { announce: true, reason: 'spent' }
   return { announce: true, reason: 'toppedUp' }
 }
+
+/**
+ * 播报闸门：距离上次播报是否已经够了间隔。
+ *
+ * ## 为什么需要它
+ *
+ * 取数节奏与播报节奏**是两件事**：
+ *   · 面板要**及时**（用户要求 30 秒一轮，好看到余额在动）；
+ *   · 播报要**克制**（用户要求"5 分钟内没有余额变化就不播"，
+ *     否则 30 秒念一次会变成复读机）。
+ *
+ * 而 `shouldAnnounceBalance` 是"这次和上次比变了没有"—— 取数一变密，
+ * **任何一次变化都会立刻播报**，于是消耗会被拆成好几次小播报念出来。
+ * 所以播报必须再加一道"距上次播报至少 N 秒"的闸门。
+ *
+ * 这里做成纯函数，是为了让"什么情况下重算基准"这条规则能被单测钉住
+ * —— 它决定了 `prevTotal` 何时推进，而 `prevTotal` 又决定了下次播报
+ * 报的是"这 5 分钟花了多少"还是"这 30 秒花了多少"。
+ *
+ * ## 语义
+ *
+ * 到点了 → 用**现在**的余额做基准去比、并播报；
+ * 没到点 → 基准**不动**（继续跟 5 分钟前那个值比），于是累积的消耗
+ *          会在下一个到点的窗口里一次性播出来。
+ *
+ * @param {object} args
+ * @param {number} args.now            当前时间戳（毫秒）
+ * @param {number|null} args.lastAt    上次"推进基准"的时间戳；null = 还没播过
+ * @param {number} args.intervalMs     播报间隔（毫秒）
+ * @returns {{ due: boolean, reason: 'first' | 'due' | 'waiting', waitMs: number }}
+ */
+export function shouldRunAnnounceWindow({ now, lastAt, intervalMs }) {
+  const interval = Number.isFinite(intervalMs) && intervalMs > 0 ? intervalMs : 0
+
+  /*
+   * 还没播过 → 立刻"到点"。
+   * 首次会被 shouldAnnounceBalance 以 'first' 拒掉（没有可比的上一次），
+   * 但**基准必须在这里建立**，否则第一次播报会等到两个周期之后。
+   */
+  if (!Number.isFinite(lastAt)) return { due: true, reason: 'first', waitMs: 0 }
+
+  const elapsed = Number(now) - Number(lastAt)
+  if (elapsed >= interval) return { due: true, reason: 'due', waitMs: 0 }
+
+  return { due: false, reason: 'waiting', waitMs: interval - elapsed }
+}

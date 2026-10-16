@@ -87,7 +87,7 @@ export const inject = ['tools', 'credentials']
  * 漂移了会出现"界面显示 0.1.0、包却是 0.1.2"这种对不上号的怪事，
  * 而排查时第一眼就会看这个号。
  */
-const VERSION = '0.1.3-fix'
+const VERSION = '0.1.4'
 
 /**
  * 插件入口。
@@ -184,7 +184,9 @@ export function apply(ctx, config) {
     commandUrl: bridge.commandUrl(),
     debug: cfg.debug,
     lowBalanceThreshold: cfg.lowBalanceThreshold,
-    // 余额刷新周期透传给桌宠（取数主责在桌宠侧，它得知道自己多久刷一次）。
+    // 余额**取数**周期透传给桌宠（面板刷新，默认 30 秒）。
+    balancePollSeconds: cfg.balancePollSeconds,
+    // 余额**播报**周期透传给桌宠（默认 300 秒）。
     balanceRefreshSeconds: cfg.refreshSeconds,
     /*
      * 桌宠日志文件。**始终**落盘 —— 桌宠的 log() 走 stderr，
@@ -576,9 +578,21 @@ function normalizeConfig(raw, say) {
   /*
    * 余额相关配置。
    *
-   * `refreshSeconds` 有下限 5 秒：余额接口有限流，配成 0.5 秒会把自己打限流，
+   * 两个周期都有下限 5 秒：余额接口有限流，配成 0.5 秒会把自己打限流，
    * 而且界面上根本看不出差别。上限 3600 秒（1 小时）—— 再长就不像"监控"了。
+   *
+   * `balancePollSeconds` = **取数**周期（面板刷新，默认 30）；
+   * `refreshSeconds`       = **播报**周期（默认 300）。
+   * 两者独立：合并会让面板显得一直不更新，或让播报变成每 30 秒一次的复读机。
    */
+  const poll = Number(input.balancePollSeconds)
+  if (Number.isFinite(poll) && poll >= 5 && poll <= 3600) out.balancePollSeconds = Math.floor(poll)
+  else if (input.balancePollSeconds !== undefined) {
+    say(
+      `配置 balancePollSeconds 非法（${String(input.balancePollSeconds)}），已回落默认 ${String(DEFAULTS.balancePollSeconds)}`,
+    )
+  }
+
   const refresh = Number(input.refreshSeconds)
   if (Number.isFinite(refresh) && refresh >= 5 && refresh <= 3600) out.refreshSeconds = Math.floor(refresh)
   else if (input.refreshSeconds !== undefined) {

@@ -15,6 +15,7 @@ import {
   buildBalanceAnnouncement,
   formatMoney,
   shouldAnnounceBalance,
+  shouldRunAnnounceWindow,
 } from '../../src/shared-core/balance-announce.js'
 
 let passed = 0
@@ -275,6 +276,79 @@ test('shouldAnnounceBalance 与 buildBalanceAnnouncement 的 kind 保持一致',
     // 核心不变式：决定播报 ⇔ kind 不是 'same'。
     assert.equal(v.announce, ann.kind !== 'same', `口径不一致：${JSON.stringify(c)}`)
   }
+})
+
+// ---------------------------------------------------------------- 播报闸门
+/*
+ * 取数节奏（30 秒）与播报节奏（5 分钟）是两件事，闸门负责把后者卡住。
+ * 这些用例钉的就是"会不会变成复读机"。
+ */
+
+const FIVE_MIN = 300 * 1000
+const T0 = 1_700_000_000_000
+
+test('还没播过时立刻到点（建立基准，不然首次播报要等两个周期）', () => {
+  const v = shouldRunAnnounceWindow({ now: T0, lastAt: null, intervalMs: FIVE_MIN })
+  assert.equal(v.due, true)
+  assert.equal(v.reason, 'first')
+})
+
+test('刚好到间隔就算到点（边界不能差一毫秒就漏播）', () => {
+  const v = shouldRunAnnounceWindow({ now: T0 + FIVE_MIN, lastAt: T0, intervalMs: FIVE_MIN })
+  assert.equal(v.due, true)
+  assert.equal(v.reason, 'due')
+})
+
+test('30 秒一轮时，第 1~9 轮都不播（离上次播报不足 5 分钟）', () => {
+  for (let i = 1; i <= 9; i++) {
+    const v = shouldRunAnnounceWindow({ now: T0 + i * 30_000, lastAt: T0, intervalMs: FIVE_MIN })
+    assert.equal(v.due, false, `第 ${String(i)} 轮不该播`)
+    assert.equal(v.reason, 'waiting')
+    assert.equal(v.waitMs, FIVE_MIN - i * 30_000)
+  }
+})
+
+test('30 秒一轮时，第 10 轮（300 秒）到点', () => {
+  const v = shouldRunAnnounceWindow({ now: T0 + 10 * 30_000, lastAt: T0, intervalMs: FIVE_MIN })
+  assert.equal(v.due, true, '第 10 轮应到点')
+})
+
+test('间隔为 0 或非法时，每次取数都到点（等价于不做闸门）', () => {
+  for (const bad of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+    const v = shouldRunAnnounceWindow({ now: T0, lastAt: T0, intervalMs: bad })
+    assert.equal(v.due, true, `intervalMs=${String(bad)} 应视为不放闸`)
+  }
+})
+
+test('完整走一遍：5 分钟窗口把 30 秒轮的消耗累积起来一次播', () => {
+  /*
+   * 模拟：基准 ¥70，每 30 秒花掉 ¥0.3，共 10 轮（正好 5 分钟）。
+   * 期望：只有最后一轮到点播报，且报的是**累积**的 ¥3（70 → 67），
+   *       而不是每轮念一次 ¥0.3。
+   */
+  let baseline = 70
+  let lastAt = T0
+  let balance = 70
+  const announcements = []
+
+  for (let i = 1; i <= 10; i++) {
+    balance = Math.round((balance - 0.3) * 100) / 100
+    const now = T0 + i * 30_000
+    const gate = shouldRunAnnounceWindow({ now, lastAt, intervalMs: FIVE_MIN })
+    if (!gate.due) continue
+
+    const verdict = shouldAnnounceBalance({ prevTotal: baseline, nextTotal: balance })
+    if (verdict.announce) {
+      announcements.push(buildBalanceAnnouncement({ prevTotal: baseline, nextTotal: balance }))
+    }
+    /* 到点就把基准推进到当前值，并把闸门重新计时。 */
+    baseline = balance
+    lastAt = now
+  }
+
+  assert.equal(announcements.length, 1, '5 分钟窗口内只该播一次')
+  assert.equal(announcements[0].spent, 3, '应播报累积消耗 3 元，而不是每轮的 0.3 元')
+  assert.equal(announcements[0].remaining, 67)
 })
 
 console.log(`\n结果：${String(passed)}/${String(passed + failed)} 通过`)

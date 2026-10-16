@@ -43,10 +43,21 @@ export class Supervisor {
       ? Number(options.lowBalanceThreshold)
       : 10
     /**
-     * 余额刷新周期（秒），下发给桌宠用 `--balance-refresh=` 接收。
+     * 余额**取数**周期（秒），下发给桌宠用 `--balance-poll=` 接收。
+     *
+     * 与 `balanceRefreshSeconds`（播报窗口）是**两个节奏**：面板要及时（30 秒），
+     * 播报要克制（5 分钟）。合并成一个值会让面板显得"一直不更新"，
+     * 或者让播报变成每 30 秒念一次的复读机。
+     */
+    this.balancePollSeconds =
+      Number.isFinite(Number(options.balancePollSeconds)) && Number(options.balancePollSeconds) >= 5
+        ? Number(options.balancePollSeconds)
+        : 30
+    /**
+     * 余额**播报**周期（秒），下发给桌宠用 `--balance-refresh=` 接收。
      *
      * **余额取数的主责在桌宠侧**（桌宠自己读凭据、自己直连接口、自己播报），
-     * 所以"多久刷一次"必须由桌宠知道。宿主只是把用户配置透传下去。
+     * 所以"多久播一次"必须由桌宠知道。宿主只是把用户配置透传下去。
      *
      * 下限 5 秒：接口有限流，更密没有意义；而且这个下限也方便开发期
      * 把它临时调小来观察刷新行为（不必改代码）。
@@ -246,6 +257,7 @@ export class Supervisor {
       const args = [
         this.petAppDir,
         `--low-balance=${String(this.lowBalanceThreshold)}`,
+        `--balance-poll=${String(this.balancePollSeconds)}`,
         `--balance-refresh=${String(this.balanceRefreshSeconds)}`,
         ...extraArgs,
       ]
