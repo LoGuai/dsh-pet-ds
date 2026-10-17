@@ -214,6 +214,37 @@ const WATCH_SLEEP_S = (() => {
   const n = Number(readArg('watch-sleep'))
   return Number.isFinite(n) && n > 0 ? n : null
 })()
+
+/**
+ * 测试专用：覆盖「闲置随机动作」的三个节奏参数。
+ *
+ * 为什么需要：默认规则是「连续闲置 **3 分钟** + 之后每分钟 **20%** 概率」。
+ * 要验证"随机动作能不能随时间正常触发"，最坏情况得等十几分钟，
+ * 而且概率抽不中时完全分不清"没触发"和"逻辑坏了" —— 这种验证几乎做不成。
+ *
+ * 有了它就能在几十秒内把整条调度链（门槛 → 定时器 → 掷骰子 → 播放）跑一遍，
+ * 观察日志里是否真的反复出现 `[idle] 触发随机动作`。
+ *
+ * **只在显式传参时生效**，宿主从不传它们，所以生产行为完全不变。
+ *
+ *   --idle-after-ms=5000    闲置门槛（满多久才允许掷骰子）
+ *   --idle-every-ms=3000    掷骰子的间隔
+ *   --idle-probability=1    每次命中概率
+ */
+const IDLE_AFTER_OVERRIDE = (() => {
+  const n = Number(readArg('idle-after-ms'))
+  return Number.isFinite(n) && n >= 0 ? n : null
+})()
+const IDLE_EVERY_OVERRIDE = (() => {
+  const n = Number(readArg('idle-every-ms'))
+  return Number.isFinite(n) && n > 0 ? n : null
+})()
+const IDLE_PROBABILITY_OVERRIDE = (() => {
+  const raw = readArg('idle-probability')
+  const n = Number(raw)
+  return Number.isFinite(n) && n >= 0 && n <= 1 ? n : null
+})()
+
 const STATE_URL = process.env.DSH_PET_STATE_URL ?? 'http://127.0.0.1:47845/state'
 const COMMAND_URL = process.env.DSH_PET_COMMAND_URL ?? 'http://127.0.0.1:47845/command'
 
@@ -1030,10 +1061,13 @@ ipcMain.handle('pet:get-initial', () => ({
    * 闲置动作的触发规则，下发给渲染进程：
    * 保持闲置 `idleTriggerAfterMs` 之后，每 `idleFireIntervalMs` 以
    * `idleFireProbability` 的概率触发一个随机动作。
+   *
+   * 三个 `*_OVERRIDE` 只用于测试（见顶部的说明）；未传参时是 null，
+   * 于是这里取的仍然是动作库里的默认值，生产行为不变。
    */
-  idleTriggerAfterMs: IDLE_TRIGGER_AFTER_MS,
-  idleFireIntervalMs: IDLE_FIRE_INTERVAL_MS,
-  idleFireProbability: IDLE_FIRE_PROBABILITY,
+  idleTriggerAfterMs: IDLE_AFTER_OVERRIDE ?? IDLE_TRIGGER_AFTER_MS,
+  idleFireIntervalMs: IDLE_EVERY_OVERRIDE ?? IDLE_FIRE_INTERVAL_MS,
+  idleFireProbability: IDLE_PROBABILITY_OVERRIDE ?? IDLE_FIRE_PROBABILITY,
   /**
    * 闲置随机动作回复的心情区间（用户指定 10~30）。
    * 真正加心情的是主进程；下发只是让渲染进程能记日志、以及自测能断言。
@@ -2604,6 +2638,17 @@ async function verifyLayoutAndResize(check, wait) {
   // 不必真的等几分钟。放在闲置用例之后、点击部位之前。
   await verifyIdleTriggerRule(check, wait)
 
+  /*
+   * 门槛的**定锚时机**单独验证。
+   *
+   * 为什么单独做：verifyIdleTriggerRule 是直接摆布 `readyAt` 的
+   * （"readyAt=T0 就有资格触发"），它验证的是"到点后怎么掷骰子"，
+   * 完全没覆盖"门槛什么时候被建立"。而这里曾经有两个真实缺陷：
+   *   1. 门槛延迟到第一次 tick 才建立，实际要等 3 分钟 + 最多 60 秒；
+   *   2. 宿主变忙时只停了定时器、没清门槛，回来后 3 分钟被白跳过。
+   */
+  await verifyIdleGateAnchoring(check, wait)
+
   // 睡眠状态机（闲置 10 分钟 → 睡 → 尾帧循环 → 点击惊醒 → 回闲置）。
   await verifySleepState(check, wait)
 
@@ -3645,6 +3690,116 @@ async function verifyIdleTriggerRule(check, wait) {
   // 恢复真实时钟与默认参数。
   await wc.executeJavaScript('window.__petTestSetIdleClock(null)', true)
   await wait(200)
+}
+
+/**
+ * 验证「闲置模式」门槛的**定锚时机**。
+ *
+ * 用户要求的规则是「**连续闲置满 3 分钟**才进入闲置模式」。
+ * 光测"到点后怎么掷骰子"是不够的 —— 门槛在什么时候被建立同样属于这条规则，
+ * 而且这里曾经有两个真实缺陷（都是实测发现的）：
+ *
+ *   1. **门槛延迟建立**：原先只在第一次 tick 时把门槛设为 `now + 3 分钟`，
+ *      而 tick 每 60 秒一次 → 实际要等 **3 分钟 + 最多 60 秒**；
+ *   2. **门槛不随"变忙"作废**：宿主变忙时只停了定时器、没清门槛，
+ *      于是门槛保留着那个已经过去的时间戳；等宿主回到闲置，
+ *      下一次 tick 立刻满足条件，**3 分钟被整个跳过**。
+ *
+ * 两个缺陷叠加起来的现象就是"有时候很久都不做动作，有时候刚回来就做"。
+ * 所以这里用可注入时钟把四个时刻逐个钉住。
+ */
+async function verifyIdleGateAnchoring(check, wait) {
+  const wc = win && !win.isDestroyed() ? win.webContents : null
+  if (!wc) return
+  const js = (code) => wc.executeJavaScript(code, true)
+  const readClock = () => js('window.__petTestIdleClockState()')
+
+  /* 先确保处于可闲置态：宿主闲置 + 没有动作在播 + 不在拖拽。 */
+  testPushState({ workStatus: 'idle', workLabel: '', seq: 9300 })
+  await wait(300)
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const st = await js('window.__petTestState()')
+    if (st && st.currentActionId === null && st.dragging === false) break
+    await js('endAction()')
+    await wait(200)
+  }
+
+  const T = Date.now()
+  const AFTER = 3 * 60 * 1000
+
+  // ---- 1) 闲置开始时门槛**立刻**锚定，而不是等第一次 tick ----
+  const s1 = await js(`(() => {
+    window.__petTestSetIdleClock({ now: ${String(T)}, afterMs: ${String(AFTER)} })
+    resetIdleTimer()
+    return window.__petTestIdleClockState()
+  })()`)
+  check(
+    '闲置开始时门槛立刻锚定为「现在 + 门槛」（不再等到第一次 tick）',
+    s1 && s1.readyAt !== null && s1.readyAt - T === AFTER,
+    `readyAt - now = ${String(s1 && s1.readyAt === null ? 'null' : s1.readyAt - T)}（应为 ${String(AFTER)}）`,
+  )
+
+  // ---- 2) 闲置期间的重复 reset 不得把门槛一直往后推 ----
+  //
+  // 这一条是为了守住上面那个修复本身：如果 resetIdleTimer 每次都重设门槛，
+  // 那么只要有别处频繁调用它，门槛就永远等不满 —— 那会变成"永不触发"。
+  const s2 = await js(`(() => {
+    window.__petTestSetIdleClock({ now: ${String(T + 1000)} })
+    resetIdleTimer()
+    resetIdleTimer()
+    return window.__petTestIdleClockState()
+  })()`)
+  check(
+    '闲置期间重复 reset 不会把门槛往后推（否则永远等不满）',
+    s2 && s2.readyAt === T + AFTER,
+    `readyAt = ${String(s2 && s2.readyAt)}（应仍为 ${String(T + AFTER)}）`,
+  )
+
+  // ---- 3) 宿主变忙：门槛必须一并作废 ----
+  const s3 = await js(`(() => {
+    suspendIdleScheduling('自测-变忙')
+    return window.__petTestIdleClockState()
+  })()`)
+  check(
+    '停止闲置调度时门槛一并作废（避免回到闲置后跳过 3 分钟等待）',
+    s3 && s3.readyAt === null,
+    `readyAt = ${String(s3 && s3.readyAt)}（应为 null）`,
+  )
+
+  // ---- 4) 回到闲置：重新起算，而不是沿用旧的（已过去）时间戳 ----
+  const s4 = await js(`(() => {
+    window.__petTestSetIdleClock({ now: ${String(T + 5000)} })
+    resetIdleTimer()
+    return window.__petTestIdleClockState()
+  })()`)
+  check(
+    '暂停后重新开始闲置，门槛从这一刻重新起算',
+    s4 && s4.readyAt !== null && s4.readyAt - (T + 5000) === AFTER,
+    `readyAt - now = ${String(s4 && s4.readyAt === null ? 'null' : s4.readyAt - (T + 5000))}（应为 ${String(AFTER)}）`,
+  )
+
+  // ---- 5) 有动作在播时，重置闲置计时必须把门槛作废 ----
+  //
+  // 这条走真实路径：真的播一个短动作（head），然后像"拖拽结束"那样调
+  // `resetIdleTimer()`。此时并不是真正的闲置，门槛必须被清掉 ——
+  // 否则动作播完、下一次 tick 就能立刻触发，等于跳过了门槛。
+  const s5 = await js(`(async () => {
+    window.__petTestSetIdleClock({ now: ${String(T + 6000)} })
+    await playAction('head', { fromMenu: true })
+    resetIdleTimer()
+    return window.__petTestIdleClockState()
+  })()`)
+  check(
+    '有动作在播时重置闲置计时会把门槛作废（不算"闲置"）',
+    s5 && s5.readyAt === null,
+    `readyAt = ${String(s5 && s5.readyAt)}（期望 null：head 正在播，currentActionId=head）`,
+  )
+
+  /* 收尾：等 head 播完，恢复默认时钟。 */
+  await wait(2600)
+  await js('endAction()')
+  await js('window.__petTestSetIdleClock(null)')
+  await wait(300)
 }
 
 /**

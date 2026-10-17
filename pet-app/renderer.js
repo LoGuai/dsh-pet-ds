@@ -1957,10 +1957,7 @@ function applyState(state) {
   }
 
   // 从闲置变为忙碌（这才是"DSH 开始工作"）：停掉闲置调度。
-  if (idleTimer) {
-    clearTimeout(idleTimer)
-    idleTimer = null
-  }
+  suspendIdleScheduling('宿主开始工作')
   /*
    * 睡眠中开始工作 = 与"用户点击"同一种唤醒（用户要求）：
    * **播放惊醒动画**，而不是被硬生生切断。
@@ -2497,6 +2494,30 @@ function canTriggerRandomAction() {
 }
 
 /**
+ * 停掉闲置调度，并把「闲置模式」的门槛**作废**。
+ *
+ * 为什么必须在这里一并把 `idleReadyAtMs` 清掉（这是一个真实缺陷）：
+ *
+ * 原先只在"宿主变忙"时清掉了定时器，**没有清门槛**。而门槛只会在
+ * tick 里被清（`shouldFireIdleAction` 的早返回）——可宿主一忙，tick 就停了，
+ * 于是门槛一直保留着那个**已经过去的时间戳**。等宿主回到闲置，下一次 tick
+ * 立刻满足 `now >= idleReadyAtMs`，**3 分钟的等待被白跳过**。
+ * 表现就是"有时刚回来就做动作、有时半天都不做"，完全取决于之前那次闲置
+ * 是否已经把门槛建立过。
+ *
+ * 清掉之后语义才一致：**每次真正开始闲置都要重新等满门槛**。
+ */
+function suspendIdleScheduling(reason) {
+  if (idleTimer) {
+    clearTimeout(idleTimer)
+    idleTimer = null
+  }
+  idleSinceMs = null
+  idleReadyAtMs = null
+  if (reason) console.info(`[idle] 暂停闲置调度：${reason}（门槛重新起算）`)
+}
+
+/**
  * 重置闲置计时并重排调度。
  *
  * 调用时机：进入闲置、拖拽结束、宿主状态变化。
@@ -2511,12 +2532,33 @@ function resetIdleTimer(resetIdleMode = false) {
     clearTimeout(idleTimer)
     idleTimer = null
   }
-  idleSinceMs = isTrulyIdle() ? idleNow() : null
-  if (resetIdleMode) {
-    // 退出闲置模式：必须再连续闲置 idleTriggerAfterMs 才有资格触发。
-    idleReadyAtMs = idleNow() + idleTriggerAfterMs
-  } else if (!isTrulyIdle()) {
+  const nowIdle = isTrulyIdle()
+  idleSinceMs = nowIdle ? idleNow() : null
+
+  if (!nowIdle) {
+    // 还在忙 / 有动作在播 / 正在拖拽：门槛作废，等真正闲置时重新起算。
     idleReadyAtMs = null
+  } else if (
+    resetIdleMode ||
+    idleReadyAtMs === null ||
+    /*
+     * 门槛已经**过期**（<= now）：那不是"还在成熟中"，而是上次闲置留下的残值
+     * （例如宿主忙了一阵、期间 tick 停了因而没被清掉）。
+     * 把它当有效值会让"连续闲置满 3 分钟"直接失效，所以必须重新锚定。
+     */
+    idleReadyAtMs <= idleNow()
+  ) {
+    /*
+     * ⚠️ 门槛从**闲置真正开始的那一刻**起算，而不是等到第一次 tick。
+     *
+     * 原先的写法是"第一次 tick 时若为 null 才设为 now + 3 分钟"，而 tick 每 60 秒
+     * 一次 —— 于是实际门槛变成 **3 分钟 + 最多 60 秒**，与用户要求的
+     * "连续闲置满 3 分钟"不符（实测最坏要等 4 分钟才掷第一次骰子）。
+     *
+     * 反之，**仍在成熟中**的门槛（> now）不覆盖 ——
+     * 否则任何一次无关的 resetIdleTimer 都会把门槛往后推，永远等不满。
+     */
+    idleReadyAtMs = idleNow() + idleTriggerAfterMs
   }
   scheduleIdleTick()
 }
