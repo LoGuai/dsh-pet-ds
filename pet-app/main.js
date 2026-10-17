@@ -218,7 +218,7 @@ const WATCH_SLEEP_S = (() => {
 /**
  * 测试专用：覆盖「闲置随机动作」的三个节奏参数。
  *
- * 为什么需要：默认规则是「连续闲置 **3 分钟** + 之后每分钟 **20%** 概率」。
+ * 为什么需要：默认规则是「连续闲置 **1 分钟** + 之后每分钟 **20%** 概率」。
  * 要验证"随机动作能不能随时间正常触发"，最坏情况得等十几分钟，
  * 而且概率抽不中时完全分不清"没触发"和"逻辑坏了" —— 这种验证几乎做不成。
  *
@@ -2634,7 +2634,7 @@ async function verifyLayoutAndResize(check, wait) {
   // ---- 闲置语音、随机动作、心情与属性面板 ----
   await verifyIdleAndMood(check, wait, readLayout)
 
-  // 闲置触发规则（3 分钟门槛 + 每分钟 1/10）单独验证 —— 它用可注入时钟，
+  // 闲置触发规则（1 分钟门槛 + 每分钟 1/5）单独验证 —— 它用可注入时钟，
   // 不必真的等几分钟。放在闲置用例之后、点击部位之前。
   await verifyIdleTriggerRule(check, wait)
 
@@ -2644,8 +2644,8 @@ async function verifyLayoutAndResize(check, wait) {
    * 为什么单独做：verifyIdleTriggerRule 是直接摆布 `readyAt` 的
    * （"readyAt=T0 就有资格触发"），它验证的是"到点后怎么掷骰子"，
    * 完全没覆盖"门槛什么时候被建立"。而这里曾经有两个真实缺陷：
-   *   1. 门槛延迟到第一次 tick 才建立，实际要等 3 分钟 + 最多 60 秒；
-   *   2. 宿主变忙时只停了定时器、没清门槛，回来后 3 分钟被白跳过。
+   *   1. 门槛延迟到第一次 tick 才建立，实际要等「门槛 + 最多 60 秒」；
+   *   2. 宿主变忙时只停了定时器、没清门槛，回来后整个门槛被白跳过。
    */
   await verifyIdleGateAnchoring(check, wait)
 
@@ -3467,7 +3467,7 @@ async function verifyClickParts(check, wait) {
 
 /**
  * 验证闲置动作的触发规则（用户指定）：
- * **保持闲置 3 分钟后，每分钟 1/10 概率触发一个随机动作。**
+ * **保持闲置 1 分钟后，每分钟 1/5 概率触发一个随机动作。**
  *
  * 这条规则没法靠等待来测（要等好几分钟），所以渲染进程暴露了一个可注入的时钟：
  * `__petTestSetIdleClock()` 能改写"当前时间""闲置起点""门槛"与"概率"，
@@ -3524,13 +3524,13 @@ async function verifyIdleTriggerRule(check, wait) {
   await wait(200)
 
   const T0 = Date.now()
-  const AFTER = 3 * 60 * 1000
+  const AFTER = RANDOM_ACTION_RULES.idleThresholdMs
 
   /*
    * 「闲置模式」门槛现在由 `readyAt`（下次可触发时刻）表达，而不是"计时起点"。
    * 所以下面各处都用 `readyAt` 直接摆布门槛，语义更直白：
    *   readyAt = T0          → 现在就有资格触发
-   *   readyAt = T0 + AFTER  → 还要等 3 分钟
+   *   readyAt = T0 + AFTER  → 还要等 1 分钟
    */
 
   // ---- 1) 闲置不足门槛：即使概率 100% 也不该触发 ----
@@ -3545,7 +3545,7 @@ async function verifyIdleTriggerRule(check, wait) {
   await wait(200)
   const after1 = (await readState()).lastPlayedActionId
   check(
-    '闲置不足 3 分钟时不触发（即使概率 100%）',
+    '闲置不足 1 分钟时不触发（即使概率 100%）',
     after1 === before1,
     `门槛还需 ${String(Math.round((T0 + AFTER - (T0 + AFTER - 1000)) / 1000))} 秒；` +
       `lastPlayedActionId ${String(before1)} → ${String(after1)}`,
@@ -3557,7 +3557,7 @@ async function verifyIdleTriggerRule(check, wait) {
   await wait(300)
   const after2 = await readState()
   check(
-    '闲置到达 3 分钟且概率命中时触发动作',
+    '闲置到达 1 分钟且概率命中时触发动作',
     after2.lastPlayedActionId !== before1 && after2.lastPlayedActionId !== null,
     `lastPlayedActionId=${String(after2.lastPlayedActionId)}，动画=${String(after2.activeAnimationId)}`,
   )
@@ -3569,9 +3569,9 @@ async function verifyIdleTriggerRule(check, wait) {
 
   // ---- 2b) 播完一个随机动作后**退出闲置模式** ----
   //
-  // 用户要求：播完一个随机动作后退出闲置模式，必须再连续闲置 3 分钟
+  // 用户要求：播完一个随机动作后退出闲置模式，必须再连续闲置 1 分钟
   // 才能继续触发。验证方式是读 `readyAt`（下次可触发时刻）——
-  // 它应当在动作播完后被推到"当前时间 + 3 分钟"附近。
+  // 它应当在动作播完后被推到"当前时间 + 1 分钟"附近。
   {
     const readyBefore = (await readState()).readyAt
     // 先播一个随机动作（随机动作的收尾会调 resetIdleTimer(true)）。
@@ -3593,7 +3593,7 @@ async function verifyIdleTriggerRule(check, wait) {
     const nowAfter = await wc.executeJavaScript('window.__petTestIdleClockState().now', true)
     const pushed = Number.isFinite(stAfter.readyAt) && stAfter.readyAt > nowAfter
     check(
-      '播放完随机动作后退出闲置模式（门槛重新推后 3 分钟）',
+      '播放完随机动作后退出闲置模式（门槛重新推后 1 分钟）',
       backIdle && pushed,
       `动作播完=${String(backIdle)}；readyAt 由 ${String(readyBefore)} 变为 ${String(stAfter.readyAt)}，` +
         `now=${String(nowAfter)}（应满足 readyAt > now）`,
@@ -3605,7 +3605,7 @@ async function verifyIdleTriggerRule(check, wait) {
     await wait(250)
     const blockedAfter = (await readState()).lastPlayedActionId
     check(
-      '退出闲置模式后即使概率 100% 也不触发（需再等满 3 分钟）',
+      '退出闲置模式后即使概率 100% 也不触发（需再等满 1 分钟）',
       blockedAfter === blockedBefore,
       `lastPlayedActionId ${String(blockedBefore)} → ${String(blockedAfter)}`,
     )
@@ -3695,15 +3695,15 @@ async function verifyIdleTriggerRule(check, wait) {
 /**
  * 验证「闲置模式」门槛的**定锚时机**。
  *
- * 用户要求的规则是「**连续闲置满 3 分钟**才进入闲置模式」。
+ * 用户要求的规则是「**连续闲置满 1 分钟**才进入闲置模式」。
  * 光测"到点后怎么掷骰子"是不够的 —— 门槛在什么时候被建立同样属于这条规则，
  * 而且这里曾经有两个真实缺陷（都是实测发现的）：
  *
- *   1. **门槛延迟建立**：原先只在第一次 tick 时把门槛设为 `now + 3 分钟`，
- *      而 tick 每 60 秒一次 → 实际要等 **3 分钟 + 最多 60 秒**；
+ *   1. **门槛延迟建立**：原先只在第一次 tick 时把门槛设为 `now + 门槛`，
+ *      而 tick 每 60 秒一次 → 实际要等 **门槛 + 最多 60 秒**；
  *   2. **门槛不随"变忙"作废**：宿主变忙时只停了定时器、没清门槛，
  *      于是门槛保留着那个已经过去的时间戳；等宿主回到闲置，
- *      下一次 tick 立刻满足条件，**3 分钟被整个跳过**。
+ *      下一次 tick 立刻满足条件，**整个门槛被跳过**。
  *
  * 两个缺陷叠加起来的现象就是"有时候很久都不做动作，有时候刚回来就做"。
  * 所以这里用可注入时钟把四个时刻逐个钉住。
@@ -3725,7 +3725,7 @@ async function verifyIdleGateAnchoring(check, wait) {
   }
 
   const T = Date.now()
-  const AFTER = 3 * 60 * 1000
+  const AFTER = RANDOM_ACTION_RULES.idleThresholdMs
 
   // ---- 1) 闲置开始时门槛**立刻**锚定，而不是等第一次 tick ----
   const s1 = await js(`(() => {
@@ -3761,7 +3761,7 @@ async function verifyIdleGateAnchoring(check, wait) {
     return window.__petTestIdleClockState()
   })()`)
   check(
-    '停止闲置调度时门槛一并作废（避免回到闲置后跳过 3 分钟等待）',
+    '停止闲置调度时门槛一并作废（避免回到闲置后跳过 1 分钟等待）',
     s3 && s3.readyAt === null,
     `readyAt = ${String(s3 && s3.readyAt)}（应为 null）`,
   )
@@ -4051,9 +4051,9 @@ async function verifySleepState(check, wait) {
     await wc.executeJavaScript('window.__petTestSleep.wake()', true)
     await wait(400)
   }
-  // 把"闲置模式"门槛重置为 3 分钟后，避免带着上一用例的旧门槛进入本用例。
+  // 把"闲置模式"门槛重置为 1 分钟后，避免带着上一用例的旧门槛进入本用例。
   await wc.executeJavaScript(
-    `window.__petTestSetIdleClock({ now: ${String(Date.now())}, readyAt: ${String(Date.now() + 3 * 60 * 1000)} })`,
+    `window.__petTestSetIdleClock({ now: ${String(Date.now())}, readyAt: ${String(Date.now() + RANDOM_ACTION_RULES.idleThresholdMs)} })`,
     true,
   )
 
@@ -4865,7 +4865,7 @@ async function verifyIdleAndMood(check, wait, readLayout) {
 
   // ---- 3) 随机动作：连续记录，避免采样漏掉整个动作窗口 ----
   //
-  // ⚠️ 触发规则已改为"保持闲置 3 分钟后每分钟 1/10"，所以**不能靠等** ——
+  // ⚠️ 触发规则已改为"保持闲置 1 分钟后每分钟 1/5"，所以**不能靠等** ——
   // 这里用可注入时钟把门槛压到 0、概率设为 1，让它必然触发；
   // 规则本身的四个边界由 verifyIdleTriggerRule 单独验证。
   await wc.executeJavaScript(
@@ -5073,6 +5073,32 @@ async function verifyIdleAndMood(check, wait, readLayout) {
           `库门槛=${String(RANDOM_ACTION_RULES.idleThresholdMs)} 库概率=${String(RANDOM_ACTION_RULES.fireProbability)}` +
           `（周期渲染进程=${String(ruleState.fireIntervalMs)} 库=${String(RANDOM_ACTION_RULES.fireIntervalMs)}，测试期会加速故不比）`
         : '拿不到渲染进程的规则状态',
+    )
+
+    /*
+     * 渲染进程里还留着一份**兜底常量**（主进程没下发时用）。
+     * 它必须与库里的值一致 —— 否则"旧版宿主 + 新版渲染进程"这类组合下，
+     * 实际生效的节奏会与文档/库不一致，而且很难被发现。
+     *
+     * 之所以能读到：renderer.js 是普通脚本，顶层 `const` 虽然不挂到 window 上，
+     * 但在同一 realm 的全局作用域里可见（现有的 `actionCatalog` 等也是这样读的）。
+     */
+    const fallback = await wc.executeJavaScript(
+      '({ afterMs: IDLE_TRIGGER_AFTER_MS, intervalMs: IDLE_FIRE_INTERVAL_MS, probability: IDLE_FIRE_PROBABILITY })',
+      true,
+    )
+    const fallbackOk =
+      fallback &&
+      fallback.afterMs === RANDOM_ACTION_RULES.idleThresholdMs &&
+      fallback.intervalMs === RANDOM_ACTION_RULES.fireIntervalMs &&
+      Math.abs(fallback.probability - RANDOM_ACTION_RULES.fireProbability) < 1e-9
+    check(
+      '渲染进程的兜底常量与动作库一致（改门槛时两边不漏）',
+      fallbackOk,
+      fallback
+        ? `兜底 门槛=${String(fallback.afterMs)} 周期=${String(fallback.intervalMs)} 概率=${String(fallback.probability)}；` +
+          `库 门槛=${String(RANDOM_ACTION_RULES.idleThresholdMs)} 周期=${String(RANDOM_ACTION_RULES.fireIntervalMs)} 概率=${String(RANDOM_ACTION_RULES.fireProbability)}`
+        : '读不到兜底常量',
     )
 
     const gainState = await wc.executeJavaScript('window.__petTestIdleClockState()', true)

@@ -56,7 +56,7 @@ export const MOOD_GAIN_PER_PET_MAX = 10
  * 触发一次**闲置随机动作**回复多少心情 —— 随机区间（用户指定 10~30）。
  *
  * 比点击给得多，因为它是"桌宠自己做了件事"，而闲置随机动作很稀少
- * （3 分钟门槛 + 每分钟 1/5 概率，期望约 5 分钟一次）。
+ * （1 分钟门槛 + 每分钟 1/5 概率，期望约 5 分钟一次）。
  */
 export const MOOD_GAIN_PER_ACTION_MIN = 10
 export const MOOD_GAIN_PER_ACTION_MAX = 30
