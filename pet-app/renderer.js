@@ -2516,6 +2516,12 @@ function suspendIdleScheduling(reason) {
     clearTimeout(idleTimer)
     idleTimer = null
   }
+  /*
+   * 主动对话的定时器也要停 —— 两者都以"闲置"为前提。
+   * 若只停掷骰子的那个，宿主忙的时候还会每 60 秒冒一句，
+   * 看起来像"桌宠没意识到你在干活"。
+   */
+  clearIdleVoiceTimer()
   idleSinceMs = null
   idleReadyAtMs = null
   if (reason) console.info(`[idle] 暂停闲置调度：${reason}（门槛重新起算）`)
@@ -2565,6 +2571,12 @@ function resetIdleTimer(resetIdleMode = false) {
     idleReadyAtMs = idleNow() + idleTriggerAfterMs
   }
   scheduleIdleTick()
+  /*
+   * 主动对话的计时也跟着闲置状态走：进了闲置就开始计时，离开就停。
+   * 注意 `syncIdleVoiceScheduling()` 只在**没有**定时器时新建，
+   * 所以这里频繁调用不会把 60 秒的间隔一直往后推。
+   */
+  syncIdleVoiceScheduling()
 }
 
 /** 安排下一次掷骰子。 */
@@ -2583,6 +2595,142 @@ function scheduleIdleTick() {
     }
     scheduleIdleTick()
   }, delay)
+}
+
+// ---------------------------------------------------------------- 闲置主动对话
+/*
+ * 需求（用户指定，原文）：
+ *
+ *   「加入一个语音库，分为固定语音、5 个好感度等级分别的专属语音、
+ *     心情语音（分为低、中、高）几个语音组。
+ *     闲置状态下每 1 分钟触发一次主动对话，具体条目从目前所有可用的语音组中随机选择一条。」
+ *
+ * ## 与「闲置随机动作」的关系：两套调度，别混在一起
+ *
+ * 随机动作是**概率**的（每 60 秒掷一次骰子，命中率 1/5），
+ * 主动对话是**确定性**的（每 60 秒必说一句）。两者都用"闲置"这个前提，
+ * 但节奏语义完全不同：
+ *  · 动作会把 idleReadyAtMs 往前推，让下一次动作重新等门槛；
+ *  · 对话**不该**被动作的骰子结果影响，否则"每 1 分钟"就变成"平均 1.25 分钟"，
+ *    而且动作越频繁说话越少 —— 这不是用户要的。
+ *
+ * 所以给它**独立的定时器**，而不是挤在 onIdleTick 里。
+ *
+ * ## 被挡住时"补说"，而不是"跳过"
+ *
+ * 到点时若正在播动作 / 拖拽 / 睡眠，就 5 秒后再看，直到能说为止。
+ * 若直接跳过，那一分钟就真没了 —— 用户会觉得"怎么有时候不说话"。
+ *
+ * ## 睡眠期间不说话
+ *
+ * 由 `canTriggerRandomAction()` 一并挡住（它要求 `petState === 'idle'`）。
+ * `showBubble` 里另有一道睡眠守卫，这里是双保险：**不去请求**比"请求了被丢掉"干净。
+ */
+
+/** 主动对话的间隔：**1 分钟**（用户指定）。 */
+const IDLE_VOICE_INTERVAL_MS = 1 * 60 * 1000
+
+/** 被挡住时的重试间隔。5 秒足够在一段动作播完后立刻补上。 */
+const IDLE_VOICE_RETRY_MS = 5 * 1000
+
+/** 主动对话的定时器。 */
+let idleVoiceTimer = null
+
+/** 上一次真的说出话的时刻（毫秒）。用于算间隔与测试断言。 */
+let idleVoiceLastAtMs = null
+
+/** 已经说了多少句（自测用；也便于日志定位"到底有没有在说"）。 */
+let idleVoiceSpokenCount = 0
+
+/**
+ * 测试用：覆盖主动对话的间隔（默认 60 秒）。
+ * 60 秒没法在自测里真等，压短到几百毫秒才能验证"到点会说、且不更频繁"。
+ */
+let idleVoiceIntervalMsOverride = null
+
+/** 当前生效的主动对话间隔。 */
+function currentIdleVoiceIntervalMs() {
+  return idleVoiceIntervalMsOverride ?? IDLE_VOICE_INTERVAL_MS
+}
+
+/** 清掉主动对话定时器（不重置 lastAt —— 语义只是"别再计时"）。 */
+function clearIdleVoiceTimer() {
+  if (idleVoiceTimer) {
+    clearTimeout(idleVoiceTimer)
+    idleVoiceTimer = null
+  }
+}
+
+/**
+ * 安排下一次主动对话检查。
+ *
+ * @param {number} delayMs 多久后检查
+ */
+function scheduleIdleVoice(delayMs) {
+  clearIdleVoiceTimer()
+  // 与闲置 tick 一样保留一个很低的调试下限：测试会压到几百毫秒。
+  const delay = Math.max(200, delayMs)
+  idleVoiceTimer = setTimeout(() => {
+    idleVoiceTimer = null
+    try {
+      onIdleVoiceTimer()
+    } catch (err) {
+      console.warn('主动对话调度出错：', err)
+    }
+  }, delay)
+}
+
+/**
+ * 主动对话的定时器回调：能说就说，不能就 5 秒后再看。
+ */
+function onIdleVoiceTimer() {
+  if (!canTriggerRandomAction()) {
+    /*
+     * 动作在播 / 拖拽中 / 睡眠 / 宿主忙 —— 现在不能说。
+     * **不跳过**这一分钟，5 秒后重试（见文件头"补说而不是跳过"）。
+     */
+    scheduleIdleVoice(IDLE_VOICE_RETRY_MS)
+    return
+  }
+
+  const now = idleNow()
+  const interval = currentIdleVoiceIntervalMs()
+  if (idleVoiceLastAtMs !== null) {
+    const since = now - idleVoiceLastAtMs
+    if (since < interval) {
+      // 还没到下一句的时间（例如被挡住后刚刚补说过）—— 补足差值。
+      scheduleIdleVoice(interval - since)
+      return
+    }
+  }
+
+  speakIdleVoiceNow()
+  scheduleIdleVoice(currentIdleVoiceIntervalMs())
+}
+
+/**
+ * 真的说一句：通知主进程挑一句（台词内容由主进程决定）。
+ *
+ * 为什么不在渲染进程挑：好感度与心情的真相源在主进程，
+ * 渲染进程只有面板快照 —— 自己挑就可能与真实等级错位。
+ */
+function speakIdleVoiceNow() {
+  idleVoiceLastAtMs = idleNow()
+  idleVoiceSpokenCount += 1
+  try {
+    window.pet.requestIdleVoice()
+  } catch (err) {
+    console.warn('请求主动对话失败：', err)
+  }
+}
+
+/** 进入闲置时启动对话计时；不在闲置时清掉。 */
+function syncIdleVoiceScheduling() {
+  if (!isTrulyIdle()) {
+    clearIdleVoiceTimer()
+    return
+  }
+  if (!idleVoiceTimer) scheduleIdleVoice(currentIdleVoiceIntervalMs())
 }
 
 /**
@@ -3542,6 +3690,13 @@ window.__petTestState = () => {
     statsVisible,
     moodValue: Number.isFinite(moodState.value) ? moodState.value : null,
     moodTier: moodState.tier,
+    /** 闲置主动对话：上次说话时刻 / 已说次数 / 生效间隔（诊断"怎么不说话"用）。 */
+    idleVoice: {
+      lastAt: idleVoiceLastAtMs,
+      count: idleVoiceSpokenCount,
+      interval: currentIdleVoiceIntervalMs(),
+      timerActive: Boolean(idleVoiceTimer),
+    },
     /** 好感快照（面板显示用；供自测断言）。 */
     affection: {
       value: affectionState.value,
@@ -3729,6 +3884,68 @@ window.__petTestSetIdleInterval = (ms) => {
 }
 
 /**
+ * 测试用：设置主动对话的间隔（默认 60 秒），并立刻按新间隔重排。
+ *
+ * @param {number | null} ms 毫秒；null 恢复正常值
+ * @returns {number} 生效中的间隔
+ */
+window.__petTestSetIdleVoiceInterval = (ms) => {
+  if (Number.isFinite(ms) && ms > 0) {
+    idleVoiceIntervalMsOverride = ms
+  } else if (ms === null) {
+    idleVoiceIntervalMsOverride = null
+  }
+  syncIdleVoiceScheduling()
+  return currentIdleVoiceIntervalMs()
+}
+
+/**
+ * 测试用：立刻走一次"主动对话检查"，返回这次有没有真的说。
+ *
+ * 之所以不用真实定时器等：生产间隔是 60 秒，自测等不起；
+ * 而这个钩子走的是**同一条** `onIdleVoiceTimer()` 路径，
+ * 所以门禁（闲置/动作中/睡眠）与间隔判定都被真实验证了。
+ *
+ * @returns {{ spoke: boolean, lastAt: number | null, count: number, interval: number }}
+ */
+window.__petTestIdleVoiceTick = () => {
+  const before = idleVoiceSpokenCount
+  if (idleVoiceTimer) {
+    clearTimeout(idleVoiceTimer)
+    idleVoiceTimer = null
+  }
+  onIdleVoiceTimer()
+  return {
+    spoke: idleVoiceSpokenCount > before,
+    lastAt: idleVoiceLastAtMs,
+    count: idleVoiceSpokenCount,
+    interval: currentIdleVoiceIntervalMs(),
+  }
+}
+
+/** 测试用：主动对话当前状态（不触发任何动作）。 */
+window.__petTestIdleVoiceState = () => ({
+  lastAt: idleVoiceLastAtMs,
+  count: idleVoiceSpokenCount,
+  interval: currentIdleVoiceIntervalMs(),
+  timerActive: Boolean(idleVoiceTimer),
+  canSpeak: canTriggerRandomAction(),
+})
+
+/**
+ * 测试用：当前气泡的内容与占用者。
+ *
+ * 为什么单独给一个钩子：`__petTestState` 里的字段是给布局诊断用的，
+ * 而"她刚才到底说了什么"是语音机制的断言对象 —— 两者用途不同，
+ * 混在一起会让状态快照越来越胖。
+ */
+window.__petTestBubble = () => ({
+  text: bubbleText ? bubbleText.textContent : '',
+  owner: bubbleOwner,
+  hidden: bubble ? Boolean(bubble.hidden) : true,
+})
+
+/**
  * 测试用：注入"当前时间"与闲置门槛，从而**跳过 1 分钟等待**而不必真的等。
  *
  * @param {{ now?: number, since?: number, afterMs?: number, probability?: number, sleepMin?: number, sleepMax?: number } | null} opts
@@ -3853,6 +4070,13 @@ window.__petTestIdleClockState = () => ({
   actionMoodGain: { min: actionMoodGainRange.min, max: actionMoodGainRange.max },
   trulyIdle: isTrulyIdle(),
   canTriggerRandom: canTriggerRandomAction(),
+  /** 闲置主动对话的状态（上次说话时刻 / 次数 / 间隔 / 定时器是否在跑）。 */
+  idleVoice: {
+    lastAt: idleVoiceLastAtMs,
+    count: idleVoiceSpokenCount,
+    interval: currentIdleVoiceIntervalMs(),
+    timerActive: Boolean(idleVoiceTimer),
+  },
 })
 
 /**

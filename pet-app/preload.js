@@ -84,6 +84,16 @@ contextBridge.exposeInMainWorld('pet', {
    * @param {string} actionId 触发的动作 id（仅用于日志）
    */
   rewardAction: (actionId) => ipcRenderer.send('pet:action-reward', actionId),
+
+  /**
+   * 请求一次「闲置主动对话」：让主进程从语音库里挑一句当前可用的台词。
+   *
+   * 为什么由渲染进程发起、主进程挑选：
+   *  · 渲染进程知道**时机**（它管闲置计时，"连续闲置满 60 秒"只有它算得准）；
+   *  · 主进程知道**内容**（好感度与心情的真相源在那里，渲染进程只有面板快照）。
+   * 两边各管自己擅长的，避免把同一套判定写两遍。
+   */
+  requestIdleVoice: () => ipcRenderer.send('pet:idle-voice'),
   /** 请求触发指定动作（走主进程，与右键菜单同一条路径，避免两套逻辑）。 */
   triggerAction: (id) => ipcRenderer.send('pet:trigger-action', { id }),
 

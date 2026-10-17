@@ -23,7 +23,7 @@
     "dev": "node scripts/dev/mock-host.mjs",
     "dev:debug": "node scripts/dev/mock-host.mjs --debug",
     "probe": "node scripts/dev/probe.mjs",
-    "test": "node scripts/dev/test-changelog.mjs && node scripts/dev/test-changelog-canary.mjs && node scripts/dev/test-animations.mjs && node scripts/dev/test-manifest-deps.mjs && node scripts/dev/test-config-schema.mjs && node scripts/dev/test-client-settings.mjs && node scripts/dev/test-client-smoke.mjs && node --experimental-vm-modules scripts/dev/test-host-link.mjs && node --experimental-vm-modules scripts/dev/test-install-bundle-spec.mjs && node scripts/dev/test-install.mjs && node scripts/dev/test-setup-extract.mjs && node scripts/dev/check-cmd-ascii.mjs && node scripts/dev/test-install-ps1.mjs && node scripts/dev/test-install-ps1-unresolvable.mjs && node scripts/dev/test-doubleclick.mjs && node scripts/dev/test-dialogue.mjs && node scripts/dev/test-balance-announce.mjs && node scripts/dev/test-mood.mjs && node scripts/dev/test-affection.mjs",
+    "test": "node scripts/dev/test-changelog.mjs && node scripts/dev/test-changelog-canary.mjs && node scripts/dev/test-animations.mjs && node scripts/dev/test-manifest-deps.mjs && node scripts/dev/test-config-schema.mjs && node scripts/dev/test-client-settings.mjs && node scripts/dev/test-client-smoke.mjs && node --experimental-vm-modules scripts/dev/test-host-link.mjs && node --experimental-vm-modules scripts/dev/test-install-bundle-spec.mjs && node scripts/dev/test-install.mjs && node scripts/dev/test-setup-extract.mjs && node scripts/dev/check-cmd-ascii.mjs && node scripts/dev/test-install-ps1.mjs && node scripts/dev/test-install-ps1-unresolvable.mjs && node scripts/dev/test-doubleclick.mjs && node scripts/dev/test-voice-library.mjs && node scripts/dev/test-dialogue.mjs && node scripts/dev/test-balance-announce.mjs && node scripts/dev/test-mood.mjs && node scripts/dev/test-affection.mjs",
     "verify:install-bundle": "node scripts/dev/verify-install-bundle.mjs",
     "build:installer": "node scripts/dev/build-installer.mjs",
     "test:setup": "node scripts/dev/test-setup-extract.mjs && node scripts/dev/test-setup-pnpm.mjs",
@@ -85,7 +85,11 @@
     "scripts/dev/make-contact-sheet.py",
     "RELEASE-NOTES-v0.1.5.md",
     "scripts/dev/test-install-ps1-unresolvable.ps1",
-    "scripts/dev/test-install-ps1-unresolvable.mjs"
+    "scripts/dev/test-install-ps1-unresolvable.mjs",
+    "src/shared-core/voice-library.js",
+    "scripts/dev/gen-voice-doc.mjs",
+    "scripts/dev/test-voice-library.mjs",
+    "VOICE-LIBRARY.md"
   ],
   "comment": [
     "本阶段（阶段 4 最小框架）刻意不设置构建步骤：src 下的 .js 就是运行代码，",

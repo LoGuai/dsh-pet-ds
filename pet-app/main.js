@@ -41,6 +41,29 @@ const {
 /** 对话台词库（右键菜单「对话」用）。 */
 const { pickDialogueLine, dialogueLineCount, DIALOGUE_LINES } = require('../src/shared-core/dialogue.js')
 
+/**
+ * 语音库（分组台词：固定 / 好感度等级 / 心情档位）。
+ *
+ * 与 `dialogue.js` 分开：那是"点一下听一句"的无条件台词；
+ * 这里是**按当前状态只从可用组里抽**的分组库。
+ *
+ * 为什么挑选放在主进程：好感度与心情的**单一真相源**都在主进程
+ * （心情要落盘、好感要按阶段结算），渲染进程拿到的只是面板快照。
+ * 若让它自己按面板数字挑，就可能出现"面板显示 3 心、实际还在 2 心"
+ * 的瞬间错位 —— 而语音恰好是最容易被听出来的地方。
+ */
+const {
+  pickVoiceLine,
+  availableVoiceLines,
+  availableVoiceGroups,
+  affectionVoiceLevel,
+  moodVoiceGroup,
+  voiceLibrarySummary,
+  voiceLineCount,
+  VOICE_GROUPS,
+  VOICE_LINE_MAX_CHARS,
+} = require('../src/shared-core/voice-library.js')
+
 /** 余额取数：与宿主**共用同一份**（shared-core，ESM 经 require(esm) 加载）。 */
 const { createBalanceFetcher } = require('../src/shared-core/balance.js')
 /** 余额播报的纯逻辑：消耗计算、四档台词、播不播。 */
@@ -1465,6 +1488,77 @@ ipcMain.on('pet:action-reward', (_event, actionId) => {
 })
 
 /**
+ * 闲置「主动对话」—— 上一句是什么（用于避重）。
+ *
+ * 避重的理由与右键菜单「对话」一致：连着两次同一句，看起来像机制没生效。
+ * 60 秒一句，重复的概率不低（可用池在 0 心时只有 6 句）。
+ */
+let lastIdleVoiceLine = null
+
+/** 主动对话已经说了多少句（自测与日志用）。 */
+let idleVoiceCount = 0
+
+/**
+ * 从语音库里挑一句当前可用的台词并显示。
+ *
+ * 调用方是**渲染进程的闲置调度**（它知道"现在确实闲置、且到 60 秒了"），
+ * 但**挑哪一句由主进程决定** —— 好感度与心情的真相源在这里。
+ *
+ * @returns {{ ok: boolean, text?: string, group?: string, reason?: string }}
+ */
+function speakIdleVoice() {
+  if (!win || win.isDestroyed()) return { ok: false, reason: '窗口不存在' }
+
+  const hearts = affection && Number.isFinite(affection.hearts) ? affection.hearts : 0
+  const moodValue = mood && Number.isFinite(mood.value) ? mood.value : 100
+
+  const text = pickVoiceLine({
+    hearts,
+    moodValue,
+    // 上一个参数与 pickDialogueLine 一致：`(rand, avoidLine)`
+    rand: Math.random,
+    avoidLine: lastIdleVoiceLine,
+  })
+  if (!text) return { ok: false, reason: '可用语音库为空' }
+
+  const groups = availableVoiceGroups({ hearts, moodValue }).map((group) => group.id)
+  lastIdleVoiceLine = text
+  idleVoiceCount += 1
+
+  /*
+   * 气泡时长 6 秒：与右键「对话」一致。
+   *
+   * 为什么不更长：主动对话每 60 秒一次，若气泡停留太久会与下一次重叠；
+   * 6 秒够读完一句 24 字以内的话，也不至于一直挂在屏幕上。
+   */
+  win.webContents.send('pet:say', { text, bubbleMs: 6000 })
+
+  /*
+   * 日志里带上"为什么是这几句"：心数与心情档位。
+   * 排查"她怎么突然说这种话"时，这行就是答案 —— 否则只能猜。
+   */
+  log(
+    `主动对话（${String(hearts)} 心 / 心情 ${String(moodValue)} → ${moodVoiceGroup(moodValue)}，`
+    + `可用组 ${groups.join('+')}）：${text}`,
+  )
+  return { ok: true, text, group: groups.join('+') }
+}
+
+/**
+ * 渲染进程「闲置到 60 秒了，说一句」。
+ *
+ * 走 `send` 而不是 `invoke`：不需要返回值，显示统一走 `pet:say` 那条通路
+ * （已有气泡样式、睡眠守卫、自动隐藏都在那里，另开一条会分叉）。
+ */
+ipcMain.on('pet:idle-voice', () => {
+  try {
+    speakIdleVoice()
+  } catch (err) {
+    log(`主动对话失败：${err instanceof Error ? err.message : String(err)}`)
+  }
+})
+
+/**
  * 触发一个动作（菜单入口）。
  *
  * 主进程只负责"把请求转给渲染进程" —— 动作的实际播放、以及播完回到待机，
@@ -2654,6 +2748,14 @@ async function verifyLayoutAndResize(check, wait) {
 
   // 坐姿动作（坐下 → 坐着循环 + 180 秒计时 → 站起；前两阶段点击立即站起）。
   await verifySitAction(check, wait)
+
+  /*
+   * 闲置主动对话（语音库：固定 / 好感度 ×5 / 心情 ×3）。
+   *
+   * 放在坐姿用例**之后**：它会把 sleep 状态机走一遍来验证"睡眠期间不说"，
+   * 放在前面会把后面用例依赖的 petState 搅乱。
+   */
+  await verifyIdleVoice(check, wait)
 }
 
 /**
@@ -4540,6 +4642,147 @@ async function watchSleep(seconds) {
  * （`__petTestSit.setHoldMs`）来验证"计时到点会自动站起"这条逻辑本身；
  * 默认值 180000 单独断言一次，确保压短只是测试手段、没改生产行为。
  */
+/**
+ * 自测：闲置主动对话。
+ *
+ * 这条用例的意义在于把**两个世界的判定串起来验证**：
+ *  · 渲染进程：什么时候该说（闲置满 60 秒、不在动作中、不在睡）；
+ *  · 主进程：说什么（按好感度等级 + 心情档位从可用组里抽）。
+ * 任何一边单独测都过不了"她刚才说的话是不是真的属于当前可用组"这一问。
+ *
+ * @param {(name: string, ok: boolean, detail?: string) => void} check
+ * @param {(ms: number) => Promise<void>} wait
+ */
+async function verifyIdleVoice(check, wait) {
+  const wc = win && !win.isDestroyed() ? win.webContents : null
+  if (!wc) return
+  const js = (code) => wc.executeJavaScript(code, true)
+  const readVoice = () => js('window.__petTestIdleVoiceState ? window.__petTestIdleVoiceState() : null')
+  const readBubble = () => js('window.__petTestBubble ? window.__petTestBubble() : null')
+
+  // ---- 1) 库结构 ----
+  {
+    const ids = VOICE_GROUPS.map((group) => group.id)
+    check('语音库共 9 组（1 固定 + 5 好感度 + 3 心情）', VOICE_GROUPS.length === 9, ids.join(', '))
+    check(
+      '每组各 3 条，共 27 条',
+      VOICE_GROUPS.every((group) => group.lines.length === 3) && voiceLineCount() === 27,
+      `共 ${String(voiceLineCount())} 条；分布 ${VOICE_GROUPS.map((g) => `${g.id}=${String(g.lines.length)}`).join(' ')}`,
+    )
+    const tooLong = VOICE_GROUPS.flatMap((group) =>
+      group.lines.filter((line) => [...line].length > VOICE_LINE_MAX_CHARS).map((line) => `${group.id}:${line}`),
+    )
+    check(`所有台词都在 ${String(VOICE_LINE_MAX_CHARS)} 字以内`, tooLong.length === 0, tooLong.join(' / '))
+  }
+
+  // ---- 2) 真实说一句 ----
+  /*
+   * 关掉随机动作（概率 0）：它会插进来改变 petState，让"到点该说"的判定被打断，
+   * 而且动作的台词会顶掉我们要检查的那句气泡。
+   */
+  await js('window.__petTestSetIdleClock({ probability: 0 })')
+
+  /*
+   * ⚠️ 先等回"真正闲置"再开始。
+   *
+   * 上一个用例（坐姿）结束时可能还在播站起动画，那时 `canSpeak` 是 false，
+   * 语音定时器会每 5 秒重试一次。实测就踩了这个：主进程日志里已经有"主动对话"，
+   * 渲染进程里的计数却还是 0（因为真正的第一次说话被推迟到了重试之后）。
+   */
+  {
+    let waited = 0
+    for (let i = 0; i < 100; i += 1) {
+      const st = await readVoice()
+      if (st && st.canSpeak) break
+      await wait(100)
+      waited += 100
+    }
+    if (waited >= 500) check('等回闲置状态（为主动对话用例准备）', true, `等了 ${String(waited)}ms`)
+  }
+
+  await js('window.__petTestSetIdleVoiceInterval(500)')
+
+  /*
+   * 这里**主动驱动一次**定时器回调，而不是干等 setTimeout 送达。
+   *
+   * 理由：`__petTestIdleVoiceTick()` 调的就是 `onIdleVoiceTimer()` ——
+   * 也就是定时器真正会调的那个函数，门禁与间隔判定一条没绕过；
+   * 而自测里其它用例会摆弄注入时钟（`idleNowOverride`），
+   * 依赖墙钟送达在那种环境下不可靠（实测表现为"一次都没说"的假失败）。
+   */
+  {
+    const scheduled = await readVoice()
+    check(
+      '设置间隔后定时器已排上',
+      Boolean(scheduled) && scheduled.timerActive === true,
+      `timerActive=${String(scheduled && scheduled.timerActive)}`,
+    )
+  }
+
+  const before = await readVoice()
+  const tick = await js('window.__petTestIdleVoiceTick()')
+  const after = await readVoice()
+
+  check(
+    '闲置到点会主动说一句',
+    Boolean(tick) && tick.spoke === true && Boolean(after) && after.count > (before ? before.count : 0),
+    `spoke=${String(tick && tick.spoke)}；次数 ${String(before && before.count)} → ${String(after && after.count)}`,
+  )
+
+  const bubble = await readBubble()
+  {
+    const hearts = affection && Number.isFinite(affection.hearts) ? affection.hearts : 0
+    const moodValue = mood && Number.isFinite(mood.value) ? mood.value : 100
+    const pool = availableVoiceLines({ hearts, moodValue })
+    const spoken = bubble && typeof bubble.text === 'string' ? bubble.text : ''
+    check(
+      '说的话确实来自当前可用语音组',
+      pool.includes(spoken),
+      spoken
+        ? `「${spoken}」；当前 ${String(hearts)} 心 / 心情 ${String(Math.round(moodValue))}，可用 ${String(pool.length)} 句`
+        : '气泡是空的',
+    )
+  }
+
+  // ---- 3) 间隔没到不会连说 ----
+  {
+    const quick = await js('window.__petTestIdleVoiceTick()')
+    check(
+      '间隔没到不会重复说',
+      Boolean(quick) && quick.spoke === false,
+      `spoke=${String(quick && quick.spoke)}（间隔 ${String(quick && quick.interval)}ms）`,
+    )
+  }
+
+  // ---- 4) 睡眠期间不说（用户要求"睡眠时禁语音"的延伸）----
+  {
+    await js('window.__petTestSleep.enter()')
+    const slept = await readVoice()
+    const ticked = await js('window.__petTestIdleVoiceTick()')
+    check(
+      '睡眠期间不会主动说话',
+      Boolean(slept) && slept.canSpeak === false && Boolean(ticked) && ticked.spoke === false,
+      `canSpeak=${String(slept && slept.canSpeak)} spoke=${String(ticked && ticked.spoke)}`,
+    )
+    /*
+     * 被挡住时要"补说"而不是跳过：定时器必须还在跑（5 秒后重试）。
+     * 若这里 timerActive 为 false，说明那一分钟真的丢了。
+     */
+    const resumed = await readVoice()
+    check(
+      '被挡住时仍会重试（不会跳过这一分钟）',
+      Boolean(resumed) && resumed.timerActive === true,
+      `timerActive=${String(resumed && resumed.timerActive)}`,
+    )
+    await js('window.__petTestSleep.wake()')
+    await wait(600)
+  }
+
+  // ---- 5) 收尾：恢复默认间隔，别把 500ms 带进后面的用例 ----
+  await js('window.__petTestSetIdleVoiceInterval(null)')
+  await js('window.__petTestSetIdleClock(null)')
+}
+
 async function verifySitAction(check, wait) {
   const wc = win && !win.isDestroyed() ? win.webContents : null
   if (!wc) return
