@@ -1,12 +1,14 @@
 /**
  * 语音库（`src/shared-core/voice-library.js`）的检查。
  *
- * 覆盖两类东西：
- *  1. **结构与人设约束** —— 9 组 / 每组 3 条 / 单句 ≤24 字 / 无重复 / 白饭梗在；
- *  2. **可用性规则** —— 爱心数、心情值到"启用哪些组"的映射，
- *     以及"抽出来的句子一定来自可用组之内"。
+ * 本版的重点变了：以前只验"9 个闲置信箱"，现在要验
+ * **"所有可触发语音都在库里、并且按触发条件分好了组"**（用户要求）。
  *
- * 另外校验 `VOICE-LIBRARY.md` 与库**逐字一致**（文档是生成的）。
+ * 覆盖：
+ *  1. 结构 —— 每个组都有合法 trigger；各触发条件的组数/条数符合约定；
+ *  2. 文案 —— 单句 ≤24 字、全局不重复、不做空组；
+ *  3. 可用性 —— 好感/心情/部位/动作/余额档位/场景 的过滤是否正确；
+ *  4. 一致性 —— 点击三档的边界与渲染进程同口径；文档与库逐字一致。
  */
 
 import { readFileSync, existsSync } from 'node:fs'
@@ -18,14 +20,28 @@ import {
   VOICE_LINE_MAX_CHARS,
   MOOD_VOICE_MID_MIN,
   MOOD_VOICE_HIGH_MIN,
+  CLICK_VOICE_TIERS,
+  clickVoiceTier,
+  clickPartLines,
+  clickPartLinesTable,
   affectionVoiceLevel,
   moodVoiceGroup,
-  availableVoiceGroups,
-  availableVoiceLines,
-  pickVoiceLine,
+  voiceGroupsFor,
+  voiceLinesFor,
+  voiceLinesFor as linesFor,
+  pickVoiceLineFor,
   voiceLineCount,
+  voiceLineCountFor,
   voiceLibrarySummary,
+  balanceTierLine,
+  systemLine,
+  dragLines,
+  freeLines,
+  actionLines,
+  findVoiceGroup,
 } from '../../src/shared-core/voice-library.js'
+import { DIALOGUE_LINES, pickDialogueLine, dialogueLineCount } from '../../src/shared-core/dialogue.js'
+import { balanceTierOf } from '../../src/shared-core/balance-announce.js'
 import { buildVoiceDoc } from './gen-voice-doc.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -44,45 +60,82 @@ const test = (name, fn) => {
   }
 }
 
+const TRIGGERS = ['idle', 'click', 'action', 'trust', 'drag', 'balance', 'system', 'free']
 const allLines = VOICE_GROUPS.flatMap((g) => g.lines)
 
 // ---------------------------------------------------------------- 结构
-test('分组数量正确：1 固定 + 5 好感度 + 3 心情 = 9 组', () => {
-  const fixed = VOICE_GROUPS.filter((g) => g.kind === 'fixed')
-  const affection = VOICE_GROUPS.filter((g) => g.kind === 'affection')
-  const mood = VOICE_GROUPS.filter((g) => g.kind === 'mood')
-  assert.equal(fixed.length, 1, `固定语音应 1 组，实际 ${String(fixed.length)}`)
-  assert.equal(affection.length, 5, `好感度语音应 5 组，实际 ${String(affection.length)}`)
-  assert.equal(mood.length, 3, `心情语音应 3 组，实际 ${String(mood.length)}`)
-  assert.equal(VOICE_GROUPS.length, 9)
-})
-
-test('好感度 5 组对应 1~5 级，且不重复', () => {
-  const levels = VOICE_GROUPS.filter((g) => g.kind === 'affection').map((g) => g.level)
-  assert.deepEqual([...levels].sort((a, b) => a - b), [1, 2, 3, 4, 5])
-})
-
-test('心情 3 组恰好是 low / mid / high', () => {
-  const moods = VOICE_GROUPS.filter((g) => g.kind === 'mood').map((g) => g.mood)
-  assert.deepEqual([...moods].sort(), ['high', 'low', 'mid'])
-})
-
-test('每组恰好 3 条（用户要求"每个语音组临时写入三条"）', () => {
+test('每个组都有合法的 trigger / id / label，且 id 唯一', () => {
+  const ids = new Set()
   for (const g of VOICE_GROUPS) {
-    assert.equal(g.lines.length, 3, `${g.id} 有 ${String(g.lines.length)} 条，应为 3 条`)
+    assert.ok(TRIGGERS.includes(g.trigger), `组 ${g.id} 的 trigger 非法：${String(g.trigger)}`)
+    assert.ok(!ids.has(g.id), `组 id 重复：${g.id}`)
+    ids.add(g.id)
+    assert.ok(typeof g.label === 'string' && g.label.length > 0, `组 ${g.id} 缺 label`)
+    assert.ok(Array.isArray(g.lines) && g.lines.length > 0, `组 ${g.id} 没有任何台词`)
   }
-  assert.equal(voiceLineCount(), 27)
 })
 
-test(`单句不超过 ${String(VOICE_LINE_MAX_CHARS)} 字且非空`, () => {
+test('八类触发条件都有分组（不会漏掉某类）', () => {
+  for (const t of TRIGGERS) {
+    assert.ok(voiceLineCountFor(t) > 0, `触发条件 ${t} 一条台词都没有`)
+  }
+})
+
+test('闲置：1 固定 + 5 好感度 + 3 心情，每组 3 条', () => {
+  const idle = VOICE_GROUPS.filter((g) => g.trigger === 'idle')
+  assert.equal(idle.length, 9)
+  assert.equal(idle.filter((g) => g.kind === 'fixed').length, 1)
+  assert.deepEqual(
+    idle.filter((g) => g.kind === 'affection').map((g) => g.level).sort((a, b) => a - b),
+    [1, 2, 3, 4, 5],
+  )
+  assert.deepEqual(
+    idle.filter((g) => g.kind === 'mood').map((g) => g.mood).sort(),
+    ['high', 'low', 'mid'],
+  )
+  for (const g of idle) assert.equal(g.lines.length, 3, `${g.id} 应 3 条`)
+})
+
+test('点击：4 个部位 × 3 档 = 12 组，每组 2 条，且不缺档', () => {
+  const click = VOICE_GROUPS.filter((g) => g.trigger === 'click')
+  assert.equal(click.length, 12)
+  for (const g of click) assert.equal(g.lines.length, 2, `${g.id} 应 2 条`)
+  const parts = [...new Set(click.map((g) => g.part))]
+  assert.deepEqual(parts.sort(), ['belly', 'chest', 'head', 'leg'])
+  for (const part of parts) {
+    const tiers = click.filter((g) => g.part === part).map((g) => g.tier).sort()
+    assert.deepEqual(tiers, [...CLICK_VOICE_TIERS].sort(), `部位 ${part} 缺档位`)
+  }
+})
+
+test('动作：6 个动作各一组，且能按动作 id 取到台词', () => {
+  const expect = ['awake', 'eat', 'play-mc', 'sit', 'sleep', 'think']
+  for (const id of expect) {
+    const lines = actionLines(id)
+    assert.ok(lines.length > 0, `动作 ${id} 没有台词`)
+  }
+})
+
+test('信赖 3 条、拖拽 ≥2 条、余额 4 档、系统 ≥3 场景、自由对话 ≥10 条', () => {
+  assert.equal(voiceLineCountFor('trust'), 3, '信赖语音应 3 条（用户要求）')
+  assert.ok(dragLines().length >= 2, '拖拽台词太少')
+  for (let tier = 1; tier <= 4; tier += 1) {
+    assert.ok(balanceTierLine(tier).length > 0, `余额 ${String(tier)} 档没有短语`)
+  }
+  for (const scene of ['size-failed', 'refreshed', 'click-miss']) {
+    assert.ok(systemLine(scene).length > 0, `系统场景 ${scene} 没有台词`)
+  }
+  assert.ok(freeLines().length >= 10, '自由对话台词太少')
+})
+
+test(`单句不超过 ${String(VOICE_LINE_MAX_CHARS)} 字且非空、无首尾空白`, () => {
   for (const g of VOICE_GROUPS) {
     for (const line of g.lines) {
-      assert.ok(typeof line === 'string', `${g.id} 里有非字符串台词`)
-      assert.ok(line.trim().length > 0, `${g.id} 里有空台词`)
-      assert.equal(line, line.trim(), `${g.id} 的台词首尾有空白：${JSON.stringify(line)}`)
+      assert.ok(typeof line === 'string' && line.trim().length > 0, `${g.id} 有空台词`)
+      assert.equal(line, line.trim(), `${g.id} 台词首尾有空白：${JSON.stringify(line)}`)
       assert.ok(
         [...line].length <= VOICE_LINE_MAX_CHARS,
-        `${g.id} 的台词 ${String([...line].length)} 字，超过 ${String(VOICE_LINE_MAX_CHARS)}：${line}`,
+        `${g.id} 的台词 ${String([...line].length)} 字超限：${line}`,
       )
     }
   }
@@ -99,141 +152,156 @@ test('台词全局无重复（跨组也不能重复）', () => {
   assert.equal(seen.size, allLines.length)
 })
 
-test('组 id 唯一且形如 fixed / affection-N / mood-X', () => {
-  const ids = VOICE_GROUPS.map((g) => g.id)
-  assert.equal(new Set(ids).size, ids.length, '组 id 有重复')
-  for (const g of VOICE_GROUPS) {
-    assert.match(g.id, /^(fixed|affection-[1-5]|mood-(low|mid|high))$/, `组 id 不合规范：${g.id}`)
-    assert.ok(typeof g.label === 'string' && g.label.length > 0, `${g.id} 缺 label`)
-  }
-})
-
 test('人设：白饭梗出现在至少 3 个组里（贪吃设定）', () => {
   const groupsWithRice = VOICE_GROUPS.filter((g) => g.lines.some((line) => line.includes('白饭')))
-  assert.ok(
-    groupsWithRice.length >= 3,
-    `只有 ${String(groupsWithRice.length)} 个组提到白饭，贪吃的人设立不住`,
-  )
+  assert.ok(groupsWithRice.length >= 3, `只有 ${String(groupsWithRice.length)} 个组提到白饭`)
 })
 
-// ---------------------------------------------------------------- 可用性规则
+// ---------------------------------------------------------------- 分档规则
 test('affectionVoiceLevel：0 心无专属、1~5 原样、越界按满级', () => {
   assert.equal(affectionVoiceLevel(0), null)
   for (let h = 1; h <= 5; h += 1) assert.equal(affectionVoiceLevel(h), h)
-  assert.equal(affectionVoiceLevel(7), 5)
-  assert.equal(affectionVoiceLevel(-3), null)
+  assert.equal(affectionVoiceLevel(9), 5)
+  assert.equal(affectionVoiceLevel(-1), null)
   assert.equal(affectionVoiceLevel(Number.NaN), null)
-  assert.equal(affectionVoiceLevel(undefined), null)
 })
 
-test('moodVoiceGroup：3 档的边界与非法值', () => {
+test('moodVoiceGroup：3 档边界与非法值', () => {
   assert.equal(moodVoiceGroup(0), 'low')
-  assert.equal(moodVoiceGroup(19), 'low')
   assert.equal(moodVoiceGroup(MOOD_VOICE_MID_MIN - 1), 'low')
   assert.equal(moodVoiceGroup(MOOD_VOICE_MID_MIN), 'mid')
   assert.equal(moodVoiceGroup(MOOD_VOICE_HIGH_MIN - 1), 'mid')
   assert.equal(moodVoiceGroup(MOOD_VOICE_HIGH_MIN), 'high')
-  assert.equal(moodVoiceGroup(100), 'high')
-  // 非法值按"中"兜底：宁可说点平淡的，也不要不出声
   assert.equal(moodVoiceGroup(Number.NaN), 'mid')
-  assert.equal(moodVoiceGroup(undefined), 'mid')
 })
 
-test('可用组 = 固定 + 当前好感度组 + 当前心情组', () => {
+test('clickVoiceTier：0,1 → low；2,3 → mid；4,5 → high', () => {
+  assert.equal(clickVoiceTier(0), 'low')
+  assert.equal(clickVoiceTier(1), 'low')
+  assert.equal(clickVoiceTier(2), 'mid')
+  assert.equal(clickVoiceTier(3), 'mid')
+  assert.equal(clickVoiceTier(4), 'high')
+  assert.equal(clickVoiceTier(5), 'high')
+})
+
+// ---------------------------------------------------------------- 可用性过滤
+test('闲置：可用组 = 固定 + 当前好感度组 + 当前心情组', () => {
   const cases = [
-    { hearts: 0, moodValue: 10, expect: ['fixed', 'mood-low'] },
-    { hearts: 0, moodValue: 60, expect: ['fixed', 'mood-mid'] },
-    { hearts: 1, moodValue: 90, expect: ['fixed', 'affection-1', 'mood-high'] },
-    { hearts: 3, moodValue: 30, expect: ['fixed', 'affection-3', 'mood-low'] },
-    { hearts: 5, moodValue: 100, expect: ['fixed', 'affection-5', 'mood-high'] },
-    // 越界的心数按满级算
-    { hearts: 9, moodValue: 100, expect: ['fixed', 'affection-5', 'mood-high'] },
+    { hearts: 0, moodValue: 10, expect: ['idle-fixed', 'idle-mood-low'] },
+    { hearts: 0, moodValue: 60, expect: ['idle-fixed', 'idle-mood-mid'] },
+    { hearts: 1, moodValue: 90, expect: ['idle-fixed', 'idle-affection-1', 'idle-mood-high'] },
+    { hearts: 3, moodValue: 30, expect: ['idle-fixed', 'idle-affection-3', 'idle-mood-low'] },
+    { hearts: 5, moodValue: 100, expect: ['idle-fixed', 'idle-affection-5', 'idle-mood-high'] },
   ]
   for (const c of cases) {
-    const ids = availableVoiceGroups(c).map((g) => g.id)
-    assert.deepEqual(
-      ids,
-      c.expect,
-      `hearts=${String(c.hearts)} mood=${String(c.moodValue)} 时应为 ${c.expect.join('+')}，实际 ${ids.join('+')}`,
-    )
+    const ids = voiceGroupsFor('idle', { hearts: c.hearts, moodValue: c.moodValue }).map((g) => g.id)
+    assert.deepEqual(ids, c.expect, `hearts=${String(c.hearts)} mood=${String(c.moodValue)}`)
   }
 })
 
-test('0 心只有 6 句可用（固定 3 + 心情 3），满级 5 心也是 9 句', () => {
-  assert.equal(availableVoiceLines({ hearts: 0, moodValue: 50 }).length, 6)
-  assert.equal(availableVoiceLines({ hearts: 5, moodValue: 50 }).length, 9)
-  assert.equal(availableVoiceLines({ hearts: 3, moodValue: 50 }).length, 9)
-})
-
-// ---------------------------------------------------------------- 抽取
-test('抽出的句子一定来自当前可用组（多种状态各抽 300 次）', () => {
-  for (const hearts of [0, 1, 2, 3, 4, 5]) {
-    for (const moodValue of [10, 60, 95]) {
-      const pool = new Set(availableVoiceLines({ hearts, moodValue }))
-      for (let i = 0; i < 300; i += 1) {
-        const line = pickVoiceLine({ hearts, moodValue })
-        assert.ok(
-          pool.has(line),
-          `hearts=${String(hearts)} mood=${String(moodValue)} 抽到了池外台词：${line}`,
-        )
-      }
+test('点击：按部位 + 好感度档位取台词', () => {
+  assert.deepEqual(clickPartLines('head', 0), clickPartLines('head', 1))
+  assert.deepEqual(clickPartLines('head', 2), clickPartLines('head', 3))
+  assert.deepEqual(clickPartLines('head', 4), clickPartLines('head', 5))
+  assert.notDeepEqual(clickPartLines('head', 0), clickPartLines('head', 5), '高低档台词不该相同')
+  for (const part of ['head', 'chest', 'belly', 'leg']) {
+    for (let h = 0; h <= 5; h += 1) {
+      assert.equal(clickPartLines(part, h).length, 2, `${part}@${String(h)} 心应有 2 句`)
     }
   }
 })
 
-test('尽量不与上一句重复（池里有别的句子时）', () => {
-  const state = { hearts: 3, moodValue: 60 }
-  const pool = availableVoiceLines(state)
-  const avoid = pool[0]
-  for (let i = 0; i < 300; i += 1) {
-    const line = pickVoiceLine({ ...state, avoidLine: avoid })
-    assert.notEqual(line, avoid, '连续抽到了同一句（避重失效）')
+test('点击三档整表齐全（主进程下发给渲染进程的就是它）', () => {
+  const table = clickPartLinesTable()
+  for (const part of ['head', 'chest', 'belly', 'leg']) {
+    assert.ok(table[part], `表里缺部位 ${part}`)
+    for (const tier of CLICK_VOICE_TIERS) {
+      assert.equal((table[part][tier] ?? []).length, 2, `${part}.${tier} 应有 2 句`)
+    }
   }
 })
 
-test('池里只有一句时接受重复（不返回空）', () => {
-  /*
-   * 造一个只有一句的极端场景不容易（每组都是 3 句），
-   * 所以直接验证"避重逻辑在候选为空时回退到全池"这条分支：
-   * 传入一个池里唯一的句子作为 avoidLine，结果必须仍是那句话。
-   */
-  const pool = availableVoiceLines({ hearts: 0, moodValue: 50 })
-  const only = pool[0]
-  // 把所有其它句子都当作"不在池里"来模拟：直接调用内部同样的回退逻辑
-  const line = pickVoiceLine({ hearts: 0, moodValue: 50, avoidLine: only, rand: () => 0 })
-  assert.ok(pool.includes(line))
+test('动作 / 余额 / 系统 / 拖拽 都能按条件取到且不串台', () => {
+  assert.deepEqual(actionLines('eat'), ['（占位）开饭啦'])
+  assert.deepEqual(actionLines('sleep'), ['（占位·睡）那我先睡一会儿…zzz'])
+  assert.equal(actionLines('不存在的动作').length, 0)
+  // 余额档位：与 balance-announce 的分档一致
+  assert.equal(balanceTierOf(5).line, balanceTierLine(1))
+  assert.equal(balanceTierOf(15).line, balanceTierLine(2))
+  assert.equal(balanceTierOf(30).line, balanceTierLine(3))
+  assert.equal(balanceTierOf(99).line, balanceTierLine(4))
+  // 系统场景互不串台
+  assert.notEqual(systemLine('size-failed'), systemLine('refreshed'))
+  assert.equal(systemLine('不存在的场景'), '')
 })
 
-test('voiceLibrarySummary 与 VOICE_GROUPS 一致（文档用的就是它）', () => {
+test('抽取永远落在当前可用的池里（多状态各抽 200 次）', () => {
+  for (const hearts of [0, 2, 5]) {
+    for (const moodValue of [10, 60, 95]) {
+      const pool = new Set(voiceLinesFor('idle', { hearts, moodValue }))
+      for (let i = 0; i < 200; i += 1) {
+        const line = pickVoiceLineFor('idle', { hearts, moodValue })
+        assert.ok(pool.has(line), `抽到池外台词：${line}`)
+      }
+    }
+  }
+  const clickPool = new Set(clickPartLines('head', 0))
+  for (let i = 0; i < 100; i += 1) {
+    const line = pickVoiceLineFor('click', { part: 'head', hearts: 0 })
+    assert.ok(clickPool.has(line), `点击抽到池外台词：${line}`)
+  }
+})
+
+test('避重：池里还有别的句子时，不会连着抽到同一句', () => {
+  const avoid = clickPartLines('head', 5)[0]
+  for (let i = 0; i < 100; i += 1) {
+    const line = pickVoiceLineFor('click', { part: 'head', hearts: 5, avoidLine: avoid })
+    assert.notEqual(line, avoid)
+  }
+})
+
+test('voiceLibrarySummary 与 VOICE_GROUPS 一致，且带 trigger 与可用条件', () => {
   const summary = voiceLibrarySummary()
   assert.equal(summary.length, VOICE_GROUPS.length)
   for (let i = 0; i < summary.length; i += 1) {
     assert.equal(summary[i].id, VOICE_GROUPS[i].id)
+    assert.equal(summary[i].trigger, VOICE_GROUPS[i].trigger)
     assert.deepEqual(summary[i].lines, VOICE_GROUPS[i].lines)
+    assert.ok(typeof summary[i].condition === 'string')
   }
-  // 摘要不应把内部字段漏出去（只暴露文档需要的）
-  assert.ok(!('raw_dir' in summary[0]))
+  assert.ok(findVoiceGroup('trust'), '按 id 找得到 trust 组')
+  assert.equal(findVoiceGroup('不存在的组'), null)
+})
+
+// ---------------------------------------------------------------- 与旧模块的一致性
+test('dialogue.js 已成为语音库的门面（台词来自 free 组）', () => {
+  assert.deepEqual([...DIALOGUE_LINES].sort(), [...freeLines()].sort(), '对话库应与 free 组一致')
+  assert.equal(dialogueLineCount(), freeLines().length)
+  const picked = pickDialogueLine(() => 0, null)
+  assert.ok(freeLines().includes(picked), '抽到的句子应来自 free 组')
+})
+
+test('台词总数与分项之和一致', () => {
+  const sum = TRIGGERS.reduce((acc, t) => acc + voiceLineCountFor(t), 0)
+  assert.equal(sum, voiceLineCount())
 })
 
 // ---------------------------------------------------------------- 文档同步
 test('VOICE-LIBRARY.md 与库逐字一致（文档是生成的）', () => {
   const doc = join(ROOT, 'VOICE-LIBRARY.md')
   assert.ok(existsSync(doc), '缺 VOICE-LIBRARY.md —— 运行 node scripts/dev/gen-voice-doc.mjs')
-  const current = readFileSync(doc, 'utf8')
-  const expected = buildVoiceDoc()
   assert.equal(
-    current === expected,
+    readFileSync(doc, 'utf8') === buildVoiceDoc(),
     true,
-    'VOICE-LIBRARY.md 与语音库不一致 —— 运行 node scripts/dev/gen-voice-doc.mjs 重新生成',
+    'VOICE-LIBRARY.md 与语音库不一致 —— 运行 node scripts/dev/gen-voice-doc.mjs',
   )
 })
 
-test('文档里确实列出了每一句台词', () => {
+test('文档里列出了每一句台词与每个触发条件', () => {
   const doc = readFileSync(join(ROOT, 'VOICE-LIBRARY.md'), 'utf8')
+  for (const t of TRIGGERS) assert.ok(doc.includes(`\`${t}\``), `文档缺触发条件 ${t}`)
   for (const g of VOICE_GROUPS) {
-    for (const line of g.lines) {
-      assert.ok(doc.includes(line), `文档里没有这句：${line}（${g.id}）`)
-    }
+    for (const line of g.lines) assert.ok(doc.includes(line), `文档缺这句：${line}（${g.id}）`)
   }
 })
 

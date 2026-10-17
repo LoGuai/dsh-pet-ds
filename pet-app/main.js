@@ -54,16 +54,21 @@ const { pickDialogueLine, dialogueLineCount, DIALOGUE_LINES } = require('../src/
  */
 const {
   pickVoiceLine,
+  pickVoiceLineFor,
   availableVoiceLines,
   availableVoiceGroups,
   affectionVoiceLevel,
   moodVoiceGroup,
   voiceLibrarySummary,
   voiceLineCount,
-  pickTrustLine,
-  TRUST_LINES,
+  voiceLineCountFor,
+  conditionTextOf,
+  voiceGroupAvailable,
   VOICE_GROUPS,
   VOICE_LINE_MAX_CHARS,
+  dragLines,
+  systemLine,
+  voiceLinesFor,
 } = require('../src/shared-core/voice-library.js')
 
 /**
@@ -1085,10 +1090,27 @@ ipcMain.handle('pet:get-initial', () => ({
     id: part.id,
     label: part.label,
     box: part.box,
-    lines: part.lines,
+    /*
+     * 部位台词按好感度三档整体下发（用户要求：0,1 心 / 2,3 心 / 4,5 心）。
+     *
+     * 为什么不只发当前那一档：爱心会在运行中变化，只发当前档就得每次
+     * 升心都重发一次清单；整表下发后渲染进程自己按 `affectionState.hearts` 选，
+     * 点击依然是零延迟的本地反馈。
+     */
+    linesByTier: part.linesByTier ?? {},
     /** 点击这个部位时播放的互动动画 id（null = 只说台词）。 */
     actionId: part.actionId ?? null,
   })),
+  /**
+   * 零散场景的台词（同样来自语音库，用户要求"所有语音归库"）。
+   *
+   * 渲染进程没有模块加载能力，所以由主进程把这几条一起下发；
+   * 以前它们是**硬编码在渲染进程里**的（拖拽台词数组、点空白处的兜底句）。
+   */
+  voice: {
+    dragLines: dragLines(),
+    clickMissLine: systemLine('click-miss'),
+  },
   /**
    * 点击互动动画清单（源头是 PART_ACTIONS）。
    *
@@ -1591,7 +1613,7 @@ function handlePetClick() {
       ? Math.max(0, AFFECTION_GAIN.clickCooldownMs - (now - (lastClickAffectionAtMs ?? 0)))
       : 0,
     /** 低心情时由主进程给一句信赖语音（台词归语音库，渲染进程不重复实现）。 */
-    trustLine: lowMood ? pickTrustLine(Math.random) : null,
+    trustLine: lowMood ? pickVoiceLineFor('trust', { rand: Math.random }) : null,
   }
 }
 
@@ -2191,7 +2213,7 @@ ipcMain.handle('pet:test-topmost', () => topmostSnapshot())
 function changePetSizeByMenu(petWidth) {
   const result = applyPetSize(petWidth)
   if (!result && win && !win.isDestroyed()) {
-    win.webContents.send('pet:say', { text: '调整尺寸失败，请查看日志', bubbleMs: 4000 })
+    win.webContents.send('pet:say', { text: systemLine('size-failed'), bubbleMs: 4000 })
   }
 }
 
@@ -2225,44 +2247,35 @@ function formatUptime(totalSeconds) {
   return `${String(s)} 秒`
 }
 
-/** 语音组的"解锁条件"人话描述（给信息窗口用）。 */
-function voiceGroupConditionText(group) {
-  if (group.kind === 'fixed') return '任何状态都可用'
-  if (group.kind === 'affection') return `需要 ${String(group.level)} 颗心（当前 ${String(affection.hearts)} 颗）`
-  if (group.kind === 'mood') {
-    const range =
-      group.mood === 'low'
-        ? '0 ~ 49'
-        : group.mood === 'mid'
-          ? '50 ~ 79'
-          : '80 ~ 100'
-    return `心情值 ${range}（当前 ${String(Math.round(mood.value))}）`
-  }
-  return ''
-}
-
 /** 构造「语音库」窗口的数据。 */
 function buildVoiceWindowPayload() {
   const hearts = affection.hearts
   const moodValue = Math.round(mood.value)
-  const available = new Set(availableVoiceGroups({ hearts, moodValue }).map((group) => group.id))
   const moodText = moodVoiceGroup(moodValue) === 'high' ? '很好' : moodVoiceGroup(moodValue) === 'mid' ? '一般' : '偏低'
   return {
     mode: 'voice',
     hearts,
     moodValue,
     moodText,
+    totalLines: voiceLineCount(),
+    /*
+     * 每个组都带上 `trigger` 与"当前是否可用"。
+     *
+     * 可用性用 `voiceGroupAvailable(full, state)` 判：它按**面板状态**
+     * （爱心数/心情值）判断，而窗口里并没有"部位""动作 id""余额档位"这些上下文。
+     */
     groups: voiceLibrarySummary().map((group) => {
       const full = VOICE_GROUPS.find((g) => g.id === group.id)
       return {
         id: group.id,
+        trigger: group.trigger,
         label: group.label,
         lines: group.lines,
-        available: available.has(group.id),
-        condition: full ? voiceGroupConditionText(full) : '',
+        available: full ? voiceGroupAvailable(full, { hearts, moodValue }) : false,
+        condition: full ? conditionTextOf(full) : '',
       }
     }),
-    trustLines: TRUST_LINES,
+    trustLines: voiceLinesFor('trust'),
   }
 }
 
@@ -2379,7 +2392,7 @@ ipcMain.on('info:say-random', () => {
      * 那些"傲娇日常"台词（17 句）如果只留在库里就成了死代码。
      * 它们没有状态条件，正好可以和无条件的固定语音一起当"随便说一句"的素材。
      */
-    const pool = [...availableVoiceLines({ hearts, moodValue }), ...DIALOGUE_LINES]
+    const pool = [...availableVoiceLines({ hearts, moodValue }), ...voiceLinesFor('free')]
     if (pool.length === 0) return
     const candidates = pool.length > 1 && lastIdleVoiceLine
       ? pool.filter((line) => line !== lastIdleVoiceLine)
@@ -2405,7 +2418,7 @@ function refreshPetToIdle(reason) {
   if (!win || win.isDestroyed()) return
   win.webContents.send('pet:refresh-state', { reason: String(reason ?? '') })
   log(`已请求刷新桌宠状态（${String(reason ?? '')}）`)
-  win.webContents.send('pet:say', { text: '（已恢复到闲置状态）', bubbleMs: 2500 })
+  win.webContents.send('pet:say', { text: systemLine('refreshed'), bubbleMs: 2500 })
 }
 
 /** 右键菜单。 */
@@ -3902,11 +3915,21 @@ async function verifyClickParts(check, wait) {
     )
     await wait(200)
     const said = String(await bubbleText())
-    const matched = (part.lines ?? []).some((line) => line === said)
+    /*
+     * 部位台词现在按**好感度三档**分组（用户要求），所以断言要按"当前爱心数"
+     * 选档后再比对，而不是直接读 `part.lines`（那个字段已经不存在了）。
+     */
+    const tierTable = part.linesByTier ?? {}
+    const heartsNow = affection.hearts
+    const tierNow = heartsNow <= 1 ? 'low' : heartsNow <= 3 ? 'mid' : 'high'
+    const expectedLines = Array.isArray(tierTable[tierNow]) ? tierTable[tierNow] : []
+    const allTierLines = Object.values(tierTable).flat()
+    const matched = expectedLines.some((line) => line === said)
     check(
-      `点击「${part.label}」触发该部位台词`,
+      `点击「${part.label}」触发该部位台词（${tierNow} 档）`,
       matched,
-      `气泡="${said}"，该部位台词=${JSON.stringify(part.lines ?? [])}`,
+      `气泡="${said}"，${String(heartsNow)} 心应对应 ${tierNow} 档=${JSON.stringify(expectedLines)}`
+        + (matched ? '' : `；全部档位=${JSON.stringify(allTierLines)}`),
     )
 
     // 配了互动动画的部位，点击后应当真的在播那个动画（用户要求：
@@ -5117,13 +5140,28 @@ async function verifyIdleVoice(check, wait) {
   const readBubble = () => js('window.__petTestBubble ? window.__petTestBubble() : null')
 
   // ---- 1) 库结构 ----
+  /*
+   * ⚠️ 断言口径已改：语音库现在收的是**所有**可触发语音（8 类触发条件、37 组），
+   * 不再是"9 个闲置信箱"。所以这里只验**与闲置对话相关**的那部分，
+   * 全库的总量/去重/文档同步交给 `test-voice-library.mjs`（那边更细）。
+   */
   {
-    const ids = VOICE_GROUPS.map((group) => group.id)
-    check('语音库共 9 组（1 固定 + 5 好感度 + 3 心情）', VOICE_GROUPS.length === 9, ids.join(', '))
+    const idleGroups = VOICE_GROUPS.filter((group) => group.trigger === 'idle')
     check(
-      '每组各 3 条，共 27 条',
-      VOICE_GROUPS.every((group) => group.lines.length === 3) && voiceLineCount() === 27,
-      `共 ${String(voiceLineCount())} 条；分布 ${VOICE_GROUPS.map((g) => `${g.id}=${String(g.lines.length)}`).join(' ')}`,
+      '闲置语音共 9 组（1 固定 + 5 好感度 + 3 心情）',
+      idleGroups.length === 9,
+      idleGroups.map((g) => g.id).join(', '),
+    )
+    check(
+      '闲置每组各 3 条（共 27 条）',
+      idleGroups.every((group) => group.lines.length === 3) && voiceLineCountFor('idle') === 27,
+      `闲置 ${String(voiceLineCountFor('idle'))} 条；全库 ${String(voiceLineCount())} 条`,
+    )
+    const triggers = [...new Set(VOICE_GROUPS.map((g) => g.trigger))]
+    check(
+      '所有可触发语音都归库分组（≥8 类触发条件）',
+      triggers.length >= 8,
+      `触发条件 ${String(triggers.length)} 类：${triggers.join(', ')}`,
     )
     const tooLong = VOICE_GROUPS.flatMap((group) =>
       group.lines.filter((line) => [...line].length > VOICE_LINE_MAX_CHARS).map((line) => `${group.id}:${line}`),
@@ -5350,7 +5388,7 @@ async function verifyAffectionAndFeedback(check, wait) {
     const bubble = await js('window.__petTestBubble ? window.__petTestBubble() : null')
     check(
       '低心情时说的是信赖语音（不是部位台词）',
-      Boolean(bubble) && TRUST_LINES.includes(bubble.text),
+      Boolean(bubble) && voiceLinesFor('trust').includes(bubble.text),
       `气泡「${String(bubble && bubble.text)}」`,
     )
   }

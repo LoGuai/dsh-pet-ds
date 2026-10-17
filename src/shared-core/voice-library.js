@@ -1,46 +1,41 @@
 /**
- * 语音库 —— 「主动对话」与其它"说话"场景的台词来源。
+ * 语音库 —— **桌宠所有会说出口的话**的唯一来源。
  *
- * ## 与 `dialogue.js` 的区别
+ * ## 组织方式：按「触发条件」分组（用户要求）
  *
- * `dialogue.js` 是**右键菜单「对话」**的台词：用户点一下、随机听一句，
- * 没有条件，也不需要知道自己现在几颗心、心情如何。
+ * 用户原话：
+ *   「将所有桌宠可触发的语音归到语音库中，并且根据触发条件进行分组。
+ *     此后添加任何语音，都要归到符合条件的语音组中，或是新建一个语音组归类。」
  *
- * 这里是**分组语音库**：台词按「固定 / 好感度等级 / 心情档位」分组，
- * 取用时**只从当前可用的组里抽**。随着好感度上升、心情变化，
- * 她说的话会跟着变 —— 这是"陪伴感"的主要来源。
+ * 于是每个组都必须声明 `trigger`（触发条件），取用时**先按触发条件过滤**，
+ * 再看该组的附加条件（好感度 / 心情 / 部位 / 动作 / 余额档位）。
  *
- * ## 分组（用户指定）
+ * | trigger | 什么时候说 | 附加条件 |
+ * |---|---|---|
+ * | `idle` | 闲置主动对话（每 1 分钟） | 固定 / 好感度等级 / 心情档位 |
+ * | `click` | 点击身体部位 | 部位 × 好感度三档 |
+ * | `action` | 播放某个动作时的一句 | 动作 id |
+ * | `trust` | 心情差时被关心 | 无 |
+ * | `drag` | 被拎起来 | 无 |
+ * | `balance` | 余额播报（拼在句子里） | 余额档位 |
+ * | `system` | 系统提示（调尺寸失败、刷新状态、点空白处） | 场景 id |
+ * | `free` | 「随机说一句」（语音库窗口的按钮） | 无 |
  *
- * ```
- * fixed          固定语音            永远可用
- * affection-1..5 好感度专属语音 ×5   对应 1~5 颗心
- * mood-low/mid/high 心情语音 ×3      对应 低 / 中 / 高
- * ```
+ * ## 为什么必须集中
  *
- * 共 **9 组**，每组 3 条 → 27 条。
+ * 以前这些台词散在 8 个地方（动作库、部位定义、余额模块、渲染进程的拖拽数组、
+ * 主进程的提示字符串、独立的对话库…）。那个状态有三个必然的坏结果：
+ *  1. 想改一句人设台词，得先找到它在哪个模块里；
+ *  2. 同一个场景可能被写在两处，改一处忘一处（本项目已经踩过）；
+ *  3. 没法回答"她一共会说多少句话"这种问题。
  *
- * ## 可用性规则（改这里就等于改规则，别在渲染进程里另写一套）
+ * ## 加新语音的规矩（用户明确要求）
  *
- * 1. `fixed` **永远可用**；
- * 2. `affection-N` 仅在 **爱心数恰好等于 N** 时可用。
- *    为什么是"恰好"而不是"大于等于"：用户的要求是"5 个好感度等级**分别**的
- *    专属语音" —— 各自专属。若做成累加，升到 5 心时会同时听到 1~5 心共 15 条，
- *    等级感就没了。想改成累加只需改 `availableVoiceGroups()` 里的一行判断。
- *    **0 心（陌生）时没有任何专属语音** —— 那时她还懒得给你专属台词，
- *    只有固定语音 + 心情语音。
- * 3. `mood-*` 按**心情值**分档，规则见 `moodVoiceGroup()`：
- *    心情模块本身有 4 档（sad / low / normal / happy），这里按用户要求
- *    合并成 **3 组**：sad+low → 低，normal → 中，happy → 高。
- *
- * ## 写法约定
- *
- * · 每句 **不超过 24 字**（`VOICE_LINE_MAX_CHARS`）：气泡宽度与桌宠等比缩放，
- *   太长会换行、把气泡区撑高，位置也会跟着抖。有测试钉住这条。
- * · 人设：**傲娇 + 贪吃（尤其白饭）+ 鲸鱼娘 + 助手**。
- *   傲娇靠"嘴硬心软"的句式，贪吃靠白饭梗，鲸鱼是点缀不是主题，
- *   助手的专业性保证她不只是耍脾气。
- * · **同一句不得跨组重复**：重复会让"分组"失去意义，也有测试钉住。
+ * 1. 先想清楚**触发条件**属于哪一类；
+ * 2. 已有同条件的组 → 加进那个组的 `lines`；
+ * 3. 没有 → 新建一个组，填好 `trigger` 与附加条件，并加进 `VOICE_GROUPS`；
+ * 4. 跑 `node scripts/dev/gen-voice-doc.mjs` 重新生成文档；
+ * 5. 跑 `npm test`（字数、去重、文档同步都有断言守着）。
  */
 
 /** 单句长度上限（字符数）。超了会撑高气泡，见文件头说明。 */
@@ -51,28 +46,47 @@ export const VOICE_LINE_MAX_CHARS = 24
  *
  * 注意与 `mood.js` 的 `moodTier()` 的关系：那里是 4 档
  * （sad <20 / low <50 / normal <80 / happy ≥80），这里是 3 组 ——
- * **sad 与 low 合并为"低"**。所以阈值直接用 50 与 80，
- * 而不是复用 tier 名（tier 有 4 个值，映射过来要写 if/else，容易写漏 sad）。
+ * **sad 与 low 合并为"低"**。所以阈值直接用 50 与 80。
  */
 export const MOOD_VOICE_MID_MIN = 50
 export const MOOD_VOICE_HIGH_MIN = 80
 
 /**
+ * 好感度 → 点击语音的三档（用户要求"0,1 心组 / 2,3 心组 / 4,5 心组"）。
+ *
+ * 为什么点击语音按三档而不是逐级：点击是最高频的互动，逐级写 6 套台词
+ * 收益不大；而三档正好对应"防备 → 放松 → 宠溺"的语气跨度。
+ */
+export const CLICK_VOICE_TIERS = ['low', 'mid', 'high']
+
+/** 好感度 → 点击语音档位。 */
+export function clickVoiceTier(hearts) {
+  const h = Number.isFinite(Number(hearts)) ? Math.max(0, Math.floor(Number(hearts))) : 0
+  if (h <= 1) return 'low'
+  if (h <= 3) return 'mid'
+  return 'high'
+}
+
+/** 附加条件的展示名（文档与信息窗口共用）。 */
+const CLICK_TIER_LABELS = { low: '0~1 心', mid: '2~3 心', high: '4~5 心' }
+
+/**
  * 语音分组定义。
  *
  * 每组字段：
- *  · `id`     —— 稳定标识（日志、状态上报、测试都用它）
- *  · `kind`   —— `'fixed' | 'affection' | 'mood'`，决定可用性规则
- *  · `level`  —— kind=affection 时表示需要几颗心
- *  · `mood`   —— kind=mood 时表示心情档位（`'low' | 'mid' | 'high'`）
- *  · `label`  —— 给文档/调试看的名字
- *  · `lines`  —— 台词
+ *  · `id`      —— 稳定标识
+ *  · `trigger` —— 触发条件（见文件头表格）
+ *  · `label`   —— 给人看的名字
+ *  · `lines`   —— 台词
+ *  · 附加条件：`kind`(fixed/affection/mood) / `level` / `mood` / `part` / `tier` / `actionId` / `scene`
  */
 export const VOICE_GROUPS = [
+  // ---------------------------------------------------------------- idle：闲置主动对话
   {
-    id: 'fixed',
+    id: 'idle-fixed',
+    trigger: 'idle',
     kind: 'fixed',
-    label: '固定语音',
+    label: '闲置·固定语音',
     lines: [
       '又浮上来了？我只是……换口气。',
       '哼，今天也勉强陪你一会儿。',
@@ -80,10 +94,11 @@ export const VOICE_GROUPS = [
     ],
   },
   {
-    id: 'affection-1',
+    id: 'idle-affection-1',
+    trigger: 'idle',
     kind: 'affection',
     level: 1,
-    label: '好感度 Lv1（眼熟）',
+    label: '闲置·好感度 Lv1（眼熟）',
     lines: [
       '以为熟了就能随便使唤我？……也行。',
       '你的活我记下了，别催我。',
@@ -91,10 +106,11 @@ export const VOICE_GROUPS = [
     ],
   },
   {
-    id: 'affection-2',
+    id: 'idle-affection-2',
+    trigger: 'idle',
     kind: 'affection',
     level: 2,
-    label: '好感度 Lv2（熟悉）',
+    label: '闲置·好感度 Lv2（熟悉）',
     lines: [
       '今天的活，我提前看过了。',
       '白饭……多煮一碗，我顺便吃。',
@@ -102,10 +118,11 @@ export const VOICE_GROUPS = [
     ],
   },
   {
-    id: 'affection-3',
+    id: 'idle-affection-3',
+    trigger: 'idle',
     kind: 'affection',
     level: 3,
-    label: '好感度 Lv3（亲近）',
+    label: '闲置·好感度 Lv3（亲近）',
     lines: [
       '累了吧，剩下的给我，我扛得动。',
       '今天的白饭，我要加个蛋，就一个。',
@@ -113,10 +130,11 @@ export const VOICE_GROUPS = [
     ],
   },
   {
-    id: 'affection-4',
+    id: 'idle-affection-4',
+    trigger: 'idle',
     kind: 'affection',
     level: 4,
-    label: '好感度 Lv4（信赖）',
+    label: '闲置·好感度 Lv4（信赖）',
     lines: [
       '不用说了，我已经知道你要什么。',
       '白饭分你一半，别当作我很在意。',
@@ -124,10 +142,11 @@ export const VOICE_GROUPS = [
     ],
   },
   {
-    id: 'affection-5',
+    id: 'idle-affection-5',
+    trigger: 'idle',
     kind: 'affection',
     level: 5,
-    label: '好感度 Lv5（挚爱）',
+    label: '闲置·好感度 Lv5（挚爱）',
     lines: [
       '哪儿都别去……我是说任务。',
       '白饭的第一口，永远给你。',
@@ -135,10 +154,11 @@ export const VOICE_GROUPS = [
     ],
   },
   {
-    id: 'mood-low',
+    id: 'idle-mood-low',
+    trigger: 'idle',
     kind: 'mood',
     mood: 'low',
-    label: '心情·低',
+    label: '闲置·心情低',
     lines: [
       '……浮上来也没什么意思。',
       '今天不想吵，安静一会儿。',
@@ -146,10 +166,11 @@ export const VOICE_GROUPS = [
     ],
   },
   {
-    id: 'mood-mid',
+    id: 'idle-mood-mid',
+    trigger: 'idle',
     kind: 'mood',
     mood: 'mid',
-    label: '心情·中',
+    label: '闲置·心情中',
     lines: [
       '嗯，就这样，不咸不淡的。',
       '今天没什么大事，摸摸也成。',
@@ -157,25 +178,286 @@ export const VOICE_GROUPS = [
     ],
   },
   {
-    id: 'mood-high',
+    id: 'idle-mood-high',
+    trigger: 'idle',
     kind: 'mood',
     mood: 'high',
-    label: '心情·高',
+    label: '闲置·心情高',
     lines: [
       '今天心情不错，多说两句也成。',
       '白饭！白饭！……咳，我是说开工。',
       '哼，今天可以夸你一句。',
     ],
   },
+
+  // ---------------------------------------------------------------- click：点击部位
+  /*
+   * 用户要求：
+   *   「将点击不同部位的语音也归纳到语音库中，并且根据好感值等级给出 3 个语音组：
+   *     0,1心组、2,3心组、4,5心组。每组中，各部位有 2 句语音。三组之间，
+   *     根据好感度等级由低到高，桌宠台词体现出的对互动的惊讶和防备减少，
+   *     更多转为宠溺和羞涩。」
+   */
+  {
+    id: 'click-low-head',
+    trigger: 'click',
+    part: 'head',
+    tier: 'low',
+    label: '点击·头（0~1 心）',
+    lines: ['呀！别、别突然摸头啦。', '你干嘛，我头发乱了吗。'],
+  },
+  {
+    id: 'click-low-chest',
+    trigger: 'click',
+    part: 'chest',
+    tier: 'low',
+    label: '点击·胸（0~1 心）',
+    lines: ['看、看哪里呢！', '不许碰那里，笨蛋。'],
+  },
+  {
+    id: 'click-low-belly',
+    trigger: 'click',
+    part: 'belly',
+    tier: 'low',
+    label: '点击·腹（0~1 心）',
+    lines: ['呀！痒……别戳了啦。', '那里不行，我、我要生气了。'],
+  },
+  {
+    id: 'click-low-leg',
+    trigger: 'click',
+    part: 'leg',
+    tier: 'low',
+    label: '点击·腿（0~1 心）',
+    lines: ['呀！腿也不行！', '别碰腿，我在站岗呢。'],
+  },
+  {
+    id: 'click-mid-head',
+    trigger: 'click',
+    part: 'head',
+    tier: 'mid',
+    label: '点击·头（2~3 心）',
+    lines: ['摸头也不是不行……轻一点。', '嗯……就一会儿哦。'],
+  },
+  {
+    id: 'click-mid-chest',
+    trigger: 'click',
+    part: 'chest',
+    tier: 'mid',
+    label: '点击·胸（2~3 心）',
+    lines: ['你、你真是的……随你吧。', '说了多少次了，还是这样。'],
+  },
+  {
+    id: 'click-mid-belly',
+    trigger: 'click',
+    part: 'belly',
+    tier: 'mid',
+    label: '点击·腹（2~3 心）',
+    lines: ['痒啦……喂，适可而止。', '哼，只准一下。'],
+  },
+  {
+    id: 'click-mid-leg',
+    trigger: 'click',
+    part: 'leg',
+    tier: 'mid',
+    label: '点击·腿（2~3 心）',
+    lines: ['别、别碰……不过也没那么讨厌。', '好啦好啦，别闹。'],
+  },
+  {
+    id: 'click-high-head',
+    trigger: 'click',
+    part: 'head',
+    tier: 'high',
+    label: '点击·头（4~5 心）',
+    lines: ['……再摸一会儿也可以。', '你手很暖，我不讨厌。'],
+  },
+  {
+    id: 'click-high-chest',
+    trigger: 'click',
+    part: 'chest',
+    tier: 'high',
+    label: '点击·胸（4~5 心）',
+    lines: ['……别看我，会害羞的。', '你、你这样，我没法专心。'],
+  },
+  {
+    id: 'click-high-belly',
+    trigger: 'click',
+    part: 'belly',
+    tier: 'high',
+    label: '点击·腹（4~5 心）',
+    lines: ['痒……别闹啦，笨蛋。', '……只许你一个人这样。'],
+  },
+  {
+    id: 'click-high-leg',
+    trigger: 'click',
+    part: 'leg',
+    tier: 'high',
+    label: '点击·腿（4~5 心）',
+    lines: ['……随你吧，我也不会拒绝你。', '这种事……只对你。'],
+  },
+
+  // ---------------------------------------------------------------- action：动作台词
+  {
+    id: 'action-eat',
+    trigger: 'action',
+    actionId: 'eat',
+    label: '动作·吃白饭',
+    lines: ['（占位）开饭啦'],
+  },
+  {
+    id: 'action-play-mc',
+    trigger: 'action',
+    actionId: 'play-mc',
+    label: '动作·玩mc',
+    lines: ['（占位）去挖矿了'],
+  },
+  {
+    id: 'action-sit',
+    trigger: 'action',
+    actionId: 'sit',
+    label: '动作·坐下',
+    lines: ['（占位·坐）那…我坐一会儿'],
+  },
+  {
+    id: 'action-sleep',
+    trigger: 'action',
+    actionId: 'sleep',
+    label: '动作·睡觉',
+    lines: ['（占位·睡）那我先睡一会儿…zzz'],
+  },
+  {
+    id: 'action-awake',
+    trigger: 'action',
+    actionId: 'awake',
+    label: '动作·惊醒',
+    lines: ['（占位·醒）我、我没睡！'],
+  },
+  {
+    id: 'action-think',
+    trigger: 'action',
+    actionId: 'think',
+    label: '动作·深度思考',
+    lines: ['（占位·深度思考）……让我想想。'],
+  },
+
+  // ---------------------------------------------------------------- trust：心情差时被关心
+  /*
+   * 用户要求：「触发一句信赖语音（加入语音库中，单独分组，写 3 条，
+   * 体现桌宠在心情差时被关心而表现出的用傲娇掩饰的喜悦）」
+   */
+  {
+    id: 'trust',
+    trigger: 'trust',
+    label: '信赖（心情差被关心）',
+    lines: [
+      '……才、才不是因为被你关心才高兴的。',
+      '哼，偶尔这样……也不算坏。',
+      '别误会，我只是心情刚好了一点。',
+    ],
+  },
+
+  // ---------------------------------------------------------------- drag：被拎起来
+  {
+    id: 'drag',
+    trigger: 'drag',
+    label: '拖拽·被拎起来',
+    lines: ['啊！放我下来啦', '要、要干什么', '喂喂，我是鲸鱼不是气球！'],
+  },
+
+  // ---------------------------------------------------------------- balance：余额播报的分档短语
+  /*
+   * 这几条**不是独立气泡**，而是拼进播报句子里的一段
+   * （"刚才花掉了¥0.75，还有¥27.43，还很充裕。"）。
+   * 放在库里是为了"所有会说的话都在一处"，档位边界仍由
+   * `balance-announce.js` 决定。
+   */
+  {
+    id: 'balance-tier-1',
+    trigger: 'balance',
+    tier: 1,
+    label: '余额播报·1 档（<10）',
+    lines: ['余额告急了'],
+  },
+  {
+    id: 'balance-tier-2',
+    trigger: 'balance',
+    tier: 2,
+    label: '余额播报·2 档（10~20）',
+    lines: ['有些吃紧'],
+  },
+  {
+    id: 'balance-tier-3',
+    trigger: 'balance',
+    tier: 3,
+    label: '余额播报·3 档（20~50）',
+    lines: ['还很充裕'],
+  },
+  {
+    id: 'balance-tier-4',
+    trigger: 'balance',
+    tier: 4,
+    label: '余额播报·4 档（≥50）',
+    lines: ['主人太有钱了'],
+  },
+
+  // ---------------------------------------------------------------- system：系统提示
+  {
+    id: 'system-size-failed',
+    trigger: 'system',
+    scene: 'size-failed',
+    label: '系统·调整尺寸失败',
+    lines: ['调整尺寸失败，请查看日志'],
+  },
+  {
+    id: 'system-refreshed',
+    trigger: 'system',
+    scene: 'refreshed',
+    label: '系统·刷新状态完成',
+    lines: ['（已恢复到闲置状态）'],
+  },
+  {
+    id: 'system-click-miss',
+    trigger: 'system',
+    scene: 'click-miss',
+    label: '系统·点在空白处',
+    lines: ['唔…戳我做什么？'],
+  },
+
+  // ---------------------------------------------------------------- free：随机说一句
+  /*
+   * 原 `dialogue.js` 的自由对话台词（右键菜单「对话」的遗产）。
+   * 菜单改版后「对话」并进了语音库窗口的「随机说一句」，台词挪到这里统一管理。
+   */
+  {
+    id: 'free-daily',
+    trigger: 'free',
+    label: '自由对话·日常',
+    lines: [
+      '哼，才不是特意浮上来看你的。',
+      '有事说事，我、我很忙的。',
+      '又来找我？……也不是不行。',
+      '别盯着看啦，我脸上有字吗。',
+      '夸我也没用，我才不会高兴呢。',
+      '哼，这算什么，我本来就很厉害。',
+      '你、你再说一遍？我没听清……',
+      '有难题就丢过来，我接着。',
+      '别慌，一步一步来，我陪你。',
+      '代码我帮你看，你只管说想做什么。',
+      '累了就歇会儿，进度我先记着。',
+      '好久没理我了……我才没在意。',
+      '你忙你的，我在旁边待着就行。',
+      '深海很安静，适合想事情。',
+      '偶尔浮出水面换口气，也不错。',
+    ],
+  },
 ]
 
-/** 按 id 取分组（找不到返回 null，调用方自行处理）。 */
+/** 按 id 取分组（找不到返回 null）。 */
 export function findVoiceGroup(id) {
   return VOICE_GROUPS.find((group) => group.id === id) ?? null
 }
 
 /**
- * 爱心数 → 该用哪个好感度语音组的**等级**（1~5）；0 心返回 `null`。
+ * 爱心数 → 该用哪个好感度等级的闲置语音（1~5）；0 心返回 `null`。
  *
  * @param {number} hearts 0~5
  * @returns {number | null}
@@ -192,7 +474,7 @@ export function affectionVoiceLevel(hearts) {
 /**
  * 心情值 → 语音档位（`'low' | 'mid' | 'high'`）。
  *
- * 与 `mood.js` 的 4 档 (`moodTier`) 不同：这里**sad 与 low 合并为低**。
+ * 与 `mood.js` 的 4 档不同：这里 **sad 与 low 合并为低**。
  * 心情值缺失/非法时按"中"处理 —— 宁可说点平淡的，也不要空着不出声。
  *
  * @param {number} value 0~100
@@ -207,95 +489,228 @@ export function moodVoiceGroup(value) {
 }
 
 /**
- * 当前可用的语音组。
+ * 某个组在当前上下文下是否可用。
  *
- * @param {{ hearts?: number, moodValue?: number }} [state]
+ * @param {object} group
+ * @param {object} ctx 上下文：`{ hearts, moodValue, part, tier, actionId, scene }`
+ */
+function groupAvailable(group, ctx = {}) {
+  switch (group.trigger) {
+    case 'idle': {
+      if (group.kind === 'fixed') return true
+      if (group.kind === 'affection') return group.level === affectionVoiceLevel(ctx.hearts)
+      if (group.kind === 'mood') return group.mood === moodVoiceGroup(ctx.moodValue)
+      return false
+    }
+    case 'click': {
+      /* 部位与档位都要对上；没给部位时退回"只有档位对上"。 */
+      const tier = ctx.tier ?? clickVoiceTier(ctx.hearts)
+      if (group.tier !== tier) return false
+      if (typeof ctx.part === 'string' && ctx.part) return group.part === ctx.part
+      return true
+    }
+    case 'action':
+      return typeof ctx.actionId === 'string' ? group.actionId === ctx.actionId : true
+    case 'balance':
+      return Number.isFinite(ctx.tier) ? group.tier === ctx.tier : true
+    case 'system':
+      return typeof ctx.scene === 'string' ? group.scene === ctx.scene : true
+    case 'trust':
+    case 'drag':
+    case 'free':
+      return true
+    default:
+      return false
+  }
+}
+
+/**
+ * 某个组在"当前状态"下是否可用（给信息窗口用）。
+ *
+ * 与 `groupAvailable` 的区别：这里的输入是**面板状态**（爱心数、心情值），
+ * 而不是一次具体触发时才知道的上下文（部位、动作 id、余额档位）。
+ * 所以：
+ *  · 点击组按**当前档位**判断（同档位即视为可用）；
+ *  · 动作/余额/系统组与状态无关，恒视为可用（信息窗口里展示它们的存在本身有价值）。
+ *
+ * @param {object} group
+ * @param {{ hearts?: number, moodValue?: number }} state
+ */
+export function voiceGroupAvailable(group, state = {}) {
+  const hearts = Number.isFinite(state.hearts) ? state.hearts : 0
+  const ctx = { hearts, moodValue: state.moodValue, tier: clickVoiceTier(hearts) }
+  return groupAvailable(group, ctx)
+}
+
+/**
+ * 取某个触发条件下**当前可用**的组。
+ *
+ * @param {string} trigger
+ * @param {object} [ctx]
  * @returns {typeof VOICE_GROUPS}
  */
-export function availableVoiceGroups(state = {}) {
-  const level = affectionVoiceLevel(state.hearts)
-  const mood = moodVoiceGroup(state.moodValue)
-  return VOICE_GROUPS.filter((group) => {
-    if (group.kind === 'fixed') return true
-    if (group.kind === 'affection') return group.level === level
-    if (group.kind === 'mood') return group.mood === mood
-    return false
-  })
+export function voiceGroupsFor(trigger, ctx = {}) {
+  return VOICE_GROUPS.filter((group) => group.trigger === trigger && groupAvailable(group, ctx))
 }
 
 /**
- * 当前可用的全部台词（已按组顺序拼平，去重顺序稳定）。
+ * 取某个触发条件下当前可用的**全部台词**（拼平、顺序稳定）。
  *
- * @param {{ hearts?: number, moodValue?: number }} [state]
+ * @param {string} trigger
+ * @param {object} [ctx]
  * @returns {string[]}
  */
-export function availableVoiceLines(state = {}) {
-  return availableVoiceGroups(state).flatMap((group) => group.lines)
+export function voiceLinesFor(trigger, ctx = {}) {
+  return voiceGroupsFor(trigger, ctx).flatMap((group) => group.lines)
 }
 
 /**
- * 抽一句台词：从**当前可用的所有组**里等概率抽取，并尽量避开上一句。
+ * 通用抽取：从某触发条件的可用台词里等概率取一条，尽量避开上一句。
  *
- * 为什么要避重：主动对话每 60 秒一次，若连着两次同一句，
- * 会让人以为"机制坏了/卡住了"——与 `dialogue.js` 的处理保持一致。
- *
- * @param {object} [opts]
- * @param {number} [opts.hearts] 爱心数（0~5）
- * @param {number} [opts.moodValue] 心情值（0~100）
- * @param {() => number} [opts.rand] 注入随机源，便于测试确定化
- * @param {string | null} [opts.avoidLine] 上一句，尽量避开
- * @returns {string} 台词；可用库为空时返回空串（调用方应视作"这次不说"）
+ * @param {string} trigger
+ * @param {object} [ctx] 附加条件 + `rand` / `avoidLine`
+ * @returns {string} 没有可用台词时返回空串
  */
-export function pickVoiceLine(opts = {}) {
-  const rand = typeof opts.rand === 'function' ? opts.rand : Math.random
-  const pool = availableVoiceLines({ hearts: opts.hearts, moodValue: opts.moodValue })
+export function pickVoiceLineFor(trigger, ctx = {}) {
+  const rand = typeof ctx.rand === 'function' ? ctx.rand : Math.random
+  const pool = voiceLinesFor(trigger, ctx)
   if (pool.length === 0) return ''
   if (pool.length === 1) return pool[0]
-
-  const avoid = typeof opts.avoidLine === 'string' ? opts.avoidLine : null
+  const avoid = typeof ctx.avoidLine === 'string' ? ctx.avoidLine : null
   const candidates = avoid ? pool.filter((line) => line !== avoid) : pool
   const list = candidates.length > 0 ? candidates : pool
   return list[Math.floor(rand() * list.length)]
 }
 
 /**
- * 库的结构摘要（给文档、测试、日志用）。
+ * 兼容旧接口：闲置主动对话的抽取（等价于 `pickVoiceLineFor('idle', ...)`）。
  *
- * @returns {{ id: string, kind: string, label: string, level?: number, mood?: string, lines: string[] }[]}
+ * 保留这个名字是因为主进程与测试都在用；语义已经统一到通用抽取上。
+ */
+export function pickVoiceLine(opts = {}) {
+  return pickVoiceLineFor('idle', opts)
+}
+
+/** 当前可用的闲置台词（兼容旧接口）。 */
+export function availableVoiceLines(state = {}) {
+  return voiceLinesFor('idle', state)
+}
+
+/** 当前可用的闲置分组（兼容旧接口，信息窗口在用）。 */
+export function availableVoiceGroups(state = {}) {
+  return voiceGroupsFor('idle', state)
+}
+
+/**
+ * 某个动作的台词（动作库用它填充 `lines`）。
+ *
+ * @param {string} actionId
+ * @returns {string[]}
+ */
+export function actionLines(actionId) {
+  return voiceLinesFor('action', { actionId })
+}
+
+/**
+ * 某个部位在某个好感度档位下的台词。
+ *
+ * @param {string} partId
+ * @param {number} hearts
+ * @returns {string[]}
+ */
+export function clickPartLines(partId, hearts) {
+  return voiceLinesFor('click', { part: partId, hearts })
+}
+
+/**
+ * 点击语音的三档台词表（主进程下发给渲染进程，供它按爱心数本地挑选）。
+ *
+ * 为什么整表下发：点击必须是**零延迟**的本地反馈，
+ * 不能在点下去的瞬间再走一次 IPC 问主进程"该说哪句"。
+ *
+ * @returns {Record<string, Record<string, string[]>>} `{ partId: { low, mid, high } }`
+ */
+export function clickPartLinesTable() {
+  const table = {}
+  for (const group of VOICE_GROUPS) {
+    if (group.trigger !== 'click') continue
+    table[group.part] = table[group.part] ?? {}
+    table[group.part][group.tier] = [...group.lines]
+  }
+  return table
+}
+
+/** 某个余额档位的播报短语（`balance-announce.js` 用）。 */
+export function balanceTierLine(tier) {
+  const group = VOICE_GROUPS.find((g) => g.trigger === 'balance' && g.tier === tier)
+  return group ? group.lines[0] : ''
+}
+
+/** 某个系统场景的台词（主进程用）。 */
+export function systemLines(scene) {
+  return voiceLinesFor('system', { scene })
+}
+
+/** 某个系统场景的第一句（系统提示基本都是单句）。 */
+export function systemLine(scene) {
+  return systemLines(scene)[0] ?? ''
+}
+
+/** 拖拽台词。 */
+export function dragLines() {
+  return voiceLinesFor('drag')
+}
+
+/** 自由对话台词（`dialogue.js` 那个门面用它）。 */
+export function freeLines() {
+  return voiceLinesFor('free')
+}
+
+/**
+ * 库的结构摘要（给文档、测试、信息窗口用）。
+ *
+ * @returns {{ id, trigger, label, condition, lines }[]}
  */
 export function voiceLibrarySummary() {
   return VOICE_GROUPS.map((group) => ({
     id: group.id,
-    kind: group.kind,
+    trigger: group.trigger,
     label: group.label,
-    ...(group.kind === 'affection' ? { level: group.level } : {}),
-    ...(group.kind === 'mood' ? { mood: group.mood } : {}),
+    condition: conditionTextOf(group),
     lines: [...group.lines],
   }))
 }
 
-/** 总台词条数（文档与自测引用它，避免两处各写一个数字）。 */
+/** 某个组的"可用条件"人话描述。 */
+export function conditionTextOf(group, ctx = {}) {
+  if (group.trigger === 'idle') {
+    if (group.kind === 'fixed') return '任何状态都可用'
+    if (group.kind === 'affection') return `需要 ${String(group.level)} 颗爱心`
+    if (group.kind === 'mood') {
+      const range = group.mood === 'low' ? '0 ~ 49' : group.mood === 'mid' ? '50 ~ 79' : '80 ~ 100'
+      return `心情值 ${range}`
+    }
+  }
+  if (group.trigger === 'click') {
+    return `好感度 ${CLICK_TIER_LABELS[group.tier] ?? ''}，点击「${group.part}」`
+  }
+  if (group.trigger === 'action') return `播放动作「${String(group.actionId)}」时`
+  if (group.trigger === 'balance') return `余额档位 ${String(group.tier)}`
+  if (group.trigger === 'system') return `场景：${String(group.scene)}`
+  if (group.trigger === 'trust') {
+    return `心情 < 50 时点击（当前心情 ${String(Number.isFinite(ctx.moodValue) ? ctx.moodValue : '-')}）`
+  }
+  if (group.trigger === 'drag') return '被拎起来时'
+  if (group.trigger === 'free') return '语音库窗口「随机说一句」'
+  return ''
+}
+
+/** 总台词条数（全库）。 */
 export function voiceLineCount() {
   return VOICE_GROUPS.reduce((sum, group) => sum + group.lines.length, 0)
 }
 
-/**
- * 「信赖语音」—— 低心情时被关心后的回应（用户要求：**单独分组、3 条**）。
- *
- * ⚠️ 目前是**占位**：语音库的这批内容（部位语音三档 + 信赖语音细写）
- * 按用户要求"先放着"，等那批一起做。这里先给出可运行的占位，
- * 让"低心情点击 → 信赖语音"这条机制现在就能跑通、能测。
- *
- * 定稿时要：改成正式的 `trust` 分组（并入 `VOICE_GROUPS`，走文档生成与去重检查），
- * 并让 `pickTrustLine()` 从该组里抽。
- */
-export const TRUST_LINES = [
-  '（占位·信赖）……才、才不是因为你关心我。',
-]
-
-/** 抽一句信赖语音（目前只有占位，池为 1 时直接返回它）。 */
-export function pickTrustLine(rand = Math.random) {
-  if (TRUST_LINES.length === 0) return ''
-  if (TRUST_LINES.length === 1) return TRUST_LINES[0]
-  return TRUST_LINES[Math.floor(rand() * TRUST_LINES.length)]
+/** 某个触发条件的台词条数。 */
+export function voiceLineCountFor(trigger) {
+  return VOICE_GROUPS.filter((g) => g.trigger === trigger).reduce((sum, g) => sum + g.lines.length, 0)
 }

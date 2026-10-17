@@ -44,6 +44,8 @@
  * 素材缺失时会退回站立动画并记日志，而不是留一个空白窗口。
  */
 
+import { actionLines, clickPartLines } from './voice-library.js'
+
 // ---------------------------------------------------------------- 常量
 
 /** 待机动画 id。桌宠不做任何一次性动作时就播它。 */
@@ -123,7 +125,7 @@ export const RANDOM_ACTION_RULES = {
 export const SLEEP_ACTION = {
   id: SLEEP_ACTION_ID,
   label: '睡觉',
-  lines: ['（占位·睡）那我先睡一会儿…zzz'],
+  lines: actionLines('sleep'),
   /** 随机抽取的相对权重。 */
   weight: 1,
   /** 触发后进入睡眠状态（而不是播完就回站立）。 */
@@ -142,7 +144,7 @@ export const SLEEP_ACTION = {
 export const SIT_ACTION = {
   id: SIT_ACTION_ID,
   label: '坐下',
-  lines: ['（占位·坐）那…我坐一会儿'],
+  lines: actionLines('sit'),
   weight: 1,
   routToSitState: true,
 }
@@ -171,7 +173,7 @@ export const THINK_ACTION_ID = 'think'
 export const THINK_ACTION = {
   id: THINK_ACTION_ID,
   label: '深度思考',
-  lines: ['（占位·深度思考）……让我想想。'],
+  lines: actionLines('think'),
 }
 
 /**
@@ -187,13 +189,13 @@ export const RANDOM_ACTIONS = [
     id: 'eat',
     label: '吃白饭',
     /** 台词占位符 —— 等文案定稿后替换这里的字符串即可，不需要动逻辑。 */
-    lines: ['（占位）开饭啦'],
+    lines: actionLines('eat'),
     weight: 1,
   },
   {
     id: 'play-mc',
     label: '玩mc',
-    lines: ['（占位）去挖矿了'],
+    lines: actionLines('play-mc'),
     weight: 1,
   },
   SIT_ACTION,
@@ -216,7 +218,7 @@ export const MENU_ONLY_ACTIONS = [
   {
     id: WAKE_ACTION_ID,
     label: '惊醒',
-    lines: ['（占位·醒）我、我没睡！'],
+    lines: actionLines('awake'),
   },
   /*
    * 深度思考：正常由宿主状态触发，这里放一份只为"右键菜单能手动验证"。
@@ -343,7 +345,11 @@ export const CLICK_PARTS = [
     label: '头',
     /** 头发与头饰从顶部就开始了，所以整宽都算"头"。 */
     box: { x0: 0.0, y0: 0.0, x1: 1.0, y1: 0.48 },
-    lines: ['（占位·头）别摸头啦，会长不高的'],
+    linesByTier: {
+        low: clickPartLines('head', 0),
+        mid: clickPartLines('head', 2),
+        high: clickPartLines('head', 5),
+      },
     /** 点击这个部位时播放的动作动画 id。 */
     actionId: 'head',
   },
@@ -368,7 +374,11 @@ export const CLICK_PARTS = [
      * 而不是把胸/腹的框放宽（放宽必然把头发再次圈进来）。
      */
     box: { x0: 0.26, y0: 0.48, x1: 0.74, y1: 0.62 },
-    lines: ['（占位·胸）你、你在看哪里呀'],
+    linesByTier: {
+        low: clickPartLines('chest', 0),
+        mid: clickPartLines('chest', 2),
+        high: clickPartLines('chest', 5),
+      },
     actionId: 'chest',
   },
   {
@@ -382,7 +392,11 @@ export const CLICK_PARTS = [
      * 透明处 —— 表现为"点了没反应"。而 0.78 附近本来就已经进入**腿部**区域。
      */
     box: { x0: 0.26, y0: 0.62, x1: 0.74, y1: 0.76 },
-    lines: ['（占位·腹）有点痒…'],
+    linesByTier: {
+        low: clickPartLines('belly', 0),
+        mid: clickPartLines('belly', 2),
+        high: clickPartLines('belly', 5),
+      },
     /**
      * ⚠️ 这里与部位 id **不同名**：部位叫 `belly`（沿用"腹"的语义），
      * 素材目录叫 `stomach`（跟随用户给的目录名）。靠这个字段关联，
@@ -405,7 +419,11 @@ export const CLICK_PARTS = [
      * 上界 0.78（腹的底界收到 0.76，中间留一点余量避免边界行不稳定）。
      */
     box: { x0: 0.0, y0: 0.78, x1: 1.0, y1: 1.0 },
-    lines: ['（占位·腿）呀！别碰腿'],
+    linesByTier: {
+        low: clickPartLines('leg', 0),
+        mid: clickPartLines('leg', 2),
+        high: clickPartLines('leg', 5),
+      },
     actionId: 'leg',
   },
 ]

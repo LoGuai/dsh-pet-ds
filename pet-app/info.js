@@ -41,19 +41,32 @@ sayBtn.addEventListener('click', () => {
   window.infoApi.sayRandom()
 })
 
+/** 触发条件 → 中文标题（与语音库的分组口径一致）。 */
+const TRIGGER_LABELS = {
+  idle: '闲置主动对话',
+  click: '点击身体部位',
+  action: '播放动作',
+  trust: '心情差时被关心',
+  drag: '被拎起来',
+  balance: '余额播报',
+  system: '系统提示',
+  free: '随机说一句',
+}
+
 /** 渲染「语音库」。 */
 function renderVoice(data) {
   titleEl.textContent = '语音库'
   const hearts = Number.isFinite(data.hearts) ? data.hearts : 0
   const moodText = typeof data.moodText === 'string' ? data.moodText : ''
-  subtitleEl.textContent = `${hearts} 颗心 · 心情${moodText}`
+  const total = Number.isFinite(data.totalLines) ? data.totalLines : null
+  subtitleEl.textContent = `${hearts} 颗心 · 心情${moodText}${total === null ? '' : ` · 全库 ${String(total)} 句`}`
   sayBtn.hidden = false
 
   contentEl.replaceChildren()
   contentEl.append(
     el('div', {
       class: 'card-note',
-      text: '下方只展开**当前可用**的语音组；未解锁的组会标上锁定状态。好感度或心情变化后，可用组会跟着变。',
+      text: '按**触发条件**分组。当前可用的组会展开台词；未解锁的组只显示锁定状态。好感度或心情变化后，可用组会跟着变。',
     }),
   )
 
@@ -63,7 +76,20 @@ function renderVoice(data) {
     return
   }
 
+  let lastTrigger = null
   for (const group of groups) {
+    /* 每换一类触发条件就插一个小标题，避免几十张卡片平铺。 */
+    if (group.trigger !== lastTrigger) {
+      lastTrigger = group.trigger
+      const count = groups.filter((g) => g.trigger === group.trigger).length
+      contentEl.append(
+        el('h2', {
+          class: 'section',
+          text: `${TRIGGER_LABELS[group.trigger] ?? String(group.trigger)}（${String(count)} 组）`,
+        }),
+      )
+    }
+
     const available = group.available === true
     const card = el('div', { class: `card${available ? '' : ' locked'}` })
     card.append(
@@ -91,14 +117,14 @@ function renderVoice(data) {
   }
 
   if (Array.isArray(data.trustLines) && data.trustLines.length > 0) {
+    contentEl.append(el('h2', { class: 'section', text: '信赖语音（低心情时被关心）' }))
     const card = el('div', { class: 'card' })
     card.append(
       el('div', { class: 'card-head' }, [
-        el('span', { class: 'card-title', text: '信赖语音（低心情时被关心）' }),
+        el('span', { class: 'card-title', text: '心情 < 50 时点击触发' }),
         el('span', { class: 'tag', text: `${String(data.trustLines.length)} 句` }),
       ]),
     )
-    card.append(el('div', { class: 'card-note', text: '心情低于 50 时点击桌宠触发（当前是占位台词）。' }))
     const list = el('ol', { class: 'lines' })
     for (const line of data.trustLines) list.append(el('li', { text: String(line) }))
     card.append(list)

@@ -32,12 +32,20 @@
  * 即 10 → 2 档、20 → 3 档、50 → 4 档。
  */
 
-/** 分档边界（含下界）。写成数组便于"改边界只改一处"。 */
+import { balanceTierLine } from './voice-library.js'
+
+/**
+ * 分档边界（含下界）。写成数组便于"改边界只改一处"。
+ *
+ * ⚠️ 档位**短语**（"还很充裕"这类）现在来自语音库：
+ * 用户要求"所有桌宠可触发的语音都归到语音库"，余额播报也算。
+ * 这里只留**边界**，文字由 `balanceTierLine(tier)` 取。
+ */
 export const BALANCE_TIERS = [
-  { tier: 1, maxExclusive: 10, line: '余额告急了' },
-  { tier: 2, maxExclusive: 20, line: '有些吃紧' },
-  { tier: 3, maxExclusive: 50, line: '还很充裕' },
-  { tier: 4, maxExclusive: Number.POSITIVE_INFINITY, line: '主人太有钱了' },
+  { tier: 1, maxExclusive: 10 },
+  { tier: 2, maxExclusive: 20 },
+  { tier: 3, maxExclusive: 50 },
+  { tier: 4, maxExclusive: Number.POSITIVE_INFINITY },
 ]
 
 /**
@@ -49,11 +57,11 @@ export const BALANCE_TIERS = [
 export function balanceTierOf(remaining) {
   const v = Number.isFinite(remaining) ? remaining : 0
   for (const t of BALANCE_TIERS) {
-    if (v < t.maxExclusive) return { tier: t.tier, line: t.line }
+    if (v < t.maxExclusive) return { tier: t.tier, line: balanceTierLine(t.tier) }
   }
   // 不可达（最后一档的上界是 Infinity），保底返回第 4 档。
   const last = BALANCE_TIERS[BALANCE_TIERS.length - 1]
-  return { tier: last.tier, line: last.line }
+  return { tier: last.tier, line: balanceTierLine(last.tier) }
 }
 
 /**

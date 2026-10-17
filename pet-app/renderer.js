@@ -206,28 +206,34 @@ const WORK_LABELS = {
 }
 
 /**
- * 被拎起来时随机弹的台词。
- * 放在渲染进程里是刻意的：这些台词不需要宿主参与，本地即时反馈体验更好
- * （不必等一次 IPC 往返）。将来若要支持用户自定义台词，再改成由宿主下发。
+ * 拖拽台词 —— 由主进程从**语音库**下发（用户要求：所有语音归库）。
+ *
+ * 以前这三个字符串硬编码在渲染进程里。现在这里只保留"宿主下发的一份副本"，
+ * 没收到就当没有（而不是退回一份本地硬编码 —— 那会重新变成两处真相源）。
  */
-const DRAG_LINES = ['啊！放我下来啦', '要、要干什么', '好的，现在我被用户拎起来了']
+let dragLinesFromHost = []
+
+/** 点空白处的兜底台词（同样来自语音库）。 */
+let clickMissLineFromHost = ''
 
 /** 上一次说过的台词下标，用于避免连续两次抽到同一句。 */
 let lastDragLineIndex = -1
 
 /**
  * 随机取一句拖拽台词，保证不与上一次重复。
- * @returns {string}
+ * @returns {string} 没有可用台词时返回空串（调用方据此不出气泡）
  */
 function pickDragLine() {
-  if (DRAG_LINES.length === 1) return DRAG_LINES[0]
+  const lines = dragLinesFromHost
+  if (!Array.isArray(lines) || lines.length === 0) return ''
+  if (lines.length === 1) return lines[0]
   let index = lastDragLineIndex
   // 最多试 8 次，避免在极小集合上死循环。
   for (let attempt = 0; attempt < 8 && index === lastDragLineIndex; attempt += 1) {
-    index = Math.floor(Math.random() * DRAG_LINES.length)
+    index = Math.floor(Math.random() * lines.length)
   }
   lastDragLineIndex = index
-  return DRAG_LINES[index]
+  return lines[index] ?? ''
 }
 
 // ---------------------------------------------------------------- 拖拽状态
@@ -1510,7 +1516,9 @@ stage.addEventListener('mousedown', (e) => {
 
     character.classList.add('lifted')
     // 只在真正拎起来时说这一句，避免每动一下就换一句。
-    showBubble(pickDragLine(), 'say', 0)
+    const dragLine = pickDragLine()
+  // 台词来自语音库（主进程下发）；没收到就不硬编一句，宁可不说话。
+  if (dragLine) showBubble(dragLine, 'say', 0)
     void playDragAnimation()
   }, LIFT_HOLD_MS)
 })
@@ -1725,7 +1733,15 @@ function finishDrag(e) {
      * 这个判定交给主进程（心情的真相源），所以要先 invoke 再决定说什么。
      */
     const hitPart = resolveClickPart(e.clientX, e.clientY)
-    const partLine = hitPart ? pickPartLine(hitPart.part.lines) : ''
+    /*
+     * 部位台词按**好感度三档**取（用户要求：0,1 心 / 2,3 心 / 4,5 心，
+     * 越低越惊讶防备、越高越宠溺羞涩）。
+     *
+     * 三档台词表由主进程随 `clickParts` 下发（`linesByTier`），
+     * 所以这里按本地面板上的爱心数选档 —— 点击必须是零延迟的本地反馈。
+     */
+    const partLines = hitPart ? partLinesForHearts(hitPart.part) : []
+    const partLine = partLines.length > 0 ? pickPartLine(partLines) : ''
 
     void (async () => {
       let result = null
@@ -1745,7 +1761,7 @@ function finishDrag(e) {
         return
       }
 
-      showBubble(partLine || '唔…戳我做什么？', 'say', 2500)
+      showBubble(partLine || clickMissLineFromHost, 'say', 2500)
 
       const partActionId = hitPart && typeof hitPart.part.actionId === 'string' ? hitPart.part.actionId : ''
       if (partActionId) {
@@ -1920,6 +1936,14 @@ async function boot() {
       // 注：闲置语音已整体移除（用户要求），因此这里不再有 idleLines 相关字段。
       if (Array.isArray(initial.actions)) actionCatalog = initial.actions
       if (Array.isArray(initial.clickParts)) clickParts = initial.clickParts
+      /*
+       * 零散场景的台词（拖拽、点空白处）也由主进程从语音库下发。
+       * 以前它们硬编码在本文件里 —— 那正是"台词散落多处"的典型。
+       */
+      if (initial.voice && typeof initial.voice === 'object') {
+        if (Array.isArray(initial.voice.dragLines)) dragLinesFromHost = initial.voice.dragLines
+        if (typeof initial.voice.clickMissLine === 'string') clickMissLineFromHost = initial.voice.clickMissLine
+      }
       /*
        * 把点击互动动画也并进动作清单。
        *
@@ -3791,6 +3815,25 @@ function pickPartLine(lines) {
   return lines[index] ?? ''
 }
 
+/**
+ * 按当前爱心数取某部位的台词池。
+ *
+ * 三档规则与语音库一致：`0~1 心 = low`、`2~3 = mid`、`4~5 = high`。
+ * 这里必须与 `src/shared-core/voice-library.js` 的 `clickVoiceTier()` 同口径 ——
+ * 自测里有一条断言核对"三档的分界一致"，防止两边漂移。
+ *
+ * @param {{ linesByTier?: Record<string, string[]> }} part
+ * @returns {string[]}
+ */
+function partLinesForHearts(part) {
+  const table = part && part.linesByTier ? part.linesByTier : null
+  if (!table) return []
+  const hearts = Number.isFinite(affectionState.hearts) ? affectionState.hearts : 0
+  const tier = hearts <= 1 ? 'low' : hearts <= 3 ? 'mid' : 'high'
+  const lines = table[tier]
+  return Array.isArray(lines) ? lines : []
+}
+
 /** 每个部位上一次说过的台词下标，避免连续重复（以该部位首句为键）。 */
 const lastPartLine = {}
 
@@ -3966,7 +4009,14 @@ window.__petTestState = () => {
       id: p.id,
       label: p.label,
       box: p.box,
-      lines: p.lines,
+      /*
+       * 部位台词按**好感度三档**下发（`linesByTier`）。
+       *
+       * ⚠️ 这里必须带上它：自测要靠快照核对"点这个部位说的是不是该档位的台词"。
+       * 之前快照里还是已废弃的 `lines` 字段，于是自测读到空数组，
+       * 断言恒为空 —— 表现成"气泡明明是对的却判失败"。
+       */
+      linesByTier: p.linesByTier ?? {},
       /** 该部位配的互动动画 id（null = 只说话）。 */
       actionId: p.actionId ?? null,
     })),
