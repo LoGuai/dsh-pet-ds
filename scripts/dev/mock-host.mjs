@@ -9,10 +9,15 @@
  * 阶段 3 起，所有桌宠侧的改动都可以先用它验证，不必反复重启 DSH。
  *
  * 用法：
- *   node scripts/dev/mock-host.mjs                     # 起宿主 + 桌宠
+ *   node scripts/dev/mock-host.mjs                     # 起宿主 + 桌宠（端口 47845）
+ *   node scripts/dev/mock-host.mjs --port 47850        # 换端口，**可与正在运行的 DSH 并存**
+ *   node scripts/dev/mock-host.mjs --pet-userdata <路径>  # 换桌宠的 userData 目录
  *   node scripts/dev/mock-host.mjs --no-pet            # 只起宿主（配合手工启动桌宠调试）
  *   node scripts/dev/mock-host.mjs --debug             # 打开桌宠子进程输出
  *   node scripts/dev/mock-host.mjs --pet-arg --selftest  # 把额外参数透传给桌宠（如自检模式）
+ *
+ * 桌宠的 userData 默认是 `.cache/dev-pet-userdata`（**独立**于正式桌宠），
+ * 否则会撞 Electron 的单实例锁而立刻退出 —— 见下面 petUserDataDir 的说明。
  *
  * 起来之后可以在浏览器 / curl 里试：
  *   curl http://127.0.0.1:47845/health
@@ -49,10 +54,52 @@ const petArgs = argv.reduce((acc, item, index) => {
   return acc
 }, [])
 
+/**
+ * 监听端口。`--port <n>` 可覆盖，默认 47845。
+ *
+ * ## 为什么需要它
+ *
+ * 默认端口与真实 DSH 的桥接**相同**，所以开发宿主与正在运行的 DSH 会撞端口。
+ * 从前这意味着"想用 mock-host 就得先关掉 DSH"。加上这个开关后，
+ * 开发宿主可以跑在另一个端口，**与 DSH 并存** ——
+ * 用户就能一边开着正式 DSH 干活，一边让我在工作区跑开发版桌宠测改动，
+ * 二者互不干扰。
+ */
+const portArgIndex = argv.indexOf('--port')
+const port =
+  portArgIndex >= 0 && Number.isFinite(Number(argv[portArgIndex + 1]))
+    ? Number(argv[portArgIndex + 1])
+    : 47845
+
+/**
+ * 桌宠的 userData 目录。
+ *
+ * ## 为什么开发宿主必须给桌宠一个**独立**的 userData
+ *
+ * 桌宠用 Electron 的 `requestSingleInstanceLock()` 做单实例保护，而那个锁是
+ * 按 **userData 目录**区分的。默认两者都用 `%APPDATA%\DSH Pet`，于是：
+ *
+ *   · 用户的正式桌宠正在跑时，开发宿主拉起的桌宠会立刻退出，日志只有一句
+ *     `已有实例在运行，本次启动退出`；
+ *   · 而开发宿主看到桌宠退出就会**一并收尾**（`onPetExit` → `shutdown`），
+ *     于是整个开发宿主也关掉了 —— 表现为"开发宿主根本起不来"。
+ *
+ * 实测踩过这个坑。给开发版一个独立目录后，两者可以**同时运行**：
+ * 你开着正式 DSH 干活，我在工作区跑开发版测改动，互不干扰。
+ *
+ * 用 `--user-data-dir=<路径>` 透传给桌宠（Electron 认得这个开关）。
+ * 想换位置就加 `--pet-userdata <路径>`。
+ */
+const petUdArgIndex = argv.indexOf('--pet-userdata')
+const petUserDataDir =
+  petUdArgIndex >= 0 && argv[petUdArgIndex + 1]
+    ? argv[petUdArgIndex + 1]
+    : join(pluginRoot, '.cache', 'dev-pet-userdata')
+
 const log = (msg) => console.log(`[mock-host] ${msg}`)
 
 const bridge = new BridgeServer({
-  port: 47845,
+  port,
   plugin: 'dsh-pet-ds',
   version: '0.1.0-dev',
   lowBalanceThreshold: 10,
@@ -216,8 +263,17 @@ if (balanceBroadcast && fakeBalanceStep !== 0) {
 }
 
 if (startPet && electron) {
-  const result = supervisor.start(petArgs)
-  log(`启动桌宠：${JSON.stringify(result)}${petArgs.length ? `（额外参数 ${petArgs.join(' ')}）` : ''}`)
+  /*
+   * 自动带上独立的 `--user-data-dir`（见上面 petUserDataDir 的说明）。
+   *
+   * ⚠️ 不能省这一步：与用户的正式桌宠共用 userData 时会撞 Electron 单实例锁，
+   * 开发版桌宠会立刻以"已有实例在运行"退出，而开发宿主看到桌宠退出就一并收尾，
+   * 于是整个开发宿主看起来"起不来"。实测踩过。
+   */
+  const args = [`--user-data-dir=${petUserDataDir}`, ...petArgs]
+  const result = supervisor.start(args)
+  log(`桌宠 userData（独立，免得撞正式桌宠的单实例锁）：${petUserDataDir}`)
+  log(`启动桌宠：${JSON.stringify(result)}${args.length ? `（参数 ${args.join(' ')}）` : ''}`)
 }
 
 // 每 15 秒做一次"假的工作状态"轮换，用来目视确认气泡与档位切换是通的。

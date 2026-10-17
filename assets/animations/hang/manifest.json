@@ -138,24 +138,6 @@
         "src": "7.png",
         "out": "frame_07.png",
         "srcBounds": [
-          209,
-          29,
-          1044,
-          1219
-        ],
-        "placedAt": [
-          32,
-          7
-        ],
-        "outTop": 7,
-        "outFoot": 1148,
-        "outW": 802,
-        "outH": 1142
-      },
-      {
-        "src": "8.png",
-        "out": "frame_08.png",
-        "srcBounds": [
           229,
           30,
           1017,
@@ -171,8 +153,8 @@
         "outH": 1145
       },
       {
-        "src": "9.png",
-        "out": "frame_09.png",
+        "src": "8.png",
+        "out": "frame_08.png",
         "srcBounds": [
           228,
           29,
@@ -187,6 +169,24 @@
         "outFoot": 1147,
         "outW": 759,
         "outH": 1145
+      },
+      {
+        "src": "9.png",
+        "out": "frame_09.png",
+        "srcBounds": [
+          209,
+          29,
+          1044,
+          1219
+        ],
+        "placedAt": [
+          32,
+          7
+        ],
+        "outTop": 7,
+        "outFoot": 1148,
+        "outW": 802,
+        "outH": 1142
       },
       {
         "src": "10.png",
