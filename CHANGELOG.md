@@ -67,6 +67,40 @@
 
 ### 修复
 
+- **装完之后 DSH 显示「异常 / 包不可用」**（用户实测报错）：
+  ```
+  cannot resolve profile bundle "dsh-pet-ds" from the dsh installation or
+  C:/Users/xxx/.dsh/profiles/desktop; run 'dsh plugin --profile desktop install'
+    if its dependency is not installed
+  ```
+  成因：**登记了但依赖没装进去**。`dsh.profile.bundles` 里写了插件，
+  但 profile 的 `node_modules` 里解析不到它 —— 于是 DSH 找不到 bundle。
+  而旧版脚本在 pnpm 那一步失败（没找到 pnpm / 没网络 / 注册表不通）时
+  **只警告、仍然继续登记**，正好造出这个半吊子状态。
+
+  现在加了三道防线：
+  1. **装不上就不登记**：pnpm 失败或缺失时，先尝试 DSH 自己的官方命令
+     `dsh plugin --profile <名字> install`（DSH 的报错里就提示了它，用的是
+     DSH 加载插件时同一套解析规则）；
+  2. **登记后必须真的解析一次**：用 `createRequire` 从 profile 解析
+     `dsh-pet-ds/package.json`；解析不到就**回滚登记**并 `exit 1`，
+     绝不把一个「异常」状态的插件留在用户配置里；
+  3. **失败信息给出三种修法**：DSH 插件页填 tgz 绝对路径 / `dsh plugin ... install` /
+     在 profile 里手动 `pnpm add`，并提示**离线机器应改用 `setup.exe`**
+     （它内嵌依赖树，不需要联网装依赖；而 `.tgz` 这条路要靠 npm 抓
+     `@deepseek-ai/schemastery`）。
+
+- **校验语句自己会崩**（这是修上面那条时踩到的）：在
+  `$ErrorActionPreference = 'Stop'` 下，`& $node -e ... *> $null` 会把 node 的
+  **stderr 当成终止性错误**抛出 —— 于是脚本在校验那一行就退出，
+  根本走不到「判断退出码 → 回滚」。改成临时把 `ErrorActionPreference` 调回
+  `Continue` 并用 try/catch 兜住。
+- 新增常驻测试 `test-install-ps1-unresolvable`（8 条断言）：造一个**只有 node、
+  没有 pnpm** 的沙箱环境，断言「退出码非 0 + 明确说明 + 回滚 + 给出修法 +
+  真实 profile 未被改动」。这条测试正好钉住用户遇到的那个故障。
+  （写它时也踩了一个坑：`$PSScriptRoot` 上溯两次只到 `scripts`，
+  导致「dist 下没有 tgz，跳过测试」—— 一个会静默跳过的假绿。）
+
 - **坐姿三段与站立"大小不一致 + 脚底锚点差 7px"**（用户反馈：
   「坐下前后锚点有变化，坐下前后桌宠大小不一样」）。实测确认，**两个真错**：
 

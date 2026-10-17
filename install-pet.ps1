@@ -157,12 +157,19 @@ if (-not $profileDir) {
 }
 Write-Ok "$profileDir"
 
+# profile 的**目录名**（如 desktop）。`dsh plugin --profile <名字>` 要的是名字不是路径。
+$profileName = Split-Path -Leaf $profileDir
+Write-Step "  profile 名：$profileName"
+
 # ---------------------------------------------------------------- 3) node / pnpm
 Write-Step ''
 Write-Step '[3/5] Node 与 pnpm（用 DSH 自带的）'
 
 $node = $null
 $pnpm = $null
+# 先置 1：万一 pnpm 完全没跑（没找到它），后面的"兜底 dsh 命令"分支也要能进。
+# PowerShell 里 `$null -ne 0` 为真，所以显式初始化更清楚。
+$pnpmRc = 1
 $runtimes = Join-Path $dshHome 'dsh-runtimes'
 if (Test-Path -LiteralPath $runtimes) {
     foreach ($rt in Get-ChildItem -Path $runtimes -Directory -ErrorAction SilentlyContinue) {
@@ -236,7 +243,7 @@ if ($pnpm) {
         Pop-Location
     }
     if ($pnpmRc -ne 0) {
-        Write-Warn2 "pnpm 返回码 $pnpmRc —— 继续登记配置；若之后插件加载失败，请按 INSTALL.md 排障。"
+        Write-Warn2 "pnpm 返回码 $pnpmRc —— 依赖可能没装全，下面会校验"
     }
     else {
         Write-Ok 'pnpm 完成'
@@ -244,6 +251,43 @@ if ($pnpm) {
 }
 else {
     Write-Warn2 '跳过 pnpm 预装（没找到 pnpm）'
+}
+
+<#
+  ---- 4a-2) 兜底：用 DSH 自己的 CLI 装依赖
+
+  为什么要这一步（这是从用户机器上的真实报错反推出来的）：
+
+  DSH 的报错原文是
+    「cannot resolve profile bundle "dsh-pet-ds" ... run 'dsh plugin --profile desktop install'
+      if its dependency is not installed」
+
+  也就是说**DSH 自己就有装依赖的命令**。当我们找不到 pnpm、或 pnpm 因为网络/注册表
+  问题失败时，用这条官方命令比我们去猜 pnpm 路径更靠谱 —— 它用的正是 DSH 加载插件时
+  那套解析规则。
+#>
+if (-not $pnpm -or $pnpmRc -ne 0) {
+    $dshCli = Get-Command dsh -ErrorAction SilentlyContinue
+    if ($dshCli) {
+        Write-Step "- 尝试用 DSH 自带命令装依赖：dsh plugin --profile $profileName install"
+        Push-Location $profileDir
+        try {
+            & $dshCli.Source plugin --profile $profileName install
+            $dshRc = $LASTEXITCODE
+        }
+        catch {
+            $dshRc = 1
+            Write-Warn2 "dsh 命令执行出错：$($_.Exception.Message)"
+        }
+        finally {
+            Pop-Location
+        }
+        if ($dshRc -eq 0) { Write-Ok 'dsh plugin install 完成' }
+        else { Write-Warn2 "dsh plugin install 返回码 $dshRc（下面会校验解析结果）" }
+    }
+    else {
+        Write-Warn2 '也没找到 dsh 命令，跳过兜底安装（下面会校验解析结果）'
+    }
 }
 
 # ---- 4b) 登记进 profile 配置
@@ -293,6 +337,86 @@ Write-Step "  使用 $register"
 & $node $register $profileDir $Tgz $PluginName
 if ($LASTEXITCODE -ne 0) {
     Write-Err '登记 profile 配置失败（若提示 JSON 不合法，原文件未被改动）'
+    exit 1
+}
+
+# ---- 4c) 关键校验：插件到底能不能从 profile 解析到
+#
+# 为什么必须有这一步（这是从真实用户报错反推出来的）：
+#
+#   DSH 的插件页会显示「异常 / 包不可用」，原文是
+#     cannot resolve profile bundle "dsh-pet-ds" ... run 'dsh plugin --profile desktop install'
+#       if its dependency is not installed
+#
+# 含义就是：**bundles 里登记了，但 node_modules 里解析不到** ——
+# 成了"登记了却装不上"的半吊子状态。它最常见的成因是 pnpm 那一步失败
+# （没找到 pnpm、没有网络、注册表不通），而**旧版脚本在 pnpm 失败后仍然继续登记**。
+#
+# 所以现在：登记完必须**真的解析一次**；解析不到就回滚登记并明确报错，
+# 绝不把一个"异常"状态的插件留在用户配置里。
+Write-Step '- 校验：插件能否从 profile 解析到 ...'
+$resolvable = $false
+if ($node) {
+    $probe = "const{createRequire}=require('module');const r=createRequire(process.argv[1]+'/package.json');r.resolve(process.argv[2]+'/package.json');"
+    <#
+      ⚠️ 这里必须**临时**把 ErrorActionPreference 调回 Continue，并用 try/catch 兜住。
+
+      为什么：解析失败时 node 会把 MODULE_NOT_FOUND 写到 stderr，而 PowerShell 5.1 在
+      `ErrorActionPreference = 'Stop'` 下会把**原生命令的 stderr** 当成终止性错误抛出 ——
+      于是脚本在这一行就崩了，根本走不到"判断退出码 → 回滚"那段。
+      实测踩过：进程直接退出，profile 里留下"登记了但解析不到"的坏插件 ——
+      正好是我要修的那种状态。
+    #>
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $node -e $probe $profileDir $PluginName > $null 2>&1
+        $resolvable = ($LASTEXITCODE -eq 0)
+    }
+    catch {
+        $resolvable = $false
+    }
+    finally {
+        $ErrorActionPreference = $prevEap
+    }
+}
+if ($resolvable) {
+    Write-Ok '能从 profile 解析到插件（DSH 加载不会再报"包不可用"）'
+}
+else {
+    Write-Err '插件**登记了但解析不到** —— DSH 会显示「异常 / 包不可用」'
+    Write-Host ''
+    Write-Host '      也就是说：配置里写了它，但 profile 的 node_modules 里没有它。'
+    Write-Host '      通常是依赖那一步没成功（没找到 pnpm / 没有网络 / 注册表不通）。'
+    Write-Host ''
+
+    # 回滚登记，避免留下"异常"状态的插件条目
+    $bak = Join-Path $profileDir ("package.json.bak-before-" + $PluginName)
+    if (Test-Path -LiteralPath $bak) {
+        Copy-Item -LiteralPath $bak -Destination (Join-Path $profileDir 'package.json') -Force
+        Write-Warn2 '已回滚 profile 登记（不会给 DSH 留一个坏插件）'
+    }
+    else {
+        Write-Warn2 "没找到备份 $bak，profile 登记未回滚 —— 请在 DSH 插件页点「卸载」"
+    }
+
+    Write-Host ''
+    Write-Host '      三种修法（任选其一）：'
+    Write-Host ''
+    Write-Host '      1) 用 DSH 自己的插件页装（最稳，走它自己的安装流程）：'
+    Write-Host '         插件 → 添加插件 → 填这个 tgz 的**绝对路径**：'
+    Write-Host "           $Tgz"
+    Write-Host ''
+    Write-Host '      2) 命令行让 DSH 自己装依赖：'
+    Write-Host "           dsh plugin --profile $profileName install"
+    Write-Host ''
+    Write-Host '      3) 手动在 profile 目录里装（需要联网）：'
+    Write-Host '           cd "' + $profileDir + '"'
+    Write-Host "           pnpm add `"$Tgz`" --ignore-workspace --config.auto-install-peers=false"
+    Write-Host ''
+    Write-Host '      提示：如果这台机器**不能联网**，请改用 setup.exe 版安装程序 ——'
+    Write-Host '            它把依赖树一起内嵌了，不需要联网装依赖。'
+    Write-Host ''
     exit 1
 }
 
