@@ -33,6 +33,10 @@ EPS = 2
 # 输出画布（与站立素材一致）
 CANVAS_W, CANVAS_H = 864, 1157
 
+# 量"头部宽度"时取内容顶部往下这段区间（比例）。
+# 5% 跳过头顶最尖的发饰，30% 停在肩膀之前 —— 这一段最宽的一行就是头发/头部。
+HEAD_BAND = (0.05, 0.30)
+
 # 素材帧率默认值。
 #
 # 用户约定：**所有动画素材一律按每秒 6 帧输入**，除非特别说明。
@@ -61,6 +65,11 @@ ACTIONS = {
         # scale 由脚本按整批最大内容自动算出（见 compute_scale）——
         # 手调过 0.99/0.93 都因为"逐帧内容高不同"而失败，自动算最稳。
         "raw_dir": os.path.join(ROOT, ".cache", "hang-raw"),
+        # 拖拽已改为"静态随机帧"：清单里声明 `staticFrames`，渲染进程据此
+        # 每次触发随机挑一帧显示（不播）。
+        # ⚠️ **必须写在配置里**，否则重跑本脚本会把清单里的 staticFrames
+        # 覆盖掉，拖拽会静默退回"多帧动画"（正是这个坑：配置是清单的生成源）。
+        "static_frames": [4, 11],
         "note": "拖拽时的被拎起来动画",
     },
     "eat": {
@@ -144,9 +153,17 @@ ACTIONS = {
         # 三段各有独立目录，而不是像睡觉那样用 tail_loop_frames 把尾帧拼起来 ——
         # 因为"站着循环"与"坐着循环"是两套完全不同的姿势，不是同一素材的尾段。
         "raw_dir": os.path.join(ROOT, ".cache", "sit-raw"),
-        # ⚠️ 三段共用同一个缩放倍数（`scale_group`）。三段在渲染时连续衔接，
-        # 各自归一化会让缩放差约 2%，切换阶段时角色大小会跳一下。
-        "scale_group": "sit",
+        # ⚠️ `match_head_to: "stand"` —— 把角色**缩放到与站立同一个视觉大小**。
+        #
+        # 为什么不是"三段共用同一缩放倍数"（曾经的做法）：共用倍数只保证乘的是
+        # 同一个系数，但**三段原始素材里角色本来就画得不一样大**（实测头宽
+        # sit 580 / sit-circle 627 / sit-stop 643，而 stand 只有 530），
+        # 共用倍数于是把差异原样保留下来 —— 用户看到的就是
+        # "坐下后桌宠变大、坐着更大、站起又变小"。
+        # 按头宽对齐才是"看起来一样大"的充要条件。
+        "match_head_to": "stand",
+        # 段内也要一致：实测 sit-stop 段内头宽跨度 10.5%，单一系数修不掉。
+        "match_head_per_frame": True,
         "note": "坐下（第一阶段：坐下的过程）",
     },
     "sit-circle": {
@@ -155,13 +172,17 @@ ACTIONS = {
         # 写在这里是为了让清单自解释"这个动作本意就是循环的"。
         "raw_dir": os.path.join(ROOT, ".cache", "sit-circle-raw"),
         "loop": True,
-        "scale_group": "sit",
+        "match_head_to": "stand",
+        # 段内也要一致：实测 sit-stop 段内头宽跨度 10.5%，单一系数修不掉。
+        "match_head_per_frame": True,
         "note": "坐着（第二阶段：循环播放）",
     },
     "sit-stop": {
         # 站起（第三阶段：站起的过程，只播一次，播完回站立闲置）。
         "raw_dir": os.path.join(ROOT, ".cache", "sit-stop-raw"),
-        "scale_group": "sit",
+        "match_head_to": "stand",
+        # 段内也要一致：实测 sit-stop 段内头宽跨度 10.5%，单一系数修不掉。
+        "match_head_per_frame": True,
         "note": "站起（第三阶段：站起的过程）",
     },
 }
@@ -178,7 +199,17 @@ def content_bounds(img):
 
 
 def standing_foot_output():
-    """站立素材的脚底基准（输出空间）。"""
+    """站立素材的脚底基准（输出空间）。
+
+    ⚠️ 取**众数**（出现最多的脚底值），不是最小值。
+
+    原先用 `min(feet)`，而站立 12 帧里 11 帧脚底在 1155、只有 1 帧在 1148
+    （那是动画起伏的一帧）。min 于是取到 1148，导致所有动作都对齐到 1148 ——
+    而**站立自己**多数帧在 1155，于是切到动作时角色整体上移 7px。
+    实测：用户反馈"坐下前后锚点有变化"。
+
+    众数正好落在站立最常处的位置，衔接时不会跳。
+    """
     files = sorted(f for f in os.listdir(STAND_DIR) if f.startswith("frame_") and f.endswith(".png"))
     if not files:
         raise SystemExit(f"站立素材目录里没有帧：{STAND_DIR}")
@@ -187,7 +218,14 @@ def standing_foot_output():
         b = content_bounds(Image.open(os.path.join(STAND_DIR, f)).convert("RGBA"))
         if b:
             feet.append(b[3])
-    return min(feet)
+    if not feet:
+        raise SystemExit("站立素材全透明，量不到脚底")
+    counts = {}
+    for v in feet:
+        counts[v] = counts.get(v, 0) + 1
+    best = max(counts.values())
+    # 并列时取较大值（脚底更低 = 更保守，内容不容易顶到画布上边）
+    return max(v for v, c in counts.items() if c == best)
 
 
 def compute_scale(bounds_list, foot_out, canvas_w=CANVAS_W):
@@ -212,6 +250,40 @@ def compute_scale(bounds_list, foot_out, canvas_w=CANVAS_W):
     avail_h = foot_out + 1 - 2
     scale = min(avail_w / max_w, avail_h / max_h, 1.0)
     return round(scale, 4), max_w, max_h, avail_w, avail_h
+
+
+def head_width_of(img, band=HEAD_BAND):
+    """内容顶部往下 band 区间内最宽的一行（≈ 头部/头发宽度）。
+
+    为什么用这个指标判断"角色画多大"：
+    Q 版角色里头部占绝对主导，同一人物的头部像素宽度几乎恒定；
+    而整体包围盒会随姿势（裙摆铺开、手臂抬起）大幅变化，
+    光看它会把"姿势不同"误判成"大小不同"。
+    """
+    a = np.array(img.convert("RGBA"))
+    al = a[:, :, 3] > ALPHA_THRESHOLD
+    ys, xs = np.where(al)
+    if len(xs) == 0:
+        return 0
+    y0, y1 = int(ys.min()), int(ys.max())
+    h = y1 - y0 + 1
+    best = 0
+    for y in range(y0 + int(h * band[0]), y0 + int(h * band[1]) + 1):
+        row = np.where(al[y])[0]
+        if len(row) > 0:
+            best = max(best, int(row.max() - row.min() + 1))
+    return best
+
+
+def output_head_width(action_id):
+    """量某个**已处理**动作的头部宽度（输出空间，取所有帧最大值）。"""
+    d = os.path.join(ROOT, "assets", "animations", action_id)
+    if not os.path.isdir(d):
+        raise SystemExit(f"match_head_to 指向的动作还没处理过：{d}")
+    files = sorted(f for f in os.listdir(d) if f.startswith("frame_") and f.endswith(".png"))
+    if not files:
+        raise SystemExit(f"{action_id} 没有任何帧，无法作为头宽基准")
+    return max(head_width_of(Image.open(os.path.join(d, f))) for f in files)
 
 
 def body_bounds(img, exclude_left_ratio=0.0):
@@ -240,74 +312,6 @@ def body_bounds(img, exclude_left_ratio=0.0):
         return None
     # xs 是相对 cut 的偏移，加回去变成绝对坐标。
     return int(xs.min()) + cut, int(ys.min()), int(xs.max()) + cut, int(ys.max())
-
-
-def _load_bounds(cfg):
-    """按配置读出一批帧的 (完整内容边界, 角色本体边界) 列表。
-
-    会应用 `replace_frames`（复制帧）与 `bubble_exclude_left_ratio`，
-    与 `build_one` 里的做法一致 —— 抽出来是为了让"整组共用缩放"能复用同一套规则。
-    """
-    raw_dir = cfg["raw_dir"]
-    if not os.path.isdir(raw_dir):
-        raise SystemExit(f"原始帧目录不存在：{raw_dir}")
-    names = sorted(
-        (f for f in os.listdir(raw_dir) if f.endswith(".png") and f[:-4].isdigit()),
-        key=lambda f: int(f[:-4]),
-    )
-    if not names:
-        raise SystemExit(f"原始帧目录为空：{raw_dir}")
-
-    src_index_of = []
-    for i, _name in enumerate(names):
-        repl = (cfg.get("replace_frames") or {}).get(i + 1)
-        src_index_of.append(i if repl is None else repl - 1)
-
-    exclude_left = cfg.get("bubble_exclude_left_ratio", 0.0)
-    raw_bounds, body_list = [], []
-    for idx in src_index_of:
-        img = Image.open(os.path.join(raw_dir, names[idx])).convert("RGBA")
-        b = content_bounds(img)
-        if b is None:
-            raise SystemExit(f"{names[idx]} 全透明")
-        raw_bounds.append(b)
-        bb = body_bounds(img, exclude_left) if exclude_left > 0 else b
-        if bb is None:
-            raise SystemExit(f"{names[idx]} 排除左侧区域后没有内容")
-        body_list.append(bb)
-    return names, src_index_of, raw_bounds, body_list
-
-
-def group_scale(group, foot_out):
-    """算出同一 `scale_group` 里**所有动作共用**的缩放倍数。
-
-    为什么需要它：坐姿动作由**三段素材拼成**
-    （坐下的过程 → 坐着循环 → 站起的过程），三段在渲染时连续衔接。
-    若各自按"填满画布"归一化，倍数会不一致 —— 实测
-    sit 0.9582 / sit-circle 0.9621 / sit-stop 0.9441，
-    切换阶段时角色大小会跳一下（约 2%，屏幕上约 4px，肉眼能看出来）。
-
-    办法：按整组内容的**最大尺寸**算一个统一倍数。
-    理由与 `compute_scale` 完全一样（"同一套动画里单位恒定"），
-    只是把"同一套"从"一个动作"扩大到"一组动作"。
-
-    取最小值等价于按整组最大值算 —— 但显式按整组算更直观，
-    也不会因为某个动作单独重跑而漂移。
-
-    @returns {((float, int, int, int, int), list[str])} (compute_scale 结果, 成员 id)
-    """
-    members = [
-        (aid, {**ACTION_DEFAULTS, **cfg})
-        for aid, cfg in ACTIONS.items()
-        if cfg.get("scale_group") == group
-    ]
-    if not members:
-        raise SystemExit(f"scale_group={group} 没有任何动作")
-    combined = []
-    for _aid, cfg in members:
-        _names, _src, _raw, body_list = _load_bounds(cfg)
-        combined.extend(body_list)
-    return compute_scale(combined, foot_out), [aid for aid, _cfg in members]
 
 
 def build_one(action_id):
@@ -375,15 +379,7 @@ def build_one(action_id):
             raise SystemExit(f"{names[idx]} 排除左侧区域后没有内容（bubble_exclude_left_ratio 设太大了？）")
         body_bounds_list.append(bb)
 
-    if cfg["scale"] == "auto" and cfg.get("scale_group"):
-        (_scale, max_w, max_h, avail_w, avail_h), members = group_scale(cfg["scale_group"], foot_out)
-        scale = _scale
-        print(
-            f"  共用缩放: {scale}  （scale_group={cfg['scale_group']}，"
-            f"成员 {', '.join(members)}；整组最大内容 {max_w}x{max_h}，可用 {avail_w}x{avail_h}）"
-        )
-        print("    ↑ 三段素材连续衔接，必须同倍数，否则切换阶段时角色大小会跳一下")
-    elif cfg["scale"] == "auto":
+    if cfg["scale"] == "auto":
         scale, max_w, max_h, avail_w, avail_h = compute_scale(body_bounds_list, foot_out)
         body_note = f"（角色本体宽度，已排除左侧 {exclude_left:.0%} 的气泡区）" if exclude_left > 0 else ""
         print(
@@ -394,6 +390,104 @@ def build_one(action_id):
         scale = cfg["scale"]
         print(f"  缩放: {'不缩放' if scale is None else scale}")
 
+    # ---------------------------------------------------------------- 头宽对齐
+    #
+    # ## 为什么需要
+    #
+    # `compute_scale` 是"填满画布"式归一化：把每套素材的**最大内容**缩到刚好
+    # 装满画布。对单个动作没问题，但对**连续衔接的几段**是错的 ——
+    # 因为每段原始素材里角色画得大小可能不同，归一化会把它们各自拉成"一样满"，
+    # 于是画面上角色大小不一致。
+    #
+    # 实测（坐姿，用户反馈"坐下前后桌宠大小不一样"）：成品头宽
+    # stand 525 / sit 532 / sit-circle 589 / sit-stop 550 ——
+    # 坐着比站着大 12%，坐下与坐起之间还在变。
+    #
+    # ## 做法
+    #
+    # 以某个**已处理**动作（`match_head_to`，通常是 stand）的成品头宽为基准，
+    # 反算出本段需要的缩放，使"头部像素宽度"对齐。
+    # 用头宽而不是整体包围盒：整体包围盒随姿势剧烈变化（裙摆铺开、手臂抬起），
+    # 拿它对齐会把"姿势不同"错当成"大小不同"，反而把角色缩坏。
+    #
+    # 只允许**缩小**（不超过自动适配值），避免内容顶出画布。
+    head_match = None
+    head_width_out = None
+    if cfg.get("match_head_to") and scale:
+        ref_id = cfg["match_head_to"]
+        ref_head = output_head_width(ref_id)
+        if ref_head <= 0:
+            raise SystemExit(f"{ref_id} 的头部宽度量不到（为 0），无法作为基准")
+        raw_heads = []
+        for idx in src_index_of:
+            raw_heads.append(head_width_of(Image.open(os.path.join(raw_dir, names[idx])).convert("RGBA")))
+        cur_head = max(raw_heads) if raw_heads else 0
+        if cur_head > 0:
+            projected = cur_head * scale
+            corr = ref_head / projected
+            fit_scale = compute_scale(body_bounds_list, foot_out)[0]
+            new_scale = round(min(scale * corr, fit_scale), 4)
+            new_scale = max(0.05, new_scale)
+            print(
+                f"  头宽对齐（match_head_to={ref_id}）: 参考成品头宽 {ref_head}px；"
+                f"本段原始头宽 {cur_head}px × 缩放 {scale} = {projected:.1f}px"
+            )
+            print(
+                f"    → 纠正系数 {corr:.4f}，缩放 {scale} → {new_scale}"
+                f"（对齐后约 {cur_head * new_scale:.1f}px）"
+            )
+            head_match = {
+                "ref": ref_id,
+                "refHeadWidth": ref_head,
+                "rawHeadWidth": cur_head,
+                "correction": round(corr, 4),
+            }
+            scale = new_scale
+            head_width_out = round(cur_head * scale, 1)
+
+    # ---------------------------------------------------------------- 逐帧头宽归一化（可选）
+    #
+    # 上面的单一系数只能把"整段里最大的那一帧"对到基准，
+    # 而实测素材**段内**就不一致（sit-stop 头宽 582~643，跨度 10.5%）。
+    # 于是整段播下来角色仍会缓慢变大/变小。
+    #
+    # 这里改成**逐帧**各算一个缩放，使每一帧的头宽都等于基准 ——
+    # 这才是"同一个人、同一大小"的正确表达。
+    # 上限受 `compute_scale` 的自动适配值约束（永不放大到超出画布）。
+    per_frame_scales = None
+    if cfg.get("match_head_to") and cfg.get("match_head_per_frame") and scale:
+        ref_id = cfg["match_head_to"]
+        ref_head = output_head_width(ref_id)
+        fit_scale = compute_scale(body_bounds_list, foot_out)[0]
+        per_frame_scales = []
+        raw_heads = []
+        for idx in src_index_of:
+            hw = head_width_of(Image.open(os.path.join(raw_dir, names[idx])).convert("RGBA"))
+            raw_heads.append(hw)
+            if hw <= 0:
+                per_frame_scales.append(scale)
+                continue
+            fs = ref_head / hw
+            fs = max(0.05, round(min(fs, fit_scale), 4))
+            per_frame_scales.append(fs)
+        outs = [round(h * s, 1) for h, s in zip(raw_heads, per_frame_scales)]
+        print(
+            f"  逐帧头宽归一化（ref={ref_id}）: 目标 {ref_head}px；"
+            f"原始头宽 {min(raw_heads)}~{max(raw_heads)}px"
+        )
+        print(
+            f"    → 逐帧缩放 {min(per_frame_scales)}~{max(per_frame_scales)}；"
+            f"归一后头宽 {min(outs)}~{max(outs)}px（跨度 {round(max(outs) - min(outs), 1)}px）"
+        )
+        head_match = {
+            "ref": ref_id,
+            "refHeadWidth": ref_head,
+            "perFrame": True,
+            "rawHeadWidths": raw_heads,
+            "perFrameScale": per_frame_scales,
+        }
+        head_width_out = round(max(outs), 1)
+
     os.makedirs(out_dir, exist_ok=True)
     report = []
     for i, name in enumerate(names):
@@ -402,13 +496,23 @@ def build_one(action_id):
         src = Image.open(os.path.join(raw_dir, names[src_index])).convert("RGBA")
         sb = raw_bounds[i]
 
+        # 逐帧缩放：默认全段共用一个值；开了 match_head_per_frame 时逐帧不同。
+        fs = scale if scale is not None else 1.0
+        if per_frame_scales is not None:
+            fs = per_frame_scales[i]
+
         # 1) 按内容框裁掉四周留白
         content = src.crop((sb[0], sb[1], sb[2] + 1, sb[3] + 1))
 
         # 2) 必要时缩放
-        if scale is not None and scale < 1.0:
-            sw = max(1, int(round(content.width * scale)))
-            sh = max(1, int(round(content.height * scale)))
+        #
+        # ⚠️ 条件用 `abs(fs-1) > 1e-9` 而不是 `fs < 1.0`：
+        # 逐帧头宽归一化时，头画得偏小的那一帧需要**放大**才能与其它帧一致；
+        # 只写 `fs < 1.0` 会静默跳过那些帧，段内的尺寸差就修不掉。
+        # 上限已由 `fit_scale` 卡住，不会溢出画布。
+        if fs is not None and abs(fs - 1.0) > 1e-9:
+            sw = max(1, int(round(content.width * fs)))
+            sh = max(1, int(round(content.height * fs)))
             content = content.resize((sw, sh), Image.LANCZOS)
 
         # 3) 定位：脚底对齐基准线；水平方向**按角色本体居中**。
@@ -426,7 +530,7 @@ def build_one(action_id):
         body = body_bounds(src, exclude_left) if exclude_left > 0 else sb
         body_cx = (body[0] + body[2]) / 2  # 角色本体在原始帧里的中心 x
         content_rel_cx = body_cx - sb[0]   # 换算到裁剪后的坐标系
-        px = int(round(CANVAS_W / 2 - content_rel_cx * scale))
+        px = int(round(CANVAS_W / 2 - content_rel_cx * fs))
         py = foot_out - content.height + 1
 
         # 垂直越界直接报错 —— 宁可失败也不要偷偷裁掉角色的头或脚。
@@ -434,16 +538,16 @@ def build_one(action_id):
         if py < 0 or py + content.height > CANVAS_H:
             raise SystemExit(
                 f"{name} 垂直方向越界：内容高 {content.height}，落点 y={py}。"
-                f"需要更小的 scale（当前 {scale}）。"
+                f"需要更小的 fs（当前 {fs}）。"
             )
-        body_px0 = px + int((body[0] - sb[0]) * scale)
-        body_px1 = px + int((body[2] - sb[0]) * scale)
-        body_py0 = py + int((body[1] - sb[1]) * scale)
-        body_py1 = py + int((body[3] - sb[1]) * scale)
+        body_px0 = px + int((body[0] - sb[0]) * fs)
+        body_px1 = px + int((body[2] - sb[0]) * fs)
+        body_py0 = py + int((body[1] - sb[1]) * fs)
+        body_py1 = py + int((body[3] - sb[1]) * fs)
         if body_px0 < 0 or body_px1 >= CANVAS_W or body_py0 < 0 or body_py1 >= CANVAS_H:
             raise SystemExit(
                 f"{name} 的角色本体越出画布：x {body_px0}~{body_px1}，y {body_py0}~{body_py1}"
-                f"（画布 {CANVAS_W}x{CANVAS_H}）。需要更小的 scale（当前 {scale}）。"
+                f"（画布 {CANVAS_W}x{CANVAS_H}）。需要更小的 fs（当前 {fs}）。"
             )
 
         canvas = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
@@ -458,6 +562,8 @@ def build_one(action_id):
                 "out": out_name,
                 "srcBounds": list(sb),
                 "placedAt": [px, py],
+                # 该帧实际用的缩放。逐帧头宽归一化时各帧不同，记下来便于复核。
+                "scale": round(fs, 4),
                 "outTop": ob[1],
                 "outFoot": ob[3],
                 "outW": ob[2] - ob[0] + 1,
@@ -495,6 +601,12 @@ def build_one(action_id):
             "canvas": {"w": CANVAS_W, "h": CANVAS_H},
             "scale": scale,
             "footBaseOutput": foot_out,
+            # 成品头宽（输出空间）。做"与站立同大小"的校验时读它 ——
+            # 比再解一遍 PNG 省事，也保证校验用的就是生成时的同一个数。
+            "headWidthOut": head_width_out,
+            "headMatch": head_match,
+            # 逐帧缩放（未启用时为 None）。各帧不同，便于复核段内一致性。
+            "perFrameScale": per_frame_scales,
             "perFrame": report,
         },
     }
@@ -523,6 +635,14 @@ def build_one(action_id):
                 + (f"、且用 {loop_fps}fps" if loop_fps != cfg["fps"] else "")
                 + f" → 播放 {total} 帧"
             )
+    # 静态帧池：可选。非空表示这个动画"不播"，每次触发随机挑一帧（拖拽用它）。
+    if cfg.get("static_frames"):
+        manifest["staticFrames"] = list(cfg["static_frames"])
+        print(
+            f"  静态帧池：触发时从第 {', '.join(str(v) for v in cfg['static_frames'])} 帧里随机挑一帧"
+            "（不播放、不推进）"
+        )
+
     # 尾帧循环：可选。进入动画播完后循环最后 N 帧（睡觉用它维持起伏）。
     if cfg.get("tail_loop_frames"):
         manifest["tailLoopFrames"] = cfg["tail_loop_frames"]

@@ -2,10 +2,6 @@
   "frameCount": 12,
   "fps": 6,
   "loop": false,
-  "staticFrames": [
-    4,
-    11
-  ],
   "sourceCanvasHeight": 1157,
   "drawOffsetY": [
     0,
@@ -21,14 +17,17 @@
     0,
     0
   ],
-  "_note": "由 scripts/dev/build-action-asset.py hang 生成；与站立素材同一画布约定（水平居中 + 脚底基准 y=1148）。",
+  "_note": "由 scripts/dev/build-action-asset.py hang 生成；与站立素材同一画布约定（水平居中 + 脚底基准 y=1155）。",
   "_processing": {
     "canvas": {
       "w": 864,
       "h": 1157
     },
-    "scale": 0.959,
-    "footBaseOutput": 1148,
+    "scale": 0.9649,
+    "footBaseOutput": 1155,
+    "headWidthOut": null,
+    "headMatch": null,
+    "perFrameScale": null,
     "perFrame": [
       {
         "src": "1.png",
@@ -40,13 +39,14 @@
           1223
         ],
         "placedAt": [
-          54,
+          52,
           4
         ],
+        "scale": 0.9649,
         "outTop": 4,
-        "outFoot": 1148,
-        "outW": 757,
-        "outH": 1145
+        "outFoot": 1155,
+        "outW": 761,
+        "outH": 1152
       },
       {
         "src": "2.png",
@@ -58,13 +58,14 @@
           1220
         ],
         "placedAt": [
-          52,
+          49,
           2
         ],
+        "scale": 0.9649,
         "outTop": 2,
-        "outFoot": 1148,
-        "outW": 761,
-        "outH": 1147
+        "outFoot": 1155,
+        "outW": 766,
+        "outH": 1154
       },
       {
         "src": "3.png",
@@ -76,13 +77,14 @@
           1225
         ],
         "placedAt": [
-          54,
+          51,
           2
         ],
+        "scale": 0.9649,
         "outTop": 2,
-        "outFoot": 1146,
-        "outW": 758,
-        "outH": 1145
+        "outFoot": 1153,
+        "outW": 762,
+        "outH": 1152
       },
       {
         "src": "4.png",
@@ -94,13 +96,14 @@
           1223
         ],
         "placedAt": [
-          54,
+          51,
           3
         ],
+        "scale": 0.9649,
         "outTop": 3,
-        "outFoot": 1148,
-        "outW": 758,
-        "outH": 1146
+        "outFoot": 1155,
+        "outW": 762,
+        "outH": 1153
       },
       {
         "src": "5.png",
@@ -112,13 +115,14 @@
           1223
         ],
         "placedAt": [
-          54,
+          51,
           4
         ],
+        "scale": 0.9649,
         "outTop": 4,
-        "outFoot": 1148,
-        "outW": 758,
-        "outH": 1145
+        "outFoot": 1155,
+        "outW": 762,
+        "outH": 1152
       },
       {
         "src": "6.png",
@@ -130,13 +134,14 @@
           1225
         ],
         "placedAt": [
-          53,
+          51,
           2
         ],
+        "scale": 0.9649,
         "outTop": 2,
-        "outFoot": 1148,
-        "outW": 759,
-        "outH": 1147
+        "outFoot": 1155,
+        "outW": 763,
+        "outH": 1154
       },
       {
         "src": "7.png",
@@ -148,13 +153,14 @@
           1223
         ],
         "placedAt": [
-          54,
+          52,
           4
         ],
+        "scale": 0.9649,
         "outTop": 4,
-        "outFoot": 1148,
-        "outW": 757,
-        "outH": 1145
+        "outFoot": 1155,
+        "outW": 761,
+        "outH": 1152
       },
       {
         "src": "8.png",
@@ -166,13 +172,14 @@
           1223
         ],
         "placedAt": [
-          53,
+          51,
           3
         ],
+        "scale": 0.9649,
         "outTop": 3,
-        "outFoot": 1147,
-        "outW": 759,
-        "outH": 1145
+        "outFoot": 1154,
+        "outW": 763,
+        "outH": 1152
       },
       {
         "src": "9.png",
@@ -184,13 +191,14 @@
           1219
         ],
         "placedAt": [
-          32,
+          29,
           7
         ],
+        "scale": 0.9649,
         "outTop": 7,
-        "outFoot": 1148,
-        "outW": 802,
-        "outH": 1142
+        "outFoot": 1155,
+        "outW": 807,
+        "outH": 1149
       },
       {
         "src": "10.png",
@@ -202,13 +210,14 @@
           1223
         ],
         "placedAt": [
-          53,
+          51,
           4
         ],
+        "scale": 0.9649,
         "outTop": 4,
-        "outFoot": 1148,
-        "outW": 759,
-        "outH": 1145
+        "outFoot": 1155,
+        "outW": 763,
+        "outH": 1152
       },
       {
         "src": "11.png",
@@ -220,13 +229,14 @@
           1207
         ],
         "placedAt": [
-          37,
+          35,
           13
         ],
+        "scale": 0.9649,
         "outTop": 13,
-        "outFoot": 1148,
-        "outW": 790,
-        "outH": 1136
+        "outFoot": 1155,
+        "outW": 795,
+        "outH": 1143
       },
       {
         "src": "12.png",
@@ -238,14 +248,19 @@
           1220
         ],
         "placedAt": [
-          53,
+          50,
           6
         ],
+        "scale": 0.9649,
         "outTop": 6,
-        "outFoot": 1148,
-        "outW": 760,
-        "outH": 1143
+        "outFoot": 1155,
+        "outW": 764,
+        "outH": 1150
       }
     ]
-  }
+  },
+  "staticFrames": [
+    4,
+    11
+  ]
 }

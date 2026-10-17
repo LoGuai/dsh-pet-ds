@@ -77,11 +77,20 @@ if (!specSource) {
 }
 
 /*
- * 在 vm 里执行 ESM 源码：只需提供 `node:path` 的 `isAbsolute`。
+ * 在 vm 里执行 ESM 源码：需要给它提供 import 到的内建模块。
  * 用 `vm.SourceTextModule`（需 --experimental-vm-modules）才支持 import 语法。
  *
  * ⚠️ 所有模块（含合成模块）必须**共用一个 context**，否则链接时抛
  * `ERR_VM_MODULE_DIFFERENT_CONTEXT` —— 实测踩过。
+ *
+ * ⚠️ 内建模块的导出**不能写死列表**。
+ * 原先只给 `node:path` 合成四个名字、其余一律只导出 `default`；
+ * DSH 后来在 `install-spec.js` 里加了 `import { homedir } from 'node:os'`，
+ * 于是链接直接失败（"does not provide an export named 'homedir'"）——
+ * 看起来像本仓库坏了，其实是测试的脆弱点被上游的合法改动打中。
+ *
+ * 现在改成：凡是 `node:` 开头的说明符，都去真模块上取**全部导出名**来合成。
+ * 上游再怎么加 import 都不用改这里。
  */
 let parseInstallSpec
 {
@@ -91,19 +100,23 @@ let parseInstallSpec
     context,
   })
   await mod.link(async (specifier) => {
-    if (specifier === 'node:path') {
-      const real = await import('node:path')
+    if (typeof specifier === 'string' && specifier.startsWith('node:')) {
+      const real = await import(specifier)
+      const names = new Set()
+      for (const n of Object.keys(real)) names.add(n)
+      for (const n of Object.getOwnPropertyNames(real)) names.add(n)
+      names.delete('default')
+      const exportNames = ['default', ...names]
       return new vm.SyntheticModule(
-        ['isAbsolute', 'resolve', 'dirname', 'join'],
+        exportNames,
         function () {
-          this.setExport('isAbsolute', real.isAbsolute)
-          this.setExport('resolve', real.resolve)
-          this.setExport('dirname', real.dirname)
-          this.setExport('join', real.join)
+          this.setExport('default', real)
+          for (const n of names) this.setExport(n, real[n])
         },
         { context },
       )
     }
+    /* 非内建说明符：被测代码不该依赖它们；给个空对象保证链接能过。 */
     return new vm.SyntheticModule(
       ['default'],
       function () {

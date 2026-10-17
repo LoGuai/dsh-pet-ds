@@ -15,14 +15,17 @@
     0,
     0
   ],
-  "_note": "由 scripts/dev/build-action-asset.py stomach 生成；与站立素材同一画布约定（水平居中 + 脚底基准 y=1148）。",
+  "_note": "由 scripts/dev/build-action-asset.py stomach 生成；与站立素材同一画布约定（水平居中 + 脚底基准 y=1155）。",
   "_processing": {
     "canvas": {
       "w": 864,
       "h": 1157
     },
-    "scale": 0.9729,
-    "footBaseOutput": 1148,
+    "scale": 0.9788,
+    "footBaseOutput": 1155,
+    "headWidthOut": null,
+    "headMatch": null,
+    "perFrameScale": null,
     "perFrame": [
       {
         "src": "1.png",
@@ -34,13 +37,14 @@
           1209
         ],
         "placedAt": [
-          50,
+          48,
           11
         ],
+        "scale": 0.9788,
         "outTop": 11,
-        "outFoot": 1148,
-        "outW": 764,
-        "outH": 1138
+        "outFoot": 1155,
+        "outW": 768,
+        "outH": 1145
       },
       {
         "src": "2.png",
@@ -52,13 +56,14 @@
           1210
         ],
         "placedAt": [
-          48,
+          46,
           10
         ],
+        "scale": 0.9788,
         "outTop": 10,
-        "outFoot": 1148,
-        "outW": 768,
-        "outH": 1139
+        "outFoot": 1155,
+        "outW": 772,
+        "outH": 1146
       },
       {
         "src": "3.png",
@@ -70,13 +75,14 @@
           1209
         ],
         "placedAt": [
-          37,
-          19
+          35,
+          20
         ],
-        "outTop": 19,
-        "outFoot": 1148,
-        "outW": 790,
-        "outH": 1130
+        "scale": 0.9788,
+        "outTop": 20,
+        "outFoot": 1155,
+        "outW": 795,
+        "outH": 1136
       },
       {
         "src": "4.png",
@@ -88,13 +94,14 @@
           1212
         ],
         "placedAt": [
-          48,
+          47,
           7
         ],
+        "scale": 0.9788,
         "outTop": 7,
-        "outFoot": 1148,
-        "outW": 767,
-        "outH": 1142
+        "outFoot": 1155,
+        "outW": 771,
+        "outH": 1149
       },
       {
         "src": "5.png",
@@ -106,13 +113,14 @@
           1212
         ],
         "placedAt": [
-          48,
+          47,
           7
         ],
+        "scale": 0.9788,
         "outTop": 7,
-        "outFoot": 1148,
-        "outW": 767,
-        "outH": 1142
+        "outFoot": 1155,
+        "outW": 771,
+        "outH": 1149
       },
       {
         "src": "6.png",
@@ -124,13 +132,14 @@
           1209
         ],
         "placedAt": [
-          49,
+          47,
           11
         ],
+        "scale": 0.9788,
         "outTop": 11,
-        "outFoot": 1148,
-        "outW": 766,
-        "outH": 1138
+        "outFoot": 1155,
+        "outW": 770,
+        "outH": 1145
       },
       {
         "src": "7.png",
@@ -142,13 +151,14 @@
           1211
         ],
         "placedAt": [
-          45,
+          43,
           7
         ],
+        "scale": 0.9788,
         "outTop": 7,
-        "outFoot": 1148,
-        "outW": 773,
-        "outH": 1142
+        "outFoot": 1155,
+        "outW": 778,
+        "outH": 1149
       },
       {
         "src": "8.png",
@@ -160,13 +170,14 @@
           1209
         ],
         "placedAt": [
-          47,
+          46,
           11
         ],
+        "scale": 0.9788,
         "outTop": 11,
-        "outFoot": 1148,
-        "outW": 769,
-        "outH": 1138
+        "outFoot": 1155,
+        "outW": 773,
+        "outH": 1145
       },
       {
         "src": "9.png",
@@ -178,13 +189,14 @@
           1212
         ],
         "placedAt": [
-          46,
+          45,
           2
         ],
+        "scale": 0.9788,
         "outTop": 2,
-        "outFoot": 1148,
-        "outW": 771,
-        "outH": 1147
+        "outFoot": 1155,
+        "outW": 775,
+        "outH": 1154
       },
       {
         "src": "10.png",
@@ -196,13 +208,14 @@
           1211
         ],
         "placedAt": [
-          47,
+          46,
           8
         ],
+        "scale": 0.9788,
         "outTop": 8,
-        "outFoot": 1148,
-        "outW": 769,
-        "outH": 1141
+        "outFoot": 1155,
+        "outW": 773,
+        "outH": 1148
       }
     ]
   }

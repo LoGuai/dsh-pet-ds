@@ -15,14 +15,17 @@
     0,
     0
   ],
-  "_note": "由 scripts/dev/build-action-asset.py sleep 生成；与站立素材同一画布约定（水平居中 + 脚底基准 y=1148）。",
+  "_note": "由 scripts/dev/build-action-asset.py sleep 生成；与站立素材同一画布约定（水平居中 + 脚底基准 y=1155）。",
   "_processing": {
     "canvas": {
       "w": 864,
       "h": 1157
     },
-    "scale": 0.972,
-    "footBaseOutput": 1148,
+    "scale": 0.978,
+    "footBaseOutput": 1155,
+    "headWidthOut": null,
+    "headMatch": null,
+    "perFrameScale": null,
     "perFrame": [
       {
         "src": "1.png",
@@ -34,13 +37,14 @@
           1214
         ],
         "placedAt": [
-          52,
+          51,
           8
         ],
+        "scale": 0.978,
         "outTop": 8,
-        "outFoot": 1147,
-        "outW": 759,
-        "outH": 1140
+        "outFoot": 1154,
+        "outW": 764,
+        "outH": 1147
       },
       {
         "src": "2.png",
@@ -52,13 +56,14 @@
           1216
         ],
         "placedAt": [
-          51,
+          49,
           6
         ],
+        "scale": 0.978,
         "outTop": 6,
-        "outFoot": 1147,
-        "outW": 762,
-        "outH": 1142
+        "outFoot": 1154,
+        "outW": 767,
+        "outH": 1149
       },
       {
         "src": "3.png",
@@ -70,13 +75,14 @@
           1214
         ],
         "placedAt": [
-          49,
+          48,
           8
         ],
+        "scale": 0.978,
         "outTop": 8,
-        "outFoot": 1148,
-        "outW": 765,
-        "outH": 1141
+        "outFoot": 1155,
+        "outW": 770,
+        "outH": 1148
       },
       {
         "src": "4.png",
@@ -88,13 +94,14 @@
           1214
         ],
         "placedAt": [
-          51,
+          50,
           2
         ],
+        "scale": 0.978,
         "outTop": 3,
-        "outFoot": 1148,
-        "outW": 761,
-        "outH": 1146
+        "outFoot": 1155,
+        "outW": 766,
+        "outH": 1153
       },
       {
         "src": "5.png",
@@ -106,13 +113,14 @@
           1215
         ],
         "placedAt": [
-          51,
+          49,
           10
         ],
+        "scale": 0.978,
         "outTop": 10,
-        "outFoot": 1146,
-        "outW": 762,
-        "outH": 1137
+        "outFoot": 1153,
+        "outW": 767,
+        "outH": 1144
       },
       {
         "src": "6.png",
@@ -124,13 +132,14 @@
           1212
         ],
         "placedAt": [
-          50,
+          49,
           18
         ],
+        "scale": 0.978,
         "outTop": 18,
-        "outFoot": 1148,
-        "outW": 763,
-        "outH": 1131
+        "outFoot": 1155,
+        "outW": 768,
+        "outH": 1138
       },
       {
         "src": "7.png",
@@ -142,13 +151,14 @@
           1214
         ],
         "placedAt": [
-          49,
+          47,
           9
         ],
+        "scale": 0.978,
         "outTop": 9,
-        "outFoot": 1148,
-        "outW": 766,
-        "outH": 1140
+        "outFoot": 1155,
+        "outW": 771,
+        "outH": 1147
       },
       {
         "src": "8.png",
@@ -160,13 +170,14 @@
           1214
         ],
         "placedAt": [
-          51,
+          50,
           13
         ],
+        "scale": 0.978,
         "outTop": 13,
-        "outFoot": 1148,
-        "outW": 761,
-        "outH": 1136
+        "outFoot": 1155,
+        "outW": 766,
+        "outH": 1143
       },
       {
         "src": "9.png",
@@ -178,13 +189,14 @@
           1216
         ],
         "placedAt": [
-          48,
+          47,
           4
         ],
+        "scale": 0.978,
         "outTop": 4,
-        "outFoot": 1147,
-        "outW": 767,
-        "outH": 1144
+        "outFoot": 1154,
+        "outW": 772,
+        "outH": 1151
       },
       {
         "src": "10.png",
@@ -196,13 +208,14 @@
           1217
         ],
         "placedAt": [
-          51,
+          50,
           5
         ],
+        "scale": 0.978,
         "outTop": 5,
-        "outFoot": 1147,
-        "outW": 761,
-        "outH": 1143
+        "outFoot": 1155,
+        "outW": 766,
+        "outH": 1151
       }
     ]
   },

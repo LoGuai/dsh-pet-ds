@@ -15,14 +15,17 @@
     0,
     0
   ],
-  "_note": "由 scripts/dev/build-action-asset.py chest 生成；与站立素材同一画布约定（水平居中 + 脚底基准 y=1148）。",
+  "_note": "由 scripts/dev/build-action-asset.py chest 生成；与站立素材同一画布约定（水平居中 + 脚底基准 y=1155）。",
   "_processing": {
     "canvas": {
       "w": 864,
       "h": 1157
     },
-    "scale": 0.9495,
-    "footBaseOutput": 1148,
+    "scale": 0.9553,
+    "footBaseOutput": 1155,
+    "headWidthOut": null,
+    "headMatch": null,
+    "perFrameScale": null,
     "perFrame": [
       {
         "src": "1.png",
@@ -34,13 +37,14 @@
           1218
         ],
         "placedAt": [
-          50,
+          48,
           4
         ],
+        "scale": 0.9553,
         "outTop": 4,
-        "outFoot": 1148,
-        "outW": 764,
-        "outH": 1145
+        "outFoot": 1155,
+        "outW": 769,
+        "outH": 1152
       },
       {
         "src": "2.png",
@@ -52,13 +56,14 @@
           1217
         ],
         "placedAt": [
-          58,
+          57,
           8
         ],
+        "scale": 0.9553,
         "outTop": 8,
-        "outFoot": 1148,
-        "outW": 747,
-        "outH": 1141
+        "outFoot": 1155,
+        "outW": 752,
+        "outH": 1148
       },
       {
         "src": "3.png",
@@ -70,13 +75,14 @@
           1213
         ],
         "placedAt": [
-          60,
+          58,
           9
         ],
+        "scale": 0.9553,
         "outTop": 9,
-        "outFoot": 1148,
-        "outW": 742,
-        "outH": 1140
+        "outFoot": 1155,
+        "outW": 747,
+        "outH": 1147
       },
       {
         "src": "4.png",
@@ -88,13 +94,14 @@
           1217
         ],
         "placedAt": [
-          51,
+          49,
           7
         ],
+        "scale": 0.9553,
         "outTop": 7,
-        "outFoot": 1148,
-        "outW": 761,
-        "outH": 1142
+        "outFoot": 1155,
+        "outW": 766,
+        "outH": 1149
       },
       {
         "src": "5.png",
@@ -106,13 +113,14 @@
           1221
         ],
         "placedAt": [
-          49,
+          47,
           2
         ],
+        "scale": 0.9553,
         "outTop": 2,
-        "outFoot": 1148,
-        "outW": 766,
-        "outH": 1147
+        "outFoot": 1155,
+        "outW": 771,
+        "outH": 1154
       },
       {
         "src": "6.png",
@@ -124,13 +132,14 @@
           1221
         ],
         "placedAt": [
-          49,
+          47,
           2
         ],
+        "scale": 0.9553,
         "outTop": 2,
-        "outFoot": 1148,
-        "outW": 766,
-        "outH": 1147
+        "outFoot": 1155,
+        "outW": 771,
+        "outH": 1154
       },
       {
         "src": "7.png",
@@ -142,13 +151,14 @@
           1219
         ],
         "placedAt": [
-          51,
+          49,
           4
         ],
+        "scale": 0.9553,
         "outTop": 4,
-        "outFoot": 1148,
-        "outW": 761,
-        "outH": 1145
+        "outFoot": 1155,
+        "outW": 766,
+        "outH": 1152
       },
       {
         "src": "8.png",
@@ -160,13 +170,14 @@
           1217
         ],
         "placedAt": [
-          47,
+          45,
           8
         ],
+        "scale": 0.9553,
         "outTop": 8,
-        "outFoot": 1148,
-        "outW": 770,
-        "outH": 1141
+        "outFoot": 1155,
+        "outW": 775,
+        "outH": 1148
       },
       {
         "src": "9.png",
@@ -178,13 +189,14 @@
           1218
         ],
         "placedAt": [
-          51,
+          50,
           5
         ],
+        "scale": 0.9553,
         "outTop": 5,
-        "outFoot": 1148,
-        "outW": 761,
-        "outH": 1144
+        "outFoot": 1155,
+        "outW": 765,
+        "outH": 1151
       },
       {
         "src": "10.png",
@@ -196,13 +208,14 @@
           1218
         ],
         "placedAt": [
-          51,
+          50,
           5
         ],
+        "scale": 0.9553,
         "outTop": 5,
-        "outFoot": 1148,
-        "outW": 761,
-        "outH": 1144
+        "outFoot": 1155,
+        "outW": 765,
+        "outH": 1151
       }
     ]
   }

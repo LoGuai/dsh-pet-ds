@@ -173,36 +173,108 @@ test('拖拽动画（hang）声明了静态帧池 —— 用户要求"随机播�
   )
 })
 
-test('坐姿三段（sit / sit-circle / sit-stop）共用同一缩放倍数', () => {
+test('坐姿三段与站立同一视觉大小（按头部宽度对齐）', () => {
   /*
    * 坐姿是**三段素材连续衔接**的一个动作：坐下的过程 → 坐着循环 → 站起的过程。
    *
-   * 若三段各自按"填满画布"归一化，缩放会不一致（实测未共用时是
-   * 0.9441 / 0.9582 / 0.9621），切换阶段时角色大小会跳一下（约 2%，
-   * 屏幕上约 4px，肉眼能看出来）。
+   * ## 为什么不能靠"共用同一缩放倍数"
    *
-   * 所以 `build-action-asset.py` 里给三段配了同一个 `scale_group`，
-   * 这里断言生成的清单确实记录了同一个倍数 —— 防止有人改了配置却没重跑。
+   * 曾经的做法是给三段配同一个 `scale_group`，让它们乘同一个系数 ——
+   * 那个做法是**错的**，因为三段**原始素材里角色本身就画得不一样大**
+   * （实测头宽 stand 530 / sit 580 / sit-circle 627 / sit-stop 643）。
+   * 共用系数只是把差异原样保留下来，用户实测反馈"坐下前后桌宠大小不一样"，
+   * 坐在那里时比站着大 12%。
+   *
+   * ## 现在的契约
+   *
+   * 按**头部宽度**对齐到站立：`build-action-asset.py` 的
+   * `match_head_to: "stand"` + `match_head_per_frame: true`。
+   * 用头宽而不是整体包围盒，是因为整体包围盒随姿势剧烈变化
+   * （裙摆铺开、手臂抬起），拿它对齐会把"姿势不同"错当成"大小不同"。
+   *
+   * 这里断言清单里记录的 `headWidthOut` 确实是同一个基准值 ——
+   * 防止有人改了配置却没重跑，或某段回退成"各自填满画布"。
    */
   const ids = ['sit', 'sit-circle', 'sit-stop']
-  const scales = {}
+  const heads = {}
+  const refs = {}
   for (const id of ids) {
     const p = join(ANIM_ROOT, id, 'manifest.json')
     assert.ok(existsSync(p), `缺 ${id}/manifest.json`)
     const m = JSON.parse(readFileSync(p, 'utf8'))
-    const s = m._processing ? m._processing.scale : undefined
+    const proc = m._processing
+    assert.ok(proc, `${id}/manifest.json 没有 _processing（重新跑 build-action-asset.py ${id}）`)
     assert.ok(
-      Number.isFinite(s),
-      `${id}/manifest.json 没有记录 _processing.scale（重新跑 build-action-asset.py ${id}）`,
+      Number.isFinite(proc.headWidthOut),
+      `${id} 没有记录 _processing.headWidthOut —— 说明没走"头宽对齐"，角色大小会与站立不一致`,
     )
-    scales[id] = s
+    assert.equal(
+      proc.footBaseOutput,
+      1155,
+      `${id} 的脚底基准是 ${String(proc.footBaseOutput)}，应为 1155（与站立多数帧一致）`,
+    )
+    heads[id] = proc.headWidthOut
+    refs[id] = proc.headMatch && proc.headMatch.refHeadWidth
+    assert.equal(
+      proc.headMatch && proc.headMatch.ref,
+      'stand',
+      `${id} 的头宽基准不是 stand`,
+    )
+    assert.equal(
+      proc.headMatch && proc.headMatch.perFrame,
+      true,
+      `${id} 没开逐帧归一化 —— 段内仍有尺寸差（实测 sit-stop 段内跨度 10.5%）`,
+    )
+    assert.equal(
+      Array.isArray(proc.perFrameScale) ? proc.perFrameScale.length : -1,
+      m.frameCount,
+      `${id} 的 perFrameScale 长度与帧数不一致`,
+    )
   }
-  const values = Object.values(scales)
-  const unique = new Set(values)
+
+  /* 三段都对齐到同一个参考头宽，且三段之间一致（容差 2%，取整误差量级）。 */
+  const ref = refs.sit
+  assert.ok(Number.isFinite(ref), 'sit 没有记录 refHeadWidth')
+  for (const id of ids) {
+    assert.equal(refs[id], ref, `${id} 的参考头宽 ${String(refs[id])} 与 sit 的 ${String(ref)} 不一致`)
+    assert.ok(
+      Math.abs(heads[id] - ref) / ref <= 0.02,
+      `${id} 的对齐后头宽 ${String(heads[id])} 偏离参考 ${String(ref)} 超过 2%`,
+    )
+  }
+})
+
+test('所有动作的脚底基准一致（切换动作时角色不会上下跳）', () => {
+  /*
+   * 这条来自一个真实缺陷：`standing_foot_output()` 原先用 `min(脚底)`，
+   * 而站立 12 帧里只有 1 帧在 1148、其余 11 帧在 1155 ——
+   * 于是基准取到 1148，所有动作都对齐到 1148，而**站立自己**多数帧在 1155，
+   * 切换动作时角色整体上移 7px（用户反馈"坐下前后锚点有变化"）。
+   *
+   * 修法：基准改用**众数**（1155），并把所有动作重新对齐。
+   *
+   * 断言写成"所有记录的脚底基准必须相同"，而不是写死 1155 ——
+   * 那样以后调整画布约定时不必再改测试，而"不一致"永远是真错。
+   */
+  const feet = {}
+  for (const action of actions) {
+    const p = join(ANIM_ROOT, action, 'manifest.json')
+    if (!existsSync(p)) continue
+    const m = JSON.parse(readFileSync(p, 'utf8'))
+    const f = m._processing ? m._processing.footBaseOutput : undefined
+    if (f !== undefined) feet[action] = f
+  }
+  const values = [...new Set(Object.values(feet))]
   assert.equal(
-    unique.size,
+    values.length,
     1,
-    `三段缩放不一致，切换阶段时角色大小会跳：${ids.map((i) => `${i}=${String(scales[i])}`).join('，')}`,
+    '各动作的脚底基准不一致（切换动作时角色会跳）：'
+      + Object.entries(feet).map(([a, f]) => `${a}=${String(f)}`).join('，'),
+  )
+  /* 至少要有"绝大多数动作"记录了这个值，避免这条断言因为全空而恒真。 */
+  assert.ok(
+    Object.keys(feet).length >= 10,
+    `只有 ${String(Object.keys(feet).length)} 个动作记录了脚底基准，太少（断言可能形同虚设）`,
   )
 })
 

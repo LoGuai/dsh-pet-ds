@@ -17,14 +17,62 @@
     0,
     0
   ],
-  "_note": "由 scripts/dev/build-action-asset.py sit-circle 生成；与站立素材同一画布约定（水平居中 + 脚底基准 y=1148）。",
+  "_note": "由 scripts/dev/build-action-asset.py sit-circle 生成；与站立素材同一画布约定（水平居中 + 脚底基准 y=1155）。",
   "_processing": {
     "canvas": {
       "w": 864,
       "h": 1157
     },
-    "scale": 0.9441,
-    "footBaseOutput": 1148,
+    "scale": 0.8453,
+    "footBaseOutput": 1155,
+    "headWidthOut": 530.0,
+    "headMatch": {
+      "ref": "stand",
+      "refHeadWidth": 530,
+      "perFrame": true,
+      "rawHeadWidths": [
+        623,
+        624,
+        623,
+        624,
+        626,
+        625,
+        625,
+        624,
+        624,
+        624,
+        627,
+        627
+      ],
+      "perFrameScale": [
+        0.8507,
+        0.8494,
+        0.8507,
+        0.8494,
+        0.8466,
+        0.848,
+        0.848,
+        0.8494,
+        0.8494,
+        0.8494,
+        0.8453,
+        0.8453
+      ]
+    },
+    "perFrameScale": [
+      0.8507,
+      0.8494,
+      0.8507,
+      0.8494,
+      0.8466,
+      0.848,
+      0.848,
+      0.8494,
+      0.8494,
+      0.8494,
+      0.8453,
+      0.8453
+    ],
     "perFrame": [
       {
         "src": "1.png",
@@ -36,13 +84,14 @@
           1211
         ],
         "placedAt": [
-          11,
-          25
+          53,
+          143
         ],
-        "outTop": 25,
-        "outFoot": 1148,
-        "outW": 843,
-        "outH": 1124
+        "scale": 0.8507,
+        "outTop": 143,
+        "outFoot": 1155,
+        "outW": 760,
+        "outH": 1013
       },
       {
         "src": "2.png",
@@ -54,13 +103,14 @@
           1212
         ],
         "placedAt": [
-          11,
-          24
+          53,
+          144
         ],
-        "outTop": 24,
-        "outFoot": 1148,
-        "outW": 843,
-        "outH": 1125
+        "scale": 0.8494,
+        "outTop": 144,
+        "outFoot": 1155,
+        "outW": 759,
+        "outH": 1012
       },
       {
         "src": "3.png",
@@ -72,13 +122,14 @@
           1211
         ],
         "placedAt": [
-          11,
-          25
+          53,
+          143
         ],
-        "outTop": 25,
-        "outFoot": 1148,
-        "outW": 843,
-        "outH": 1124
+        "scale": 0.8507,
+        "outTop": 143,
+        "outFoot": 1155,
+        "outW": 760,
+        "outH": 1013
       },
       {
         "src": "4.png",
@@ -90,13 +141,14 @@
           1211
         ],
         "placedAt": [
-          11,
-          25
+          53,
+          144
         ],
-        "outTop": 25,
-        "outFoot": 1148,
-        "outW": 843,
-        "outH": 1124
+        "scale": 0.8494,
+        "outTop": 144,
+        "outFoot": 1155,
+        "outW": 759,
+        "outH": 1012
       },
       {
         "src": "5.png",
@@ -108,13 +160,14 @@
           1212
         ],
         "placedAt": [
-          11,
-          25
+          54,
+          148
         ],
-        "outTop": 25,
-        "outFoot": 1148,
-        "outW": 843,
-        "outH": 1124
+        "scale": 0.8466,
+        "outTop": 148,
+        "outFoot": 1155,
+        "outW": 756,
+        "outH": 1008
       },
       {
         "src": "6.png",
@@ -126,13 +179,14 @@
           1212
         ],
         "placedAt": [
-          10,
-          24
+          53,
+          145
         ],
-        "outTop": 24,
-        "outFoot": 1148,
-        "outW": 845,
-        "outH": 1125
+        "scale": 0.848,
+        "outTop": 145,
+        "outFoot": 1155,
+        "outW": 759,
+        "outH": 1011
       },
       {
         "src": "7.png",
@@ -144,13 +198,14 @@
           1212
         ],
         "placedAt": [
-          10,
-          24
+          53,
+          145
         ],
-        "outTop": 25,
-        "outFoot": 1148,
-        "outW": 844,
-        "outH": 1124
+        "scale": 0.848,
+        "outTop": 146,
+        "outFoot": 1155,
+        "outW": 758,
+        "outH": 1010
       },
       {
         "src": "8.png",
@@ -162,13 +217,14 @@
           1212
         ],
         "placedAt": [
-          10,
-          24
+          52,
+          144
         ],
-        "outTop": 25,
-        "outFoot": 1148,
-        "outW": 845,
-        "outH": 1124
+        "scale": 0.8494,
+        "outTop": 145,
+        "outFoot": 1155,
+        "outW": 760,
+        "outH": 1011
       },
       {
         "src": "9.png",
@@ -180,13 +236,14 @@
           1211
         ],
         "placedAt": [
-          11,
-          25
+          53,
+          144
         ],
-        "outTop": 25,
-        "outFoot": 1148,
-        "outW": 843,
-        "outH": 1124
+        "scale": 0.8494,
+        "outTop": 144,
+        "outFoot": 1155,
+        "outW": 759,
+        "outH": 1012
       },
       {
         "src": "10.png",
@@ -198,13 +255,14 @@
           1212
         ],
         "placedAt": [
-          10,
-          24
+          53,
+          144
         ],
-        "outTop": 24,
-        "outFoot": 1148,
-        "outW": 844,
-        "outH": 1125
+        "scale": 0.8494,
+        "outTop": 144,
+        "outFoot": 1155,
+        "outW": 759,
+        "outH": 1012
       },
       {
         "src": "11.png",
@@ -216,13 +274,14 @@
           1212
         ],
         "placedAt": [
-          10,
-          26
+          54,
+          151
         ],
-        "outTop": 26,
-        "outFoot": 1148,
-        "outW": 845,
-        "outH": 1123
+        "scale": 0.8453,
+        "outTop": 151,
+        "outFoot": 1155,
+        "outW": 757,
+        "outH": 1005
       },
       {
         "src": "12.png",
@@ -234,13 +293,14 @@
           1212
         ],
         "placedAt": [
-          10,
-          25
+          54,
+          149
         ],
-        "outTop": 25,
-        "outFoot": 1148,
-        "outW": 846,
-        "outH": 1124
+        "scale": 0.8453,
+        "outTop": 149,
+        "outFoot": 1155,
+        "outW": 757,
+        "outH": 1007
       }
     ]
   }

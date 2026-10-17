@@ -11,14 +11,17 @@
     0,
     0
   ],
-  "_note": "由 scripts/dev/build-action-asset.py awake 生成；与站立素材同一画布约定（水平居中 + 脚底基准 y=1148）。",
+  "_note": "由 scripts/dev/build-action-asset.py awake 生成；与站立素材同一画布约定（水平居中 + 脚底基准 y=1155）。",
   "_processing": {
     "canvas": {
       "w": 864,
       "h": 1157
     },
-    "scale": 0.9542,
-    "footBaseOutput": 1148,
+    "scale": 0.9601,
+    "footBaseOutput": 1155,
+    "headWidthOut": null,
+    "headMatch": null,
+    "perFrameScale": null,
     "perFrame": [
       {
         "src": "1.png",
@@ -30,13 +33,14 @@
           1205
         ],
         "placedAt": [
-          58,
-          34
+          56,
+          35
         ],
-        "outTop": 34,
-        "outFoot": 1148,
-        "outW": 748,
-        "outH": 1115
+        "scale": 0.9601,
+        "outTop": 35,
+        "outFoot": 1155,
+        "outW": 753,
+        "outH": 1121
       },
       {
         "src": "2.png",
@@ -48,13 +52,14 @@
           1194
         ],
         "placedAt": [
-          69,
-          55
+          68,
+          56
         ],
-        "outTop": 55,
-        "outFoot": 1148,
-        "outW": 724,
-        "outH": 1094
+        "scale": 0.9601,
+        "outTop": 56,
+        "outFoot": 1155,
+        "outW": 729,
+        "outH": 1100
       },
       {
         "src": "3.png",
@@ -66,13 +71,14 @@
           1210
         ],
         "placedAt": [
-          72,
+          71,
           29
         ],
+        "scale": 0.9601,
         "outTop": 29,
-        "outFoot": 1148,
-        "outW": 719,
-        "outH": 1120
+        "outFoot": 1155,
+        "outW": 724,
+        "outH": 1127
       },
       {
         "src": "4.png",
@@ -84,13 +90,14 @@
           1199
         ],
         "placedAt": [
-          64,
+          63,
           21
         ],
+        "scale": 0.9601,
         "outTop": 21,
-        "outFoot": 1147,
-        "outW": 735,
-        "outH": 1127
+        "outFoot": 1154,
+        "outW": 739,
+        "outH": 1134
       },
       {
         "src": "5.png",
@@ -102,13 +109,14 @@
           1210
         ],
         "placedAt": [
-          60,
+          59,
           22
         ],
+        "scale": 0.9601,
         "outTop": 22,
-        "outFoot": 1148,
-        "outW": 743,
-        "outH": 1127
+        "outFoot": 1155,
+        "outW": 748,
+        "outH": 1134
       },
       {
         "src": "6.png",
@@ -120,13 +128,14 @@
           1217
         ],
         "placedAt": [
-          52,
+          50,
           2
         ],
+        "scale": 0.9601,
         "outTop": 2,
-        "outFoot": 1148,
-        "outW": 760,
-        "outH": 1147
+        "outFoot": 1155,
+        "outW": 765,
+        "outH": 1154
       }
     ]
   }

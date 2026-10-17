@@ -11,14 +11,44 @@
     0,
     0
   ],
-  "_note": "由 scripts/dev/build-action-asset.py sit-stop 生成；与站立素材同一画布约定（水平居中 + 脚底基准 y=1148）。",
+  "_note": "由 scripts/dev/build-action-asset.py sit-stop 生成；与站立素材同一画布约定（水平居中 + 脚底基准 y=1155）。",
   "_processing": {
     "canvas": {
       "w": 864,
       "h": 1157
     },
-    "scale": 0.9441,
-    "footBaseOutput": 1148,
+    "scale": 0.8243,
+    "footBaseOutput": 1155,
+    "headWidthOut": 530.0,
+    "headMatch": {
+      "ref": "stand",
+      "refHeadWidth": 530,
+      "perFrame": true,
+      "rawHeadWidths": [
+        632,
+        643,
+        628,
+        594,
+        614,
+        582
+      ],
+      "perFrameScale": [
+        0.8386,
+        0.8243,
+        0.8439,
+        0.8923,
+        0.8632,
+        0.9107
+      ]
+    },
+    "perFrameScale": [
+      0.8386,
+      0.8243,
+      0.8439,
+      0.8923,
+      0.8632,
+      0.9107
+    ],
     "perFrame": [
       {
         "src": "1.png",
@@ -30,13 +60,14 @@
           1212
         ],
         "placedAt": [
-          2,
-          24
+          50,
+          156
         ],
-        "outTop": 24,
-        "outFoot": 1148,
-        "outW": 860,
-        "outH": 1125
+        "scale": 0.8386,
+        "outTop": 156,
+        "outFoot": 1155,
+        "outW": 764,
+        "outH": 1000
       },
       {
         "src": "2.png",
@@ -48,13 +79,14 @@
           1218
         ],
         "placedAt": [
-          1,
-          22
+          56,
+          172
         ],
-        "outTop": 22,
-        "outFoot": 1148,
-        "outW": 862,
-        "outH": 1127
+        "scale": 0.8243,
+        "outTop": 172,
+        "outFoot": 1155,
+        "outW": 753,
+        "outH": 984
       },
       {
         "src": "3.png",
@@ -66,13 +98,14 @@
           1211
         ],
         "placedAt": [
-          3,
-          32
+          48,
+          158
         ],
-        "outTop": 32,
-        "outFoot": 1148,
-        "outW": 859,
-        "outH": 1117
+        "scale": 0.8439,
+        "outTop": 158,
+        "outFoot": 1155,
+        "outW": 768,
+        "outH": 998
       },
       {
         "src": "4.png",
@@ -84,13 +117,14 @@
           1219
         ],
         "placedAt": [
-          24,
-          17
+          47,
+          86
         ],
-        "outTop": 17,
-        "outFoot": 1148,
-        "outW": 817,
-        "outH": 1132
+        "scale": 0.8923,
+        "outTop": 86,
+        "outFoot": 1155,
+        "outW": 772,
+        "outH": 1070
       },
       {
         "src": "5.png",
@@ -102,13 +136,14 @@
           1225
         ],
         "placedAt": [
-          12,
-          9
+          48,
+          114
         ],
-        "outTop": 9,
-        "outFoot": 1146,
-        "outW": 840,
-        "outH": 1138
+        "scale": 0.8632,
+        "outTop": 114,
+        "outFoot": 1154,
+        "outW": 768,
+        "outH": 1041
       },
       {
         "src": "6.png",
@@ -120,13 +155,14 @@
           1228
         ],
         "placedAt": [
-          39,
-          13
+          53,
+          60
         ],
-        "outTop": 13,
-        "outFoot": 1148,
-        "outW": 786,
-        "outH": 1136
+        "scale": 0.9107,
+        "outTop": 60,
+        "outFoot": 1155,
+        "outW": 759,
+        "outH": 1096
       }
     ]
   }
