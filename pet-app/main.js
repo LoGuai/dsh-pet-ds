@@ -12,7 +12,7 @@
 
 const http = require('node:http')
 const path = require('node:path')
-const { app, BrowserWindow, ipcMain, Menu, screen } = require('electron')
+const { app, BrowserWindow, ipcMain, Menu, screen, shell } = require('electron')
 
 const settings = require('./settings')
 
@@ -60,9 +60,26 @@ const {
   moodVoiceGroup,
   voiceLibrarySummary,
   voiceLineCount,
+  pickTrustLine,
+  TRUST_LINES,
   VOICE_GROUPS,
   VOICE_LINE_MAX_CHARS,
 } = require('../src/shared-core/voice-library.js')
+
+/**
+ * 好感度的**增长规则**（用户指定的五条途径）。
+ *
+ * 数值与冷却全部集中在 shared-core 里，这里只负责"在正确的时机调用"。
+ * 为什么不把 200 / 2~8 这类数字写在这：它们要与面板文案、测试、
+ * 以后的平衡调整保持一致，散落在调用点迟早对不上。
+ */
+const {
+  AFFECTION_GAIN,
+  LOW_MOOD_THRESHOLD,
+  LOW_MOOD_CLICK_MOOD_GAIN,
+  clickAffectionGain,
+} = require('../src/shared-core/affection-gain.js')
+
 
 /** 余额取数：与宿主**共用同一份**（shared-core，ESM 经 require(esm) 加载）。 */
 const { createBalanceFetcher } = require('../src/shared-core/balance.js')
@@ -1159,6 +1176,14 @@ function currentMoodPayload() {
     gainPerPet: { min: MOOD_GAIN_PER_PET_MIN, max: MOOD_GAIN_PER_PET_MAX },
     /** 闲置随机动作回复心情的区间（10~30）。 */
     gainPerAction: { min: MOOD_GAIN_PER_ACTION_MIN, max: MOOD_GAIN_PER_ACTION_MAX },
+    /**
+     * 最近一次**主动加心情**的增量（供"浮出数字"的可视反馈）。
+     *
+     * ⚠️ 只有"用户看得见的加成"才写这里（点击、随机动作奖励、低心情 +50）；
+     * **周期漂移不写** —— 那是后台的随机变化，浮一个 "+37" 会让人莫名其妙。
+     * 渲染进程靠 `at` 是否变化来判断"这是新的一次"，避免重推时重复弹数字。
+     */
+    lastGain: lastMoodGain,
   }
 }
 
@@ -1191,14 +1216,22 @@ function currentAffectionPayload() {
     updatedAt: affection.updatedAt,
     /** 完整的阶段表，便于面板显示"距下一心还差多少"。 */
     stages: affectionStagesPayload(),
+    /**
+     * 最近一次好感增量（供"浮出数字"）。
+     *
+     * ⚠️ 为什么不让渲染进程自己 diff `value`：晋心时阶段值会**归 0**，
+     * diff 出来的差值会是负数（"好感 -95"），完全错误。
+     * 由主进程给出真实增量最可靠。
+     */
+    lastGain: lastAffectionGain,
   }
 }
 
 /**
  * 把好感推给渲染进程。
  *
- * 目前只在初始化时推一次（好感还没有增长途径）。
- * 接入增长后，在 `applyAffectionGain()` 之后调它即可。
+ * 每次好感变化后都要调 —— 面板的爱心、进度条，以及"浮出数字"的
+ * 可视反馈都靠这条通道。
  */
 function pushAffectionToRenderer() {
   if (!win || win.isDestroyed()) return
@@ -1208,6 +1241,66 @@ function pushAffectionToRenderer() {
     // 忽略：推送失败不影响桌宠主体功能。
   }
 }
+
+/** 最近一次好感增量（供渲染进程浮出数字）。 */
+let lastAffectionGain = null
+
+/** 最近一次主动加心情的增量（供渲染进程浮出数字）。周期漂移不写这里。 */
+let lastMoodGain = null
+
+/**
+ * 给好感入账（**唯一的入口**）。
+ *
+ * 之所以统一成一个函数：五条增长途径散落在不同事件里，
+ * 每处都写一遍 `applyAffectionGain` + `pushAffectionToRenderer` 的话，
+ * 漏掉推送就会出现"数值涨了但面板没变"，而这正是最难被发现的 bug 类型。
+ *
+ * @param {number} gain 要加的点数（<=0 直接返回，不推面板）
+ * @param {string} reason 日志里用的人话原因
+ * @returns {{ gained: number, heartsGained: number, hearts: number }}
+ */
+function grantAffection(gain, reason) {
+  const add = Number.isFinite(gain) ? Math.floor(gain) : 0
+  if (add <= 0) return { gained: 0, heartsGained: 0, hearts: affection.hearts }
+
+  const { state, gained, heartsGained } = applyAffectionGain(affection, add, Date.now())
+  affection = state
+  /*
+   * 记录本次增量（浮出数字用）。放在 push 之前 —— 否则推出去的那一份
+   * 里 lastGain 还是上一次的值，界面上会"晚一格"。
+   */
+  lastAffectionGain = { amount: gained, at: Date.now(), reason: String(reason ?? '') }
+  pushAffectionToRenderer()
+  log(
+    `好感 +${String(gained)}（${reason}）→ ${String(affection.hearts)} 心 ${String(affection.value)}/${String(stageThresholdFor(affection.hearts))}`
+    + (heartsGained > 0 ? `，晋 ${String(heartsGained)} 心` : ''),
+  )
+  return { gained, heartsGained, hearts: affection.hearts }
+}
+
+/**
+ * 每连续运行 10 分钟 +5 好感（用户指定第 4 条）。
+ *
+ * 为什么用独立的 `setInterval` 而不是搭在心情的 30 秒 tick 上：
+ *  · 心情 tick 会因为窗口隐藏/系统休眠而停摆，而"连续运行"的语义是
+ *    **进程还活着在陪着你**，与窗口是否可见无关；
+ *  · 搭在一起会让"10 分钟"变成"30 秒的整数倍且受其它条件影响"，不好解释也不好测。
+ */
+let uptimeAffectionTimer = null
+
+function startUptimeAffectionTimer() {
+  if (uptimeAffectionTimer) clearInterval(uptimeAffectionTimer)
+  uptimeAffectionTimer = setInterval(() => {
+    try {
+      grantAffection(AFFECTION_GAIN.uptimeGain, `连续运行 ${String(Math.round(AFFECTION_GAIN.uptimeEveryMs / 60000))} 分钟`)
+    } catch (err) {
+      log(`运行时长好感结算失败：${err instanceof Error ? err.message : String(err)}`)
+    }
+  }, AFFECTION_GAIN.uptimeEveryMs)
+  // 不要因为一个"发福利"的定时器把进程钉住（正常退出时能走掉）。
+  if (typeof uptimeAffectionTimer.unref === 'function') uptimeAffectionTimer.unref()
+}
+
 
 // ---------------------------------------------------------------- 余额监控（桌宠自取）
 /*
@@ -1439,24 +1532,75 @@ function startMoodTicker() {
   }, MOOD_TICK_MS)
 }
 
+/** 上次因"点击"获得好感的时刻（5 分钟冷却的锚点）。 */
+let lastClickAffectionAtMs = null
+
 /**
- * 互动一次：加心情。
+ * 互动一次（点击桌宠）。
  *
- * 加多少由 `applyPet` 缺省处理 —— 它从 `MOOD_GAIN_PER_PET_MIN~MAX`（3~10）
- * **随机取一个整数**（用户指定）。这里不传 gain，让它自己抽。
+ * ## 低心情分支（用户指定第 3 条机制）
+ *
+ * 心情 **< 50** 时点击：心情**立即 +50**（而不是平时的随机 3~10），
+ * 并回一句**信赖语音**，同时**不播部位动画、不说部位台词** ——
+ * "被关心"的语义盖过"被戳了一下"。
+ *
+ * ## 好感（用户指定第 2、5 条）
+ *
+ * 基础随机 **2~8**，**每 5 分钟一次**；低心情时**额外 +10**。
+ * 两者共用同一个冷却（见 `affection-gain.js` 文件头的说明）。
+ *
+ * @returns {object} 供渲染进程决定"说哪句、播不播部位动画"的完整结果
  */
-function petMoodOnce() {
-  const { state, gained, decayed } = applyPet(mood, Date.now())
+function handlePetClick() {
+  const now = Date.now()
+
+  /*
+   * 先结算到期的周期漂移，再判高低心情。
+   *
+   * 不结算就判会误判：心情可能"面板上还是 60，但已经拖欠了两次漂移"，
+   * 真实值早就掉到 40 以下了 —— 那样这次点击该给 +50 却会按普通点击算。
+   */
+  const settledValue = applyDrift(mood, now).state.value
+  const lowMood = settledValue < LOW_MOOD_THRESHOLD
+
+  const { state, gained } = applyPet(mood, now, lowMood ? LOW_MOOD_CLICK_MOOD_GAIN : null)
   mood = state
+  if (gained > 0) {
+    lastMoodGain = { amount: gained, at: now, reason: lowMood ? '低心情点击' : '点击互动' }
+  }
   pushMoodToRenderer()
-  return { value: Math.round(mood.value), gained, decayed }
+
+  const aff = clickAffectionGain({
+    lastAtMs: lastClickAffectionAtMs,
+    now,
+    moodValue: settledValue,
+  })
+  let affectionGained = 0
+  if (aff.gain > 0) {
+    lastClickAffectionAtMs = now
+    affectionGained = grantAffection(aff.gain, lowMood ? '点击互动（低心情）' : '点击互动').gained
+  }
+
+  return {
+    lowMood,
+    moodValue: Math.round(mood.value),
+    moodGained: gained,
+    affectionGained,
+    affectionCoolingDown: aff.coolingDown,
+    affectionCooldownMs: aff.coolingDown
+      ? Math.max(0, AFFECTION_GAIN.clickCooldownMs - (now - (lastClickAffectionAtMs ?? 0)))
+      : 0,
+    /** 低心情时由主进程给一句信赖语音（台词归语音库，渲染进程不重复实现）。 */
+    trustLine: lowMood ? pickTrustLine(Math.random) : null,
+  }
 }
 
-ipcMain.on('pet:pet', () => {
+ipcMain.handle('pet:pet', () => {
   try {
-    petMoodOnce()
+    return handlePetClick()
   } catch (err) {
-    log(`心情增加失败：${err instanceof Error ? err.message : String(err)}`)
+    log(`点击互动结算失败：${err instanceof Error ? err.message : String(err)}`)
+    return { lowMood: false, moodGained: 0, affectionGained: 0, trustLine: null }
   }
 })
 
@@ -1470,12 +1614,23 @@ ipcMain.on('pet:pet', () => {
  * 加多少由 `applyActionReward` 从 10~30 里随机取。
  */
 function rewardActionMoodOnce(actionId) {
-  const { state, gained, decayed } = applyActionReward(mood, Date.now())
+  const now = Date.now()
+  const { state, gained, decayed } = applyActionReward(mood, now)
   mood = state
+  if (gained > 0) {
+    lastMoodGain = { amount: gained, at: now, reason: `随机动作 ${String(actionId ?? '')}` }
+  }
   pushMoodToRenderer()
   if (gained > 0) {
     log(`闲置随机动作 ${String(actionId ?? '')} 回复心情 +${String(gained)} → ${String(Math.round(mood.value))}`)
   }
+  /*
+   * 好感 +2（用户指定第 3 条：桌宠触发随机动作时）。
+   *
+   * 只在这条路径上入账 —— 菜单手动触发的动作由 `pet:trigger-action` 走，
+   * 不经过这里，所以"手动点动作"不会白送好感。
+   */
+  grantAffection(AFFECTION_GAIN.randomAction, `随机动作 ${String(actionId ?? '')}`)
   return { value: Math.round(mood.value), gained, decayed }
 }
 
@@ -1532,6 +1687,14 @@ function speakIdleVoice() {
    * 6 秒够读完一句 24 字以内的话，也不至于一直挂在屏幕上。
    */
   win.webContents.send('pet:say', { text, bubbleMs: 6000 })
+
+  /*
+   * 好感 +1（用户指定第 1 条：闲置随机触发对话时）。
+   *
+   * 注意只在这里加 —— 右键菜单的「对话」走的是 `pickDialogueLine` 那条路径，
+   * 不经过本函数，所以手动点对话不会刷好感。
+   */
+  grantAffection(AFFECTION_GAIN.idleDialogue, '闲置主动对话')
 
   /*
    * 日志里带上"为什么是这几句"：心数与心情档位。
@@ -2032,11 +2195,247 @@ function changePetSizeByMenu(petWidth) {
   }
 }
 
+// ------------------------------------------------------------------ 信息窗口（语音库 / 关于）
+/**
+ * 桌宠版本号（显示在「关于」里）。
+ *
+ * 从 `package.json` 读，而不是在这里再写一份 —— 版本号写两份必然漂移，
+ * 而"关于窗口显示的版本和实际装的包不一致"是最容易让人怀疑装错的一次体验。
+ */
+const APP_VERSION = (() => {
+  try {
+    return require('../package.json').version ?? '未知'
+  } catch {
+    return '未知'
+  }
+})()
+
+/** 信息窗口单例。两个模式共用一个窗口，避免连点开出好几个。 */
+let infoWin = null
+
+/** 把秒数格式化成人话（"3 小时 12 分"）。 */
+function formatUptime(totalSeconds) {
+  const s = Math.max(0, Math.floor(totalSeconds))
+  const d = Math.floor(s / 86400)
+  const h = Math.floor((s % 86400) / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  if (d > 0) return `${String(d)} 天 ${String(h)} 小时`
+  if (h > 0) return `${String(h)} 小时 ${String(m)} 分`
+  if (m > 0) return `${String(m)} 分`
+  return `${String(s)} 秒`
+}
+
+/** 语音组的"解锁条件"人话描述（给信息窗口用）。 */
+function voiceGroupConditionText(group) {
+  if (group.kind === 'fixed') return '任何状态都可用'
+  if (group.kind === 'affection') return `需要 ${String(group.level)} 颗心（当前 ${String(affection.hearts)} 颗）`
+  if (group.kind === 'mood') {
+    const range =
+      group.mood === 'low'
+        ? '0 ~ 49'
+        : group.mood === 'mid'
+          ? '50 ~ 79'
+          : '80 ~ 100'
+    return `心情值 ${range}（当前 ${String(Math.round(mood.value))}）`
+  }
+  return ''
+}
+
+/** 构造「语音库」窗口的数据。 */
+function buildVoiceWindowPayload() {
+  const hearts = affection.hearts
+  const moodValue = Math.round(mood.value)
+  const available = new Set(availableVoiceGroups({ hearts, moodValue }).map((group) => group.id))
+  const moodText = moodVoiceGroup(moodValue) === 'high' ? '很好' : moodVoiceGroup(moodValue) === 'mid' ? '一般' : '偏低'
+  return {
+    mode: 'voice',
+    hearts,
+    moodValue,
+    moodText,
+    groups: voiceLibrarySummary().map((group) => {
+      const full = VOICE_GROUPS.find((g) => g.id === group.id)
+      return {
+        id: group.id,
+        label: group.label,
+        lines: group.lines,
+        available: available.has(group.id),
+        condition: full ? voiceGroupConditionText(full) : '',
+      }
+    }),
+    trustLines: TRUST_LINES,
+  }
+}
+
+/**
+ * 读更新日志的**开头部分**（「未发布」+ 最新一个版本段）。
+ *
+ * 为什么不整份塞进去：CHANGELOG 已经三百多行，全塞进"关于"窗口没人看；
+ * 用户要的是"最新更新日志"。
+ */
+function readChangelogHead() {
+  try {
+    const fs = require('node:fs')
+    const path = require('node:path')
+    const file = path.join(__dirname, '..', 'CHANGELOG.md')
+    const text = fs.readFileSync(file, 'utf8')
+    const lines = text.split(/\r?\n/)
+    // 从第一个 `## ` 开始，最多取两段（未发布 + 最新版本）
+    const start = lines.findIndex((line) => line.startsWith('## '))
+    if (start < 0) return text.slice(0, 4000)
+    let sections = 0
+    let end = lines.length
+    for (let i = start; i < lines.length; i += 1) {
+      if (lines[i].startsWith('## ')) {
+        sections += 1
+        if (sections > 2) {
+          end = i
+          break
+        }
+      }
+    }
+    return lines.slice(start, end).join('\n').trim().slice(0, 6000)
+  } catch (err) {
+    return `（读不到更新日志：${err instanceof Error ? err.message : String(err)}）`
+  }
+}
+
+/** 构造「关于」窗口的数据。 */
+function buildAboutPayload() {
+  const hearts = affection.hearts
+  return {
+    mode: 'about',
+    version: APP_VERSION,
+    packageName: 'dsh-pet-ds',
+    electronVersion: process.versions.electron ?? '未知',
+    affectionText: `${String(hearts)} 心 · ${String(affection.value)}/${String(stageThresholdFor(hearts))}（${affectionHeartsLabel(hearts)}）`,
+    moodText: `${String(Math.round(mood.value))}`,
+    uptimeText: formatUptime(process.uptime()),
+    changelog: readChangelogHead(),
+  }
+}
+
+/**
+ * 打开信息窗口（单例）。
+ *
+ * @param {'voice' | 'about'} mode
+ */
+function openInfoWindow(mode) {
+  const path = require('node:path')
+  const payload = mode === 'voice' ? buildVoiceWindowPayload() : buildAboutPayload()
+
+  if (infoWin && !infoWin.isDestroyed()) {
+    infoWin.webContents.send('info:data', payload)
+    infoWin.setTitle(mode === 'voice' ? '语音库' : '关于桌宠')
+    infoWin.show()
+    infoWin.focus()
+    return
+  }
+
+  infoWin = new BrowserWindow({
+    width: mode === 'voice' ? 560 : 480,
+    height: mode === 'voice' ? 640 : 540,
+    minWidth: 380,
+    minHeight: 320,
+    title: mode === 'voice' ? '语音库' : '关于桌宠',
+    backgroundColor: '#12151c',
+    /* 与桌宠窗口一样的隔离策略：只给它一个极小的 preload，不开放 Node。 */
+    webPreferences: {
+      preload: path.join(__dirname, 'info-preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  })
+  infoWin.setMenuBarVisibility(false)
+  infoWin.on('closed', () => {
+    infoWin = null
+  })
+  void infoWin.loadFile(path.join(__dirname, 'info.html')).then(() => {
+    if (infoWin && !infoWin.isDestroyed()) infoWin.webContents.send('info:data', payload)
+  })
+}
+
+ipcMain.on('info:close', (event) => {
+  const target = BrowserWindow.fromWebContents(event.sender)
+  if (target && !target.isDestroyed()) target.close()
+})
+
+ipcMain.on('info:open-external', (_event, url) => {
+  const text = typeof url === 'string' ? url : ''
+  // 只放行 http/https：其它协议（file:、javascript:…）一律拒绝。
+  if (!/^https?:\/\//i.test(text)) return
+  void shell.openExternal(text)
+})
+
+ipcMain.on('info:say-random', () => {
+  try {
+    if (!win || win.isDestroyed()) return
+    const hearts = affection.hearts
+    const moodValue = Math.round(mood.value)
+    /*
+     * 池子 = 当前可用的分组语音 + 自由对话库。
+     *
+     * 为什么把 `dialogue.js` 也并进来：重做菜单后「对话」项没了，
+     * 那些"傲娇日常"台词（17 句）如果只留在库里就成了死代码。
+     * 它们没有状态条件，正好可以和无条件的固定语音一起当"随便说一句"的素材。
+     */
+    const pool = [...availableVoiceLines({ hearts, moodValue }), ...DIALOGUE_LINES]
+    if (pool.length === 0) return
+    const candidates = pool.length > 1 && lastIdleVoiceLine
+      ? pool.filter((line) => line !== lastIdleVoiceLine)
+      : pool
+    const list = candidates.length > 0 ? candidates : pool
+    const text = list[Math.floor(Math.random() * list.length)]
+    if (!text) return
+    lastIdleVoiceLine = text
+    win.webContents.send('pet:say', { text, bubbleMs: 6000 })
+  } catch (err) {
+    log(`语音库「随机说一句」失败：${err instanceof Error ? err.message : String(err)}`)
+  }
+})
+
+/**
+ * 「刷新状态」：让桌宠无条件回到闲置（用户要求的逃生门）。
+ *
+ * 为什么由主进程转发而不是菜单直接操作渲染进程：
+ * 菜单在主进程，它没有别的通道能改渲染进程的状态机；
+ * 发一条明确的 `pet:refresh-state` 让渲染进程自己收拾，职责最清楚。
+ */
+function refreshPetToIdle(reason) {
+  if (!win || win.isDestroyed()) return
+  win.webContents.send('pet:refresh-state', { reason: String(reason ?? '') })
+  log(`已请求刷新桌宠状态（${String(reason ?? '')}）`)
+  win.webContents.send('pet:say', { text: '（已恢复到闲置状态）', bubbleMs: 2500 })
+}
+
 /** 右键菜单。 */
 ipcMain.on('pet:context-menu', () => {
   if (!win || win.isDestroyed()) return
 
-  /** 尺寸子菜单：radio 显示当前档位。 */
+  /*
+   * ⚠️ 整段菜单构建包在 try/catch 里。
+   *
+   * 菜单项的函数体（打开窗口、刷新状态…）是在**构建期**被引用、
+   * 出错却发生在**点击时**；而构建期一旦抛异常，Electron 只在主进程 stderr
+   * 里留一行，用户侧表现为"右键什么都没弹出来"，极难归因。
+   * 兜住并写进日志，至少能查到是哪一步。
+   */
+  try {
+    buildAndPopupMenu()
+  } catch (err) {
+    log(`右键菜单构建失败：${err instanceof Error ? err.message : String(err)}`)
+    throw err
+  }
+})
+
+/**
+ * 构建右键菜单模板（**不弹窗**）。
+ *
+ * 为什么把"构建"与"弹出"拆开：`menu.popup()` 会阻塞式地抢焦点，
+ * 在自测里不能真弹；而菜单项少了/写错了是用户直接能看见的故障。
+ * 拆开后自测就能断言"这 8 项都在"（见 verifyContextMenu）。
+ */
+function buildMenuTemplate() {
   const sizeSubmenu = SIZE_PRESETS.map((preset) => ({
     label: `${preset.label}（${String(preset.width)}）`,
     type: 'radio',
@@ -2073,27 +2472,27 @@ ipcMain.on('pet:context-menu', () => {
   }
 
   /*
-   * 用户要求：「说句话」改为「对话」，并且建一个专门的对话台词库。
+   * 用户要求：把「对话」并进语音库入口。
    *
-   * 每次点击**随机取一句**（避开上一句），而不是固定那一句"你好呀" ——
-   * 固定文案点两次就腻了，也体现不出人设。
-   *
-   * ⚠️ 刻意**不做成子菜单**：对话本来就是"点一下就听一句"的轻交互，
-   * 展开子菜单多一次点击，还得先扫一遍挑哪句 —— 那不是对话，是点播。
+   * 于是菜单里不再有「对话」项（重做后的 8 项里没有它），
+   * 但"随机说一句"的能力保留在语音库窗口里 —— 见 `info:say-random`：
+   * 它从**语音库的可用台词 + 自由对话库**里一起抽。
    */
-  let lastDialogueLine = null
 
-  const menu = Menu.buildFromTemplate([
+  const template = [
     {
-      label: '对话',
+      /*
+       * 语音库入口（用户要求的第 1 项）。
+       *
+       * 打开的是一个**独立只读窗口**，列出当前可用的语音组。
+       * 原来的「对话」项已并进去（窗口里有个"随机说一句"）——
+       * 用户重做菜单时列的清单里没有「对话」。
+       */
+      label: '语音库…',
       click: () => {
-        if (!win || win.isDestroyed()) return
-        const line = pickDialogueLine(Math.random, lastDialogueLine)
-        lastDialogueLine = line
-        win.webContents.send('pet:say', { text: line, bubbleMs: 6000 })
+        openInfoWindow('voice')
       },
     },
-    { type: 'separator' },
     {
       label: '动作',
       submenu: actionSubmenu,
@@ -2102,6 +2501,7 @@ ipcMain.on('pet:context-menu', () => {
       label: '尺寸',
       submenu: sizeSubmenu,
     },
+    { type: 'separator' },
     {
       /*
        * 置顶开关（用户要求："可以让桌宠始终显示在最上层或正常作为窗口调节"）。
@@ -2127,6 +2527,28 @@ ipcMain.on('pet:context-menu', () => {
         const size = boundsForWidth(logicalWidth)
         const pos = initialPosition(size.width, size.height)
         win.setPosition(pos.x, pos.y)
+        log('已回到初始位置')
+      },
+    },
+    {
+      /*
+       * 刷新状态（用户要求第 6 项）：
+       * "点击后使桌宠直接回复到闲置状态，防止可能的在某个动作上卡住而无法动弹"。
+       *
+       * 这是一个**兜底逃生门**：不管她在睡觉、坐着、思考、还是某个动作卡住，
+       * 点一下都应该回到站着的闲置状态。所以渲染进程那边要无条件清状态，
+       * 而不是"如果没在动作就重置"。
+       */
+      label: '刷新状态',
+      click: () => {
+        refreshPetToIdle('右键菜单')
+      },
+    },
+    { type: 'separator' },
+    {
+      label: '关于桌宠…',
+      click: () => {
+        openInfoWindow('about')
       },
     },
     { type: 'separator' },
@@ -2136,9 +2558,15 @@ ipcMain.on('pet:context-menu', () => {
         void quitSelf()
       },
     },
-  ])
+  ]
+  return template
+}
+
+/** 构建模板并真的弹出来。 */
+function buildAndPopupMenu() {
+  const menu = Menu.buildFromTemplate(buildMenuTemplate())
   menu.popup({ window: win })
-})
+}
 
 // ------------------------------------------------------------------ 应用生命周期
 // 桌宠不该因为"所有窗口关闭"就退出：它在 Windows 上本来就没有任务栏入口。
@@ -2163,6 +2591,11 @@ app.whenReady().then(() => {
     }
     createWindow()
     void pollLoop()
+    /*
+     * 好感第 4 条：每连续运行 10 分钟 +5。
+     * 由独立定时器结算（与心情的 30 秒 tick 无关，见 startUptimeAffectionTimer 的说明）。
+     */
+    startUptimeAffectionTimer()
     /*
      * 余额监控**桌宠自己起**（用户要求："让桌宠插件自身能实时自动更新余额监控，
      * 不需要进行别的操作"）。它不依赖宿主是否在线，也不需要在 DSH 里做任何操作。
@@ -2756,6 +3189,20 @@ async function verifyLayoutAndResize(check, wait) {
    * 放在前面会把后面用例依赖的 petState 搅乱。
    */
   await verifyIdleVoice(check, wait)
+
+  /*
+   * 好感度增长 / 低心情点击 / 浮出数字 / 深度思考 / 刷新状态。
+   *
+   * 放在**最后**：它会重置好感与心情、还会推 workStatus，属于"改环境"的用例，
+   * 放中间会把别的用例的前提搅乱（这份自测里已经有前车之鉴）。
+   */
+  await verifyAffectionAndFeedback(check, wait)
+
+  /* 信息窗口（语音库 / 关于）—— 再加最后：它会真的开一个窗口。 */
+  await verifyInfoWindows(check, wait)
+
+  /* 右键菜单的 8 个入口（纯构建，不弹窗）。 */
+  verifyContextMenu(check)
 }
 
 /**
@@ -4297,7 +4744,16 @@ async function verifySleepState(check, wait) {
       await wc.executeJavaScript('window.__petTestSleep.enter()', true)
       await wait(500)
     }
-    testPushState({ workStatus: 'thinking', workLabel: '思考中…', seq: 9250 })
+    /*
+     * 用 `working` 而不是 `thinking` 来验"工作唤醒"。
+     *
+     * 为什么改：`thinking` 现在会进入「深度思考」（用户新增的机制），
+     * 那条路径走 `enterThink()`，它自己会唤醒来着、然后去播思考动作 ——
+     * 于是 `activeAnimationId` 是 think（素材缺失时回落成 stand），
+     * 不再是惊醒动画。这里要验的是**普通工作唤醒**，用 working 更贴题，
+     * 也避免两条机制互相干扰。
+     */
+    testPushState({ workStatus: 'working', workLabel: '干活中…', seq: 9250 })
     await wait(700)
     const stWork = await readState()
     check(
@@ -4783,6 +5239,343 @@ async function verifyIdleVoice(check, wait) {
   await js('window.__petTestSetIdleClock(null)')
 }
 
+/**
+ * 自测：好感度增长 / 低心情点击 / 数值浮出反馈 / 深度思考 / 刷新状态。
+ *
+ * 这条用例把本次新增的几条机制串起来跑一遍。写成"点一下、等一会、读主进程状态"
+ * 而不是"直接调内部函数"，是因为点击要经过 IPC invoke、气泡、浮出层、
+ * 以及渲染进程里那一串"思考中/睡眠中"的提前返回 —— 只有真的点才测得到。
+ *
+ * @param {(name: string, ok: boolean, detail?: string) => void} check
+ * @param {(ms: number) => Promise<void>} wait
+ */
+async function verifyAffectionAndFeedback(check, wait) {
+  const wc = win && !win.isDestroyed() ? win.webContents : null
+  if (!wc) return
+  const js = (code) => wc.executeJavaScript(code, true)
+
+  // ---- 1) 规则常量（防止"改了数字忘了改文档/测试"）----
+  check(
+    '好感规则：点击 2~8、冷却 5 分钟、低心情额外 +10',
+    AFFECTION_GAIN.clickMin === 2
+      && AFFECTION_GAIN.clickMax === 8
+      && AFFECTION_GAIN.clickCooldownMs === 5 * 60 * 1000
+      && AFFECTION_GAIN.lowMoodClick === 10
+      && AFFECTION_GAIN.idleDialogue === 1
+      && AFFECTION_GAIN.randomAction === 2
+      && AFFECTION_GAIN.uptimeGain === 5
+      && AFFECTION_GAIN.uptimeEveryMs === 10 * 60 * 1000,
+    `点击 ${String(AFFECTION_GAIN.clickMin)}~${String(AFFECTION_GAIN.clickMax)}，`
+    + `冷却 ${String(AFFECTION_GAIN.clickCooldownMs / 60000)} 分，`
+    + `对话 +${String(AFFECTION_GAIN.idleDialogue)}、动作 +${String(AFFECTION_GAIN.randomAction)}、`
+    + `运行 +${String(AFFECTION_GAIN.uptimeGain)}/${String(AFFECTION_GAIN.uptimeEveryMs / 60000)} 分`,
+  )
+
+  // ---- 2) 造一个干净的起点：好感 0、心情满、冷却清空 ----
+  affection = initialAffection()
+  lastClickAffectionAtMs = null
+  lastAffectionGain = null
+  lastMoodGain = null
+  /*
+   * 从 60 起而不是 100：满心情时点击会被上限夹住（gained = 0），
+   * 于是 `lastMoodGain` 不会被设置，判"走的是普通分支"就没了依据。
+   * 60 起既能保证 > 50（不触发低心情分支），又不会顶到上限。
+   */
+  mood = { value: 60, updatedAt: Date.now() }
+  await js('window.__petTestRefresh && window.__petTestRefresh()')
+  pushAffectionToRenderer()
+  pushMoodToRenderer()
+  await wait(200)
+
+  // ---- 3) 第一次点击：心情满 → 普通点击 ----
+  {
+    const beforeAff = affection.value
+    await js('window.__petTestClick()')
+    await wait(350)
+    const delta = affection.value - beforeAff + (affection.hearts > 0 ? 0 : 0)
+    const gained = lastAffectionGain ? lastAffectionGain.amount : 0
+    check(
+      '点击互动给好感 2~8',
+      gained >= AFFECTION_GAIN.clickMin && gained <= AFFECTION_GAIN.clickMax,
+      `本次 +${String(gained)}（阶段值 ${String(beforeAff)} → ${String(affection.value)}，delta ${String(delta)}）`,
+    )
+    check(
+      '点击满心情时走普通分支（不是低心情）',
+      lastMoodGain && lastMoodGain.reason === '点击互动' && mood.value > 50,
+      `心情 ${String(Math.round(mood.value))}，reason=${String(lastMoodGain && lastMoodGain.reason)}`,
+    )
+    const floats = await js('window.__petTestFloatCount()')
+    check(
+      '数值变化有可视化反馈（浮出数字）',
+      Number.isFinite(floats) && floats > 0,
+      `浮出层节点数 ${String(floats)}`,
+    )
+  }
+
+  // ---- 4) 立刻再点：好感在 5 分钟冷却内 ----
+  {
+    const before = affection.value
+    await js('window.__petTestClick()')
+    await wait(350)
+    check(
+      '5 分钟内再点不再给好感',
+      affection.value === before,
+      `阶段值 ${String(before)} → ${String(affection.value)}`,
+    )
+  }
+
+  // ---- 5) 低心情点击：心情 +50、好感含 +10 奖励、说信赖语音 ----
+  {
+    mood = { value: 30, updatedAt: Date.now() }
+    lastClickAffectionAtMs = null // 跳过 5 分钟等待（只是为了能测到这一条）
+    pushMoodToRenderer()
+    await wait(200)
+
+    const beforeAff = affection.value
+    await js('window.__petTestClick()')
+    await wait(350)
+
+    check(
+      '低心情点击：心情立即 +50',
+      Math.round(mood.value) === 80 && lastMoodGain && lastMoodGain.reason === '低心情点击',
+      `心情 30 → ${String(Math.round(mood.value))}，reason=${String(lastMoodGain && lastMoodGain.reason)}`,
+    )
+    const gained = lastAffectionGain ? lastAffectionGain.amount : 0
+    check(
+      '低心情点击：好感含 +10 奖励（共 12~18）',
+      gained >= AFFECTION_GAIN.clickMin + AFFECTION_GAIN.lowMoodClick
+        && gained <= AFFECTION_GAIN.clickMax + AFFECTION_GAIN.lowMoodClick,
+      `本次 +${String(gained)}（阶段值 ${String(beforeAff)} → ${String(affection.value)}）`,
+    )
+    const bubble = await js('window.__petTestBubble ? window.__petTestBubble() : null')
+    check(
+      '低心情时说的是信赖语音（不是部位台词）',
+      Boolean(bubble) && TRUST_LINES.includes(bubble.text),
+      `气泡「${String(bubble && bubble.text)}」`,
+    )
+  }
+
+  // ---- 6) 深度思考：随宿主状态进出，点击也能结束 ----
+  {
+    testPushState({ workStatus: 'thinking', workLabel: '思考中…', seq: 9601 })
+    await wait(500)
+    const t1 = await js('window.__petTestThink.state()')
+    check(
+      'DSH 开始思考 → 进入深度思考',
+      Boolean(t1) && t1.active === true,
+      `active=${String(t1 && t1.active)}，petState=${String(t1 && t1.petState)}`,
+    )
+    check(
+      '深度思考期间不触发随机动作',
+      Boolean(t1) && t1.canTriggerRandom === false,
+      `canTriggerRandom=${String(t1 && t1.canTriggerRandom)}`,
+    )
+
+    await js('window.__petTestClick()')
+    await wait(300)
+    const t2 = await js('window.__petTestThink.state()')
+    check(
+      '点击桌宠 → 结束深度思考',
+      Boolean(t2) && t2.active === false,
+      `active=${String(t2 && t2.active)}`,
+    )
+
+    // 再进一次，这次让宿主自己结束思考
+    testPushState({ workStatus: 'thinking', workLabel: '思考中…', seq: 9602 })
+    await wait(400)
+    const t3 = await js('window.__petTestThink.state()')
+    testPushState({ workStatus: 'idle', workLabel: '', seq: 9603 })
+    await wait(400)
+    const t4 = await js('window.__petTestThink.state()')
+    check(
+      'DSH 思考结束 → 自动回到闲置',
+      Boolean(t3) && t3.active === true && Boolean(t4) && t4.active === false,
+      `进入=${String(t3 && t3.active)} → 结束=${String(t4 && t4.active)}`,
+    )
+  }
+
+  // ---- 7) 刷新状态：无条件回闲置 ----
+  {
+    // 先制造一个"非闲置"的状态（让她坐下），再刷新
+    await js('window.__petTestSit && window.__petTestSit.start ? window.__petTestSit.start() : null')
+    await wait(500)
+    const beforeRefresh = await js('window.__petTestRefresh()')
+    await wait(200)
+    check(
+      '刷新状态把桌宠收回闲置',
+      Boolean(beforeRefresh)
+        && beforeRefresh.petState === 'idle'
+        && beforeRefresh.currentActionId === null
+        && beforeRefresh.sitPhase === null
+        && beforeRefresh.thinkActive === false,
+      `petState=${String(beforeRefresh && beforeRefresh.petState)}，`
+      + `action=${String(beforeRefresh && beforeRefresh.currentActionId)}，`
+      + `sitPhase=${String(beforeRefresh && beforeRefresh.sitPhase)}`,
+    )
+  }
+
+  // 收尾：把宿主状态与好感/心情恢复到中性，别影响后续用例
+  testPushState({ workStatus: 'idle', workLabel: '', seq: 9609 })
+  affection = initialAffection()
+  lastClickAffectionAtMs = null
+  mood = { value: 100, updatedAt: Date.now() }
+  pushAffectionToRenderer()
+  pushMoodToRenderer()
+}
+
+/**
+ * 自测：右键菜单的 8 个入口。
+ *
+ * 不真弹菜单（`popup` 会抢焦点），而是构建模板后检查条目 ——
+ * "菜单项少了/写错了"是用户一眼就能看到的故障，值得钉住。
+ *
+ * @param {(name: string, ok: boolean, detail?: string) => void} check
+ */
+function verifyContextMenu(check) {
+  let template = null
+  try {
+    template = buildMenuTemplate()
+  } catch (err) {
+    check('右键菜单能构建', false, err instanceof Error ? err.message : String(err))
+    return
+  }
+  const labels = template.filter((item) => item && item.label).map((item) => item.label)
+  const expect = [
+    '语音库…',
+    '动作',
+    '尺寸',
+    '始终显示在最上层',
+    '回到初始位置',
+    '刷新状态',
+    '关于桌宠…',
+    '退出桌宠',
+  ]
+  const missing = expect.filter((want) => !labels.includes(want))
+  check(
+    '右键菜单包含全部 8 个入口',
+    missing.length === 0,
+    missing.length === 0 ? `实际=[${labels.join(' / ')}]` : `缺少 ${missing.join('、')}；实际=[${labels.join(' / ')}]`,
+  )
+
+  const topmost = template.find((item) => item && item.label === '始终显示在最上层')
+  check(
+    '「始终显示在最上层」是勾选项且反映当前状态',
+    Boolean(topmost) && topmost.type === 'checkbox' && topmost.checked === topmostEnabled,
+    topmost ? `type=${String(topmost.type)}，checked=${String(topmost.checked)}（主进程记录 ${String(topmostEnabled)}）` : '找不到该项',
+  )
+
+  const actionItem = template.find((item) => item && item.label === '动作')
+  check(
+    '「动作」是子菜单且非空',
+    Boolean(actionItem) && Array.isArray(actionItem.submenu) && actionItem.submenu.length > 0,
+    actionItem ? `${String((actionItem.submenu || []).length)} 项` : '找不到该项',
+  )
+
+  const sizeItem = template.find((item) => item && item.label === '尺寸')
+  check(
+    '「尺寸」是子菜单且含全部档位',
+    Boolean(sizeItem) && Array.isArray(sizeItem.submenu) && sizeItem.submenu.length === SIZE_PRESETS.length,
+    sizeItem ? `${String((sizeItem.submenu || []).length)} 档（期望 ${String(SIZE_PRESETS.length)}）` : '找不到该项',
+  )
+}
+
+/**
+ * 自测：两个信息窗口（语音库 / 关于）。
+ *
+ * 为什么要真开窗口：这两个窗口是**用户点开才存在**的，平时进程里没有它们；
+ * 只测 `buildVoiceWindowPayload()` 之类的纯数据函数，测不到
+ * "preload 没配对 / 数据没送到 / 页面脚本报错" 这类真实故障
+ * （preload 少一个 API 就会白屏，而这种问题单元测试完全看不见）。
+ *
+ * 跑完把它关掉，别在桌宠旁边留一个窗口。
+ *
+ * @param {(name: string, ok: boolean, detail?: string) => void} check
+ * @param {(ms: number) => Promise<void>} wait
+ */
+async function verifyInfoWindows(check, wait) {
+  // ---- 语音库窗口 ----
+  openInfoWindow('voice')
+  await wait(900)
+  {
+    const ok = Boolean(infoWin && !infoWin.isDestroyed())
+    check('语音库窗口能打开', ok, ok ? '窗口已创建' : '窗口创建失败')
+    if (ok) {
+      let diag = null
+      try {
+        diag = await infoWin.webContents.executeJavaScript(
+          `({
+             title: (document.getElementById('title') || {}).textContent || '',
+             cards: document.querySelectorAll('.card').length,
+             items: document.querySelectorAll('ol.lines li').length,
+             sayBtnVisible: !(document.getElementById('say-btn') || {}).hidden,
+             bodyText: (document.body || {}).innerText || ''
+           })`,
+          true,
+        )
+      } catch (err) {
+        diag = { error: err instanceof Error ? err.message : String(err) }
+      }
+      check(
+        '语音库窗口渲染出了分组与台词',
+        Boolean(diag) && !diag.error && diag.cards > 0 && diag.items > 0 && diag.title.includes('语音库'),
+        diag && diag.error
+          ? `脚本报错：${diag.error}`
+          : `标题=${JSON.stringify(diag && diag.title)}，分组卡片 ${String(diag && diag.cards)}，已展开台词 ${String(diag && diag.items)} 条`,
+      )
+      check(
+        '语音库窗口有「随机说一句」按钮',
+        Boolean(diag) && diag.sayBtnVisible === true,
+        `sayBtn 可见=${String(diag && diag.sayBtnVisible)}`,
+      )
+      check(
+        '语音库窗口只展开当前可用的组（锁定组不显示台词）',
+        Boolean(diag) && /未解锁/.test(String(diag.bodyText)) === (affection.hearts < 5 || true),
+        `爱心 ${String(affection.hearts)} 颗；正文里出现"未解锁"=${String(Boolean(diag) && /未解锁/.test(String(diag.bodyText)))}`,
+      )
+    }
+  }
+
+  // ---- 关于窗口（同一个窗口切模式） ----
+  openInfoWindow('about')
+  await wait(900)
+  {
+    let diag = null
+    if (infoWin && !infoWin.isDestroyed()) {
+      try {
+        diag = await infoWin.webContents.executeJavaScript(
+          `({
+             title: (document.getElementById('title') || {}).textContent || '',
+             bodyText: (document.body || {}).innerText || '',
+             changelog: (document.querySelector('pre.changelog') || {}).textContent || ''
+           })`,
+          true,
+        )
+      } catch (err) {
+        diag = { error: err instanceof Error ? err.message : String(err) }
+      }
+    }
+    check(
+      '关于窗口显示版本号',
+      Boolean(diag) && !diag.error && diag.bodyText.includes(APP_VERSION),
+      diag && diag.error
+        ? `脚本报错：${diag.error}`
+        : `版本 ${String(APP_VERSION)}，正文是否包含=${String(Boolean(diag) && diag.bodyText.includes(APP_VERSION))}`,
+    )
+    check(
+      '关于窗口显示最新更新日志',
+      Boolean(diag) && String(diag.changelog).length > 20,
+      `日志长度 ${String(diag && String(diag.changelog).length)} 字符`,
+    )
+  }
+
+  // ---- 关掉，别留窗口 ----
+  if (infoWin && !infoWin.isDestroyed()) {
+    infoWin.close()
+    await wait(300)
+  }
+  check('信息窗口能正常关闭', !infoWin || infoWin.isDestroyed(), `infoWin=${infoWin ? '仍在' : '已关'}`)
+}
+
 async function verifySitAction(check, wait) {
   const wc = win && !win.isDestroyed() ? win.webContents : null
   if (!wc) return
@@ -5154,6 +5947,17 @@ async function verifyIdleAndMood(check, wait, readLayout) {
       }
     }
     check('动作播完后回到站立动画', backToStand, `最终 activeAnimationId=${String((await readState()).activeAnimationId)}`)
+    /*
+     * ⚠️ 必须**推回 idle**。
+     *
+     * 这里用"切到思考"来停止闲置触发。以前 thinking 只是一个忙碌态，
+     * 没有副作用；现在它会进入「深度思考」并让 `thinkActive` 保持为真，
+     * 而"思考中点击 = 结束思考"会把后续所有点击用例吃掉（实测：
+     * 部位点击那几条全变成"气泡是思考台词、动画是 stand"）。
+     * 所以用完必须还原宿主状态。
+     */
+    testPushState({ workStatus: 'idle', workLabel: '', seq: 9004 })
+    await wait(400)
   }
 
   // ---- 5) 动作清单完整性（右键菜单就是照它生成的） ----
@@ -5438,19 +6242,32 @@ async function verifyIdleAndMood(check, wait, readLayout) {
   // ⚠️ 测量方式很关键：`gained` 是**被上限夹过之后的真实增量**，
   // 若从 40 起连点 12 次会很快顶到 100，之后几次增量变成 0，
   // 看起来像"加的值超出区间"（实测就踩到了：增量里出现 0 和 1）。
-  // 所以每次都先把心情压到 0 再点，测的才是纯粹的"加了多少"。
+  // 所以每次都先把心情压到**中段**再点，测的才是纯粹的"加了多少"。
+  //
+  // ⚠️ 起点不能再用 0：那时心情 < 50，点击会走**低心情分支**（+50），
+  // 测出来全是 50。要测"普通点击"，起点必须 ≥ 50，且加完不越过 100。
   const moodGains = []
+  /*
+   * ⚠️ 这一段现在会**顺带给好感入账**（`handlePetClick` 里点击就加好感）。
+   * 而后面还有断言要求"好感初始为 0 颗心、阶段 0/100"。
+   * 所以先存一份、测完还原 —— 否则点 12 次会把面板断言全弄红（实测如此）。
+   */
+  const affectionBeforeMoodTests = { ...affection }
+  const lastClickBeforeMoodTests = lastClickAffectionAtMs
   for (let i = 0; i < 12; i += 1) {
-    mood = { value: 0, updatedAt: Date.now() }
-    petMoodOnce()
-    moodGains.push(mood.value)
+    mood = { value: 60, updatedAt: Date.now() }
+    handlePetClick()
+    moodGains.push(mood.value - 60)
   }
+  affection = affectionBeforeMoodTests
+  lastClickAffectionAtMs = lastClickBeforeMoodTests
+  pushAffectionToRenderer()
   await wait(400)
   const allInRange = moodGains.every((g) => g >= MOOD_GAIN_PER_PET_MIN && g <= MOOD_GAIN_PER_PET_MAX)
   check(
     `点击桌宠加 ${String(MOOD_GAIN_PER_PET_MIN)}~${String(MOOD_GAIN_PER_PET_MAX)} 点心情`,
     allInRange,
-    `从 0 起连点 12 次的结果：${moodGains.join(',')}（都应在 ` +
+    `从 60 起连点 12 次的结果：${moodGains.join(',')}（都应在 ` +
       `${String(MOOD_GAIN_PER_PET_MIN)}~${String(MOOD_GAIN_PER_PET_MAX)} 内）`,
   )
   check(
@@ -5458,6 +6275,16 @@ async function verifyIdleAndMood(check, wait, readLayout) {
     new Set(moodGains).size > 1,
     `不同取值 ${String(new Set(moodGains).size)} 个：${[...new Set(moodGains)].sort((a, b) => a - b).join(',')}`,
   )
+  // 低心情时的特殊分支（用户指定第 3 条机制）：+50 而不是 3~10。
+  {
+    mood = { value: 20, updatedAt: Date.now() }
+    handlePetClick()
+    check(
+      '心情 < 50 时点击，心情立即 +50',
+      Math.round(mood.value) === 70,
+      `心情 20 → ${String(Math.round(mood.value))}`,
+    )
+  }
 
   // ---- 7b) 闲置随机动作回复心情 10~30 ----
   {
@@ -5519,33 +6346,58 @@ async function verifyIdleAndMood(check, wait, readLayout) {
   // ---- 7c) 好感值：等级（爱心数）+ 阶段好感值 ----
   {
     const aff = (await readState()).affection
+    const live = currentAffectionPayload()
     /*
-     * 面板上应当显示"等级 1、阶段 0/100、♥♡♡♡♡"。
+     * ⚠️ 这里**不能再断言"初始 0 心"**。
      *
-     * 断言既看**状态快照**（value/level/threshold），也看**实际渲染文本**
-     * （heartsText/valueText）—— 后者才能抓到"数据对了但没画上去"这类问题
-     * （例如元素 id 写错、renderAffection 忘了调）。
+     * 好感从本版起有了增长途径（点击 / 随机动作 / 闲置对话 / 每 10 分钟 /
+     * 低心情点击），一次自测跑几分钟下来会真的涨上去 ——
+     * 原先"阶段 0/100"的断言会变成假失败（实测涨到 37/100）。
+     *
+     * 现在改成断言"**面板显示 == 主进程真实状态**"：
+     * 这才是这条用例真正想守住的东西（数据对了但没画上去才是 bug），
+     * 而"初值是不是 0"由下面那条纯函数断言单独守。
      */
     check(
-      '好感初始为 0 颗心、阶段 0/100',
-      aff && aff.hearts === 0 && aff.value === 0 && aff.threshold === 100,
-      aff ? `爱心 ${String(aff.hearts)} 颗，阶段 ${String(aff.value)}/${String(aff.threshold)}` : '拿不到好感状态',
+      '好感状态：主进程与渲染进程一致（爱心/阶段/阈值）',
+      aff
+        && aff.hearts === live.hearts
+        && aff.value === live.value
+        && aff.threshold === live.threshold,
+      aff
+        ? `面板 ${String(aff.hearts)} 心 ${String(aff.value)}/${String(aff.threshold)}，`
+          + `主进程 ${String(live.hearts)} 心 ${String(live.value)}/${String(live.threshold)}`
+        : '拿不到好感状态',
     )
     check(
-      '面板画出五颗爱心，0 心时全是空心',
-      aff && aff.heartsTextRendered === '♡♡♡♡♡',
-      `面板爱心=${JSON.stringify(aff && aff.heartsTextRendered)}（期望 "♡♡♡♡♡"）`,
+      '好感初值确实是 0 心、阶段 0（纯函数，不受运行时增长影响）',
+      initialAffection().hearts === 0 && initialAffection().value === 0,
+      `initialAffection() = ${JSON.stringify(initialAffection())}`,
+    )
+    check(
+      '面板里的爱心串与爱心数一致',
+      aff && aff.heartsTextRendered === heartsFor(aff.hearts),
+      `面板爱心=${JSON.stringify(aff && aff.heartsTextRendered)}（期望 ${JSON.stringify(aff ? heartsFor(aff.hearts) : '')}）`,
     )
     check(
       '面板显示"阶段值/阈值"文本',
-      aff && aff.valueText === '0/100',
-      `面板文本=${JSON.stringify(aff && aff.valueText)}（期望 "0/100"）`,
+      aff && aff.valueText === `${String(aff.value)}/${String(aff.threshold)}`,
+      `面板文本=${JSON.stringify(aff && aff.valueText)}（期望 ${String(aff && `${String(aff.value)}/${String(aff.threshold)}`)}）`,
     )
-    check(
-      '好感进度条宽度为 0%（阶段 0）',
-      aff && aff.fillWidth === '0%',
-      `进度条宽度=${JSON.stringify(aff && aff.fillWidth)}`,
-    )
+    /*
+     * 进度条宽度：与 `affectionProgress()` 算出的比例一致（允许 1% 取整误差）。
+     *
+     * 不写死 "0%"：阶段值会随好感增长而变，写死就必然假失败。
+     */
+    {
+      const expectedPct = Math.round(affectionProgress(aff ? { hearts: aff.hearts, value: aff.value } : initialAffection()) * 100)
+      const actual = Number.parseFloat(String((aff && aff.fillWidth) ?? '').replace('%', ''))
+      check(
+        '好感进度条宽度与阶段进度一致',
+        Number.isFinite(actual) && Math.abs(actual - expectedPct) <= 1,
+        `进度条=${JSON.stringify(aff && aff.fillWidth)}，期望约 ${String(expectedPct)}%`,
+      )
+    }
     check(
       '爱心数恒为 5 个（0 心与满级都如此）',
       aff && [...String(aff.heartsTextRendered)].length === 5,

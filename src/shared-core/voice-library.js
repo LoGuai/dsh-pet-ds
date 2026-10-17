@@ -278,3 +278,24 @@ export function voiceLibrarySummary() {
 export function voiceLineCount() {
   return VOICE_GROUPS.reduce((sum, group) => sum + group.lines.length, 0)
 }
+
+/**
+ * 「信赖语音」—— 低心情时被关心后的回应（用户要求：**单独分组、3 条**）。
+ *
+ * ⚠️ 目前是**占位**：语音库的这批内容（部位语音三档 + 信赖语音细写）
+ * 按用户要求"先放着"，等那批一起做。这里先给出可运行的占位，
+ * 让"低心情点击 → 信赖语音"这条机制现在就能跑通、能测。
+ *
+ * 定稿时要：改成正式的 `trust` 分组（并入 `VOICE_GROUPS`，走文档生成与去重检查），
+ * 并让 `pickTrustLine()` 从该组里抽。
+ */
+export const TRUST_LINES = [
+  '（占位·信赖）……才、才不是因为你关心我。',
+]
+
+/** 抽一句信赖语音（目前只有占位，池为 1 时直接返回它）。 */
+export function pickTrustLine(rand = Math.random) {
+  if (TRUST_LINES.length === 0) return ''
+  if (TRUST_LINES.length === 1) return TRUST_LINES[0]
+  return TRUST_LINES[Math.floor(rand() * TRUST_LINES.length)]
+}

@@ -411,3 +411,74 @@ body.dragging {
     transform: rotate(-4deg) translateY(-4%);
   }
 }
+
+/* ---------------------------------------------------------------- 数值浮出层
+   好感值 / 心情值变动时飘出的 "+N"（用户要求"需要有可视化反馈"）。
+
+   要点：
+     · 绝对定位在角色区上方，pointer-events:none —— 绝不能拦鼠标命中；
+     · 每条数字是独立元素，靠 CSS 动画上浮 + 淡出，动画结束由 JS 移除；
+     · 用 transform 而不是改 top，避免每帧触发布局（桌宠窗口很小，掉帧很显眼）。
+*/
+.float-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 5;
+}
+
+.float-num {
+  position: absolute;
+  left: 50%;
+  /* 起始位置：角色上半身附近，视觉上"从她身上冒出来" */
+  top: 34%;
+  transform: translate(-50%, 0);
+  font: 600 13px/1 "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.75);
+  animation: float-up 1.25s ease-out forwards;
+  will-change: transform, opacity;
+}
+
+.float-num.affection {
+  color: #ff8fb1;
+}
+
+.float-num.mood {
+  color: #7fd6a0;
+}
+
+/* 两条同时出现时左右错开，别叠在一起看不清 */
+.float-num.right {
+  left: 68%;
+}
+
+.float-num.left {
+  left: 32%;
+}
+
+@keyframes float-up {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 6px) scale(0.92);
+  }
+  18% {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+  70% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -26px) scale(0.98);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .float-num {
+    animation-duration: 0.9s;
+  }
+}

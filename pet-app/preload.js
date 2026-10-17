@@ -28,6 +28,15 @@ const INBOUND = [
   'pet:balance',
   /** 主进程要求播放某个动作（菜单入口触发）。 */
   'pet:play-action',
+  /**
+   * 主进程要求**强制回到闲置**（右键菜单的「刷新状态」）。
+   *
+   * ⚠️ 新频道必须加进这个白名单，否则渲染进程里 `window.pet.on(...)`
+   * 会在**加载时**抛错，直接中断后续所有顶层代码（包括测试钩子的定义）——
+   * 表现是"自测里一堆 __petTestXxx is not a function"，很容易误判成别的问题。
+   * 这个坑本次实测踩到了。
+   */
+  'pet:refresh-state',
 ]
 
 contextBridge.exposeInMainWorld('pet', {
@@ -69,10 +78,13 @@ contextBridge.exposeInMainWorld('pet', {
   setSize: (petWidth) => ipcRenderer.send('pet:set-size', { petWidth }),
 
   /**
-   * 互动一次（点击桌宠）：让主进程加心情。
-   * 心情的数值与衰减归主进程管，因为它需要持久化到文件。
+   * 互动一次（点击桌宠）。
+   *
+   * 改成 `invoke` 是因为"低心情时要说信赖语音、且不播部位动画"这个分支
+   * 必须由主进程判定 —— 心情的真相源在它那儿（可能还有未结算的周期漂移）。
+   * 渲染进程拿到结果后再决定说哪句、播不播动画。
    */
-  pet: () => ipcRenderer.send('pet:pet'),
+  pet: () => ipcRenderer.invoke('pet:pet'),
 
   /**
    * 通知主进程"闲置随机动作已触发"，给它发心情奖励（10~30）。

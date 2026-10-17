@@ -20,6 +20,7 @@ const frameEl = document.getElementById('frame')
 const bubble = document.getElementById('bubble')
 const bubbleText = document.getElementById('bubble-text')
 const offlineTag = document.getElementById('offline')
+const floatLayerEl = document.getElementById('float-layer')
 const bubbleAreaEl = document.querySelector('.bubble-area')
 const statsPanel = document.getElementById('stats-panel')
 const balancePanel = document.getElementById('balance-panel')
@@ -116,6 +117,18 @@ const DRAG_ANIMATION_ID = 'hang'
  */
 const SLEEP_ACTION_ID = 'sleep'
 const WAKE_ACTION_ID = 'awake'
+
+/**
+ * 「深度思考」动作 id（镜像常量，源头是 `src/shared-core/actions-library.js`）。
+ *
+ * 用户要求：**DSH 开始思考时**，桌宠停下当前动作、播这个动作；
+ * 思考结束或桌宠被点击时结束它、回到闲置。
+ *
+ * ⚠️ 素材还没给（用户："具体动作素材之后补充，现在先占位"）。
+ * 所以现在触发它只会走"素材加载失败 → 退回站立动画"的兜底路径，
+ * 状态机与门控是完整可测的，补素材时不用改逻辑。
+ */
+const THINK_ACTION_ID = 'think'
 
 /**
  * 坐姿动作的三段素材 id（镜像常量，源头是 `src/shared-core/actions-library.js`）。
@@ -228,6 +241,38 @@ let lastWorkLabel = ''
 const bubbleTimers = { say: null, work: null }
 /** 谁在占用气泡：'say' 优先级高于 'work'。 */
 let bubbleOwner = null
+
+// ---------------------------------------------------------------- 数值浮出反馈
+/** 上一次已经弹过数字的增量时刻（去重用，见 pet:mood 处理器里的说明）。 */
+let lastShownMoodGainAt = 0
+let lastShownAffectionGainAt = 0
+
+/**
+ * 在角色上方浮出一行"+N"（好感 / 心情变动时）。
+ *
+ * @param {'affection' | 'mood'} kind 决定颜色
+ * @param {string} text 要显示的文字
+ * @param {'left' | 'right'} [side] 左右错开用（两种数值同时变时不叠在一起）
+ */
+function showFloatGain(kind, text, side = 'right') {
+  if (!floatLayerEl || !text) return
+  const node = document.createElement('div')
+  node.className = `float-num ${kind} ${side}`
+  node.textContent = text
+  floatLayerEl.append(node)
+  /*
+   * 动画结束后移除节点。
+   *
+   * 用 `animationend` 而不是 setTimeout：动画时长写在 CSS 里，
+   * 用固定毫秒数会在改了样式之后对不上（节点残留或提前删掉）。
+   * 同时兜一个 3 秒的 timeout —— 窗口被隐藏时 animationend 可能不触发。
+   */
+  const remove = () => {
+    if (node.isConnected) node.remove()
+  }
+  node.addEventListener('animationend', remove, { once: true })
+  setTimeout(remove, 3000)
+}
 
 // ---------------------------------------------------------------- 气泡
 /**
@@ -1623,6 +1668,18 @@ function finishDrag(e) {
 
   if (isClick) {
     /*
+     * 深度思考中点击 = **结束思考动作、回到闲置**（用户要求）。
+     *
+     * 放在最前面：思考动作是"宿主状态的映射"，用户一点就等于把它收回。
+     * 此时**不说部位台词、不加心情/好感** —— 与"睡眠中点击=叫醒"同一套约定：
+     * 这次点击的语义是"结束这个状态"，不是普通互动。
+     */
+    if (thinkActive) {
+      dragStart = null
+      exitThink('用户点击')
+      return
+    }
+    /*
      * 睡眠期间点击 = **叫醒**（用户要求）。
      *
      * 这条语义与普通点击不同：不说部位台词、不加心情，只播惊醒动画。
@@ -1662,25 +1719,41 @@ function finishDrag(e) {
      *  · 该部位配了互动动画 → 播它（动画自带姿态变化，就是反馈本身）；
      *  · 没配（腹部、腿）→ 只说话，不播动画；
      *  · 没命中任何部位 → 通用台词。
-     * 台词仍然按部位取，心情照旧 +10。
+     *
+     * ⚠️ 但**低心情时是另一条分支**（用户要求）：只说一句信赖语音，
+     * 不播部位动画、也不说部位台词 —— "被关心"盖过"被戳了一下"。
+     * 这个判定交给主进程（心情的真相源），所以要先 invoke 再决定说什么。
      */
     const hitPart = resolveClickPart(e.clientX, e.clientY)
     const partLine = hitPart ? pickPartLine(hitPart.part.lines) : ''
-    showBubble(partLine || '唔…戳我做什么？', 'say', 2500)
 
-    const partActionId = hitPart && typeof hitPart.part.actionId === 'string' ? hitPart.part.actionId : ''
-    if (partActionId) {
-      // 直接调用 playAction，而不是走主进程 IPC —— 点击是本进程的事件，
-      // 本地播放少一次往返，反馈更即时。
-      void playAction(partActionId, { fromMenu: false, clickPart: true })
-    }
+    void (async () => {
+      let result = null
+      try {
+        result = await window.pet.pet()
+      } catch (err) {
+        // 主进程没应答时退回到本地反馈，不要让点击"没反应"。
+        console.warn('点击互动结算失败，走本地反馈：', err)
+      }
 
-    // 互动加心情。数值由主进程结算（见 pet-app/main.js 的心情小节）。
-    try {
-      window.pet.pet()
-    } catch {
-      // 忽略：心情通道失败不该影响点击反馈。
-    }
+      if (result && result.lowMood) {
+        /*
+         * 低心情：主进程已经把心情 +50 了，这里只负责说话。
+         * 台词由主进程给（信赖语音在语音库里），渲染进程不重复实现。
+         */
+        showBubble(result.trustLine || '（占位·信赖）……哼，我才没有高兴。', 'say', 4500)
+        return
+      }
+
+      showBubble(partLine || '唔…戳我做什么？', 'say', 2500)
+
+      const partActionId = hitPart && typeof hitPart.part.actionId === 'string' ? hitPart.part.actionId : ''
+      if (partActionId) {
+        // 直接调用 playAction，而不是走主进程 IPC —— 点击是本进程的事件，
+        // 本地播放少一次往返，反馈更即时。
+        void playAction(partActionId, { fromMenu: false, clickPart: true })
+      }
+    })()
   } else if (wasLifted && bubbleOwner === 'say') {
     // 台词在松手后再停留一会儿，让用户来得及读完。
     showBubble(bubbleText.textContent, 'say', 2600)
@@ -1942,11 +2015,34 @@ function applyState(state) {
   const isIdle = nextStatus === 'idle'
   currentWorkStatus = nextStatus
 
-  // 忙碌态之间的抖动（thinking ↔ working ↔ success…）什么也不做：
+  /*
+   * 深度思考的进/出判定必须放在**下面的早返回之前**。
+   *
+   * 为什么：忙碌态之间的切换（thinking ↔ working ↔ success…）会在
+   * `wasIdle === isIdle` 时直接 return，而"开始思考"**可能**就发生在
+   * 这些忙碌态之间（例如 working → thinking）—— 放后面就永远收不到。
+   *
+   * ⚠️ 但"思考"不能同时走下面那条"从闲置变忙碌"的处理：
+   * 那条会 `wakeFromSleep()` + `endAction()`，而 `enterThink()` 自己也要做这两件事。
+   * 两套一起跑会**重复唤醒**，实测把"睡眠中开始工作要播惊醒动画"那条用例
+   * 弄成了"petState=waking 但动画=stand"。
+   * 所以这里按状态分派：thinking 只走 enterThink，其余只走原来的逻辑。
+   */
+  const isThinking = nextStatus === 'thinking'
+
+  // 忙碌态之间的抖动（thinking ↔ working ↔ success…）只处理"思考"的进出：
   // 既不改闲置计时，也不唤醒睡眠。
-  if (wasIdle === isIdle) return
+  if (wasIdle === isIdle) {
+    if (isThinking && !thinkActive) {
+      void enterThink()
+    } else if (!isThinking && thinkActive) {
+      exitThink(`宿主状态变为 ${nextStatus}`)
+    }
+    return
+  }
 
   if (isIdle) {
+    if (thinkActive) exitThink('宿主回到闲置')
     // 刚回到闲置：重新起算闲置计时。
     //
     // ⚠️ 但**正在惊醒时不要重置** —— 惊醒是"被叫醒"的收尾，重置会
@@ -1958,6 +2054,17 @@ function applyState(state) {
 
   // 从闲置变为忙碌（这才是"DSH 开始工作"）：停掉闲置调度。
   suspendIdleScheduling('宿主开始工作')
+
+  if (isThinking) {
+    /*
+     * 思考统一交给 enterThink：它会取消坐姿、醒过来、收掉当前动作，
+     * 再播深度思考。这里**不再重复**唤醒/收动作（见上面的说明）。
+     */
+    void enterThink()
+    return
+  }
+
+  if (thinkActive) exitThink(`宿主状态变为 ${nextStatus}`)
   /*
    * 睡眠中开始工作 = 与"用户点击"同一种唤醒（用户要求）：
    * **播放惊醒动画**，而不是被硬生生切断。
@@ -2092,7 +2199,13 @@ let lastPlayedActionId = null
  * 所以自测的断言写成"随机池**恰好等于** eat, play-mc, sleep"，而不是"不含某个 id"。
  */
 function oneShotActions() {
-  const excluded = new Set([WAKE_ACTION_ID, ...partActionIds()])
+  /*
+   * ⚠️ 「深度思考」（`think`）必须排除，虽然它在清单里。
+   *
+   * 它是**宿主状态的映射**，只能由工作状态触发；一旦进随机池，
+   * 闲置时就会莫名其妙地开始"思考" —— 而宿主其实什么都没干。
+   */
+  const excluded = new Set([WAKE_ACTION_ID, THINK_ACTION_ID, ...partActionIds()])
   return actionCatalog.filter((action) => action.standing !== true && !excluded.has(action.id))
 }
 
@@ -2496,6 +2609,103 @@ function isTrulyIdle() {
 function canTriggerRandomAction() {
   return isTrulyIdle() && petState === 'idle'
 }
+
+// ---------------------------------------------------------------- 深度思考
+/*
+ * 需求（用户指定）：
+ *
+ *   「根据 dsh 工作状态，实时改变桌宠的状态，在 dsh 开始思考时，桌宠会同时
+ *     停止当前正在进行的动作，触发"深度思考"动作。当 dsh 思考结束或桌宠被
+ *     点击时，结束该动作并回到闲置状态。（具体动作素材之后补充，现在先占位）」
+ *
+ * ## 为什么用独立的标志而不是新增一个 petState
+ *
+ * `petState` 是桌宠**自己**的状态机（闲置 / 睡眠 / 惊醒 / 坐姿），
+ * 由桌宠的行为决定；而"思考"是**宿主状态**的映射，随时会被宿主收走。
+ * 混进同一个枚举会让"谁有权改它"变得模糊。
+ *
+ * 门控上不需要新状态：思考期间 `currentWorkStatus === 'thinking'`，
+ * `isTrulyIdle()` 已经为假，随机动作与主动对话都自然停住。
+ */
+
+/** 现在是否处于"深度思考"（宿主在思考、桌宠在演思考动作）。 */
+let thinkActive = false
+
+/**
+ * 进入深度思考：**先停掉当前动作**，再播思考动作。
+ *
+ * 顺序很重要：用户明确要求"同时停止当前正在进行的动作"。
+ * 若先播思考动作再收尾旧动作，旧动作的收尾回调会把画面拉回站立，
+ * 思考动作就白播了（这是本项目里反复出现过的一类时序问题）。
+ */
+async function enterThink() {
+  if (thinkActive) return
+  thinkActive = true
+
+  // 坐姿是"多阶段 + 计时器"的，必须走它自己的取消逻辑，否则计时器还在跑。
+  cancelSit('宿主开始思考')
+
+  /*
+   * 睡眠中开始思考：与"宿主开始工作"一致，先播惊醒动画。
+   * 这里 await 是因为后面的 endAction/playAction 要作用在惊醒之后的状态上。
+   */
+  if (petState === 'sleeping' || petState === 'waking') {
+    await wakeFromSleep()
+  }
+
+  if (currentActionId !== null) endAction()
+
+  console.info('[think] DSH 开始思考 → 播「深度思考」（素材待补，当前会回落到站立）')
+  void playAction(THINK_ACTION_ID, { fromMenu: false })
+}
+
+/**
+ * 结束深度思考，回到闲置。
+ *
+ * @param {string} reason 日志用（"思考结束" / "用户点击"）
+ */
+function exitThink(reason) {
+  if (!thinkActive) return
+  thinkActive = false
+  if (currentActionId === THINK_ACTION_ID) endAction()
+  /*
+   * 回到闲置后重新起算闲置门槛：思考期间可能持续很久，
+   * 不重置的话"刚思考完"会立刻满足闲置门槛而弹动作，观感很突兀。
+   */
+  resetIdleTimer(true)
+  console.info(`[think] 结束深度思考（${reason}）→ 回闲置`)
+}
+
+/**
+ * 「刷新状态」：**无条件**把桌宠收回到站着的闲置状态。
+ *
+ * 用户要求（原文）：「刷新状态，点击后使桌宠直接回复到闲置状态，
+ * 防止可能的在某个动作上卡住而无法动弹」。
+ *
+ * 所以这里刻意**不做任何条件判断**，把每一个"可能卡住的东西"都收一遍：
+ *   · 思考标志（否则点完还是"思考中"，点击只会被它吃掉）；
+ *   · 坐姿状态机（它有 180 秒计时器与阶段标记，是卡住概率最高的一处）；
+ *   · 惊醒看门狗（`waking` 是个已知会卡死的状态，有专门的看门狗）；
+ *   · 当前动作与其收尾定时器；
+ *   · 状态枚举本身（直接置回 'idle'，不走"正常收尾"）；
+ *   · 闲置计时（重新起算门槛，避免刚刷新就弹随机动作）。
+ *
+ * @param {string} [reason]
+ */
+function refreshToIdle(reason = '刷新状态') {
+  thinkActive = false
+  try {
+    cancelSit(reason)
+  } catch (err) {
+    console.warn('刷新时取消坐姿失败：', err)
+  }
+  clearWakingWatchdog()
+  endAction()
+  setPetState('idle', reason)
+  resetIdleTimer(true)
+  console.info(`[refresh] ${reason} → 已强制回到闲置`)
+}
+
 
 /**
  * 停掉闲置调度，并把「闲置模式」的门槛**作废**。
@@ -3590,6 +3800,20 @@ window.pet.on('pet:mood', (payload) => {
     if (!payload) return
     moodState = { value: Number(payload.value), tier: String(payload.tier ?? 'happy') }
     if (statsVisible) renderMood()
+    /*
+     * 浮出数字：只在 `lastGain.at` 变化时弹一次。
+     *
+     * 判据用时间戳而不是"值变了"：面板会因各种原因重推（初始化、尺寸变化…），
+     * 用值 diff 会在这些重推时重复弹数字；而周期漂移不写 lastGain
+     * （它是后台随机变化，弹出来会让人莫名其妙）。
+     */
+    const gain = payload.lastGain
+    if (gain && Number.isFinite(gain.amount) && gain.amount > 0 && Number.isFinite(gain.at)) {
+      if (gain.at > lastShownMoodGainAt) {
+        lastShownMoodGainAt = gain.at
+        showFloatGain('mood', `心情 +${String(gain.amount)}`, 'left')
+      }
+    }
   } catch {
     // 忽略：心情渲染失败不该影响其它功能。
   }
@@ -3600,8 +3824,32 @@ window.pet.on('pet:affection', (payload) => {
     if (!payload) return
     affectionState = { ...affectionState, ...payload }
     if (statsVisible) renderAffection()
+    // 浮出数字（理由与上面心情那条相同：靠 `at` 去重，靠主进程给的真实增量）。
+    const gain = payload.lastGain
+    if (gain && Number.isFinite(gain.amount) && gain.amount > 0 && Number.isFinite(gain.at)) {
+      if (gain.at > lastShownAffectionGainAt) {
+        lastShownAffectionGainAt = gain.at
+        const hearts = Number.isFinite(gain.heartsGained) && gain.heartsGained > 0
+        showFloatGain('affection', `好感 +${String(gain.amount)}${hearts ? ' ♥' : ''}`, 'right')
+      }
+    }
   } catch {
     // 忽略：好感渲染失败不该影响其它功能。
+  }
+})
+
+/**
+ * 「刷新状态」：无条件回到站着的闲置状态（用户要求的逃生门）。
+ *
+ * 为什么写成"无条件收干净"而不是"如果没在动作就重置"：
+ * 这个功能的用途就是**救**——她可能卡在坐姿计时、睡眠尾帧循环、思考动作上，
+ * 或者某个动作的收尾回调丢了。任何"条件判断"都会在那种情况下失效。
+ */
+window.pet.on('pet:refresh-state', () => {
+  try {
+    refreshToIdle()
+  } catch (err) {
+    console.warn('刷新状态失败：', err)
   }
 })
 
@@ -3933,8 +4181,7 @@ window.__petTestIdleVoiceState = () => ({
 })
 
 /**
- * 测试用：当前气泡的内容与占用者。
- *
+ * 测试用：当前气泡的内容与占用者。 *
  * 为什么单独给一个钩子：`__petTestState` 里的字段是给布局诊断用的，
  * 而"她刚才到底说了什么"是语音机制的断言对象 —— 两者用途不同，
  * 混在一起会让状态快照越来越胖。
@@ -3944,6 +4191,62 @@ window.__petTestBubble = () => ({
   owner: bubbleOwner,
   hidden: bubble ? Boolean(bubble.hidden) : true,
 })
+
+/**
+ * 测试用：模拟一次真实点击（走 mousedown + mouseup，因而会经过
+ * "点击 vs 拖动"的判定、以及点击处理的**全部分支**）。
+ *
+ * 为什么不直接调内部函数：点击分支里有"思考中/睡眠中/坐姿中"等多种提前返回，
+ * 直接调某个函数会绕过这些分支，测不到真实行为。
+ */
+window.__petTestClick = (clientX = 90, clientY = 200) => {
+  const target = document.getElementById('stage')
+  if (!target) return false
+  const base = {
+    bubbles: true,
+    cancelable: true,
+    button: 0,
+    clientX,
+    clientY,
+    screenX: 1200 + clientX,
+    screenY: 600 + clientY,
+  }
+  target.dispatchEvent(new MouseEvent('mousedown', base))
+  target.dispatchEvent(new MouseEvent('mouseup', base))
+  return true
+}
+
+/** 测试用：深度思考状态机的接口。 */
+window.__petTestThink = {
+  state: () => ({
+    active: thinkActive,
+    petState,
+    currentActionId,
+    canTriggerRandom: canTriggerRandomAction(),
+  }),
+  enter: async () => {
+    await enterThink()
+    return window.__petTestThink.state()
+  },
+  exit: (reason) => {
+    exitThink(reason ?? '测试')
+    return window.__petTestThink.state()
+  },
+}
+
+/** 测试用：走一遍「刷新状态」。 */
+window.__petTestRefresh = () => {
+  refreshToIdle('测试')
+  return {
+    petState,
+    currentActionId,
+    thinkActive,
+    sitPhase,
+  }
+}
+
+/** 测试用：浮出层的当前节点数（>0 说明"数值变化有可视化反馈"确实画出来了）。 */
+window.__petTestFloatCount = () => (floatLayerEl ? floatLayerEl.children.length : -1)
 
 /**
  * 测试用：注入"当前时间"与闲置门槛，从而**跳过 1 分钟等待**而不必真的等。

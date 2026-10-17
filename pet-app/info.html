@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'" />
+    <title>桌宠信息</title>
+    <style>
+      /*
+       * 信息窗口的样式刻意与桌宠主窗口（深色 + 蓝色）保持同一套观感，
+       * 但它是个**普通窗口**：有标题栏、可缩放、可关。
+       *
+       * 不用系统默认白底的原因：桌宠整体是深色玻璃风，
+       * 点开一个刺眼的白窗口会显得像两个不同的产品。
+       */
+      :root {
+        --bg: #12151c;
+        --panel: #1b2029;
+        --panel-2: #222836;
+        --line: #2e3646;
+        --text: #e6ebf5;
+        --muted: #93a0b8;
+        --accent: #4c8dff;
+        --accent-soft: #2b4b86;
+        --warn: #f0b429;
+      }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font: 13px/1.6 "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      header {
+        padding: 14px 18px 10px;
+        border-bottom: 1px solid var(--line);
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        flex: 0 0 auto;
+      }
+      header h1 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: 0.02em; }
+      header .sub { color: var(--muted); font-size: 12px; }
+      main { flex: 1 1 auto; overflow-y: auto; padding: 14px 18px 20px; }
+      main::-webkit-scrollbar { width: 10px; }
+      main::-webkit-scrollbar-thumb { background: #333c4e; border-radius: 5px; }
+      main::-webkit-scrollbar-track { background: transparent; }
+
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 12px 14px;
+        margin-bottom: 12px;
+      }
+      .card.locked { opacity: 0.62; }
+      .card-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+      .card-title { font-size: 13.5px; font-weight: 600; }
+      .tag {
+        font-size: 11px;
+        padding: 1px 7px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        color: var(--muted);
+      }
+      .tag.on { color: #cfe0ff; border-color: var(--accent-soft); background: #1d2a42; }
+      .tag.off { color: var(--muted); }
+      .card-note { color: var(--muted); font-size: 12px; margin: 6px 0 8px; }
+      ol.lines { margin: 0; padding-left: 20px; }
+      ol.lines li { margin: 3px 0; }
+      .empty { color: var(--muted); font-size: 12px; }
+
+      /* 关于窗口 */
+      .kv { display: grid; grid-template-columns: 92px 1fr; gap: 6px 12px; }
+      .kv dt { color: var(--muted); }
+      .kv dd { margin: 0; }
+      pre.changelog {
+        background: var(--panel-2);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 10px 12px;
+        margin: 8px 0 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font: 12px/1.65 "Cascadia Mono", Consolas, "Microsoft YaHei UI", monospace;
+        color: #d5dcea;
+        max-height: 320px;
+        overflow-y: auto;
+      }
+      h2.section { font-size: 13px; margin: 16px 0 6px; color: #cfd8ea; }
+
+      button {
+        font: inherit;
+        color: var(--text);
+        background: var(--panel-2);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 6px 12px;
+        cursor: pointer;
+      }
+      button:hover { border-color: var(--accent-soft); background: #26303f; }
+      button.primary { background: var(--accent-soft); border-color: #3a63a8; }
+      footer {
+        flex: 0 0 auto;
+        padding: 10px 18px;
+        border-top: 1px solid var(--line);
+        display: flex;
+        gap: 8px;
+        justify-content: flex-end;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1 id="title">桌宠</h1>
+      <span class="sub" id="subtitle"></span>
+    </header>
+    <main id="content"></main>
+    <footer>
+      <button id="say-btn" hidden>随机说一句</button>
+      <button id="close-btn">关闭</button>
+    </footer>
+    <script src="info.js"></script>
+  </body>
+</html>
