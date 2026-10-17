@@ -175,8 +175,29 @@ if (!existsSync(target)) {
   }
 
   const animRoot = join(target, 'assets', 'animations')
-  const animCount = existsSync(animRoot) ? readdirSync(animRoot).length : 0
-  check('动画动作目录数 = 10', animCount === 10, `实际 ${String(animCount)}`)
+  const animDirs = existsSync(animRoot) ? readdirSync(animRoot) : []
+  const animCount = animDirs.length
+  /*
+   * ⚠️ 刻意**不**写死"目录数 = 某个数字"。
+   *
+   * 原先断言 `animCount === 10`，于是每加一个动作（坐下就是加了 3 个目录）
+   * 这条都会假失败 —— 而它想守的其实是"素材没有被打包漏掉"。
+   * 改成"关键目录都在 + 数量不少于下限"，加动作时不必再改这里。
+   */
+  const requiredAnims = [
+    'stand', 'hang', 'eat', 'sleep', 'awake',
+    'head', 'chest', 'stomach', 'leg', 'play-mc',
+    'sit', 'sit-circle', 'sit-stop',
+  ]
+  const missingAnims = requiredAnims.filter((d) => !animDirs.includes(d))
+  check(
+    '关键动画动作目录都在',
+    missingAnims.length === 0,
+    missingAnims.length === 0
+      ? `共 ${String(animCount)} 个目录，关键目录齐全`
+      : `缺：${missingAnims.join(', ')}；实际有：${animDirs.join(', ')}`,
+  )
+  check('动画动作目录数不少于 10', animCount >= 10, `实际 ${String(animCount)}`)
 
   /* 二进制抽查：PNG 头必须是 0x89 'P' 'N' 'G' */
   const png = join(animRoot, 'stand', 'frame_01.png')

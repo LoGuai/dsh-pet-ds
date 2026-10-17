@@ -45,9 +45,13 @@ param(
     # 跳过 Electron 运行时安装（自己另有安排时才用；跳过会让桌宠窗口起不来）
     [switch]$SkipElectron,
 
-    # 要安装的 Electron 版本。默认空 = 由 install-electron.mjs 取最新稳定版。
-    # 想复现某个版本时传，例如 -ElectronVersion 38.2.0
-    [string]$ElectronVersion,
+    # 要安装的 Electron 版本。
+    #
+    # ⚠️ 刻意**钉住一个版本**，而不是"取最新稳定版"：
+    # 桌宠的窗口尺寸/透明/置顶行为是在 38.2.0 上验过的，
+    # 一键安装的目标是"装完就能用"，不该在装机时顺带升级运行时。
+    # 想换版本：-ElectronVersion 44.9.0
+    [string]$ElectronVersion = '38.2.0',
 
     # Electron 下载镜像（默认用脚本内置的镜像顺序）。国内网络常需要它。
     [string]$ElectronMirror

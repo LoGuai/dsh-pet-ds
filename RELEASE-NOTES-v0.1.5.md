@@ -154,21 +154,56 @@ down（sit，6 帧）→ hold（sit-circle，12 帧循环 + 180 秒计时）
 
 1. 先看 `<DSH_HOME>\electron\electron-v*-win32-x64\electron.exe` 是否已存在
    —— 有就跳过，不重复下载；
-2. 没有就调用插件里自带的 `scripts/dev/install-electron.mjs`（约 100 MB，需联网）；
+2. 没有就调用插件里自带的 `scripts/dev/install-electron.mjs`
+   （下载约 120 MB，需联网）；
 3. 失败时**不当作安装失败**，而是把补救命令明确打出来。
+
+**版本钉住 38.2.0，不取"最新稳定版"。**
+首次实现时它自动装了 44.9.0 —— 而桌宠的窗口尺寸/透明/置顶行为是在 38.2.0 上验过的。
+一键安装的目标是"装完就能用"，不该在装机时顺带升级运行时。
+换版本：`-ElectronVersion 44.9.0`。
 
 `install-pet.ps1` 新增参数：
 
 | 参数 | 作用 |
 |---|---|
 | `-SkipElectron` | 跳过 Electron 安装 |
-| `-ElectronVersion 38.2.0` | 指定版本（默认取最新稳定版） |
+| `-ElectronVersion 38.2.0` | 指定版本（默认就是 38.2.0） |
 | `-ElectronMirror <url>` | 换镜像（国内网络常需要） |
 
 ⚠️ 一个容易漏的细节：子树进程**必须显式传 `DSH_HOME`**。
 `install-electron.mjs` 按 `DSH_HOME ?? %USERPROFILE%\.dsh` 决定装到哪，
 而安装器可能用 `-DshHome` 指定了别的目录 —— 不传就会装到默认目录，
 与安装器认定的位置不一致，之后桌宠照样找不到它。
+
+### 实测：一键安装确实能跑通
+
+在 `%TEMP%` 下造了一个干净的 DSH_HOME（**必须在工作区之外**，原因见下），
+跑交付目录里的 `install-pet.ps1`：
+
+```
+[1/5] 插件包体        [OK] dsh-pet-ds-0.1.5.tgz (143.51 MB)
+[2/5] DSH 配置目录    [OK]
+[3/5] Node 与 pnpm    [OK]（用 DSH 自带的）
+[4/5] 安装            [OK] pnpm 完成
+[5/5] Electron 运行时
+  [install-electron] 目标版本：v38.2.0（win32-x64）
+  [install-electron] 下载完成：119.9 MB
+  [install-electron] 安装完成并通过校验
+  [install-electron] 实际版本：v38.2.0
+  [OK] Electron 安装完成
+安装完成
+```
+
+结果：`electron.exe` 201.4 MB 就位、`profile/node_modules/dsh-pet-ds` 就位。
+
+### 一条位置约束（实测，与产品无关但会误导验证）
+
+同一份 `electron.exe`，装在 `%USERPROFILE%\.dsh\electron\` 下能跑（打印 v38.2.0），
+复制到**仓库工作区内**启动就崩 `0x80000003`（EXCEPTION_BREAKPOINT）。
+我第一次拿 `.cache` 当 `DSH_HOME` 验证时，Electron 的版本校验必然失败 ——
+那不是安装器坏了。`install-electron.mjs` 里早有这条记录，这里再记一次。
+
 
 ## 五、其他修复
 

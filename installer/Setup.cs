@@ -166,6 +166,16 @@ namespace DshPetSetup
         /** 插件包名。与 package.json 的 name 一致，DSH 靠它认插件。 */
         internal const string PluginName = "dsh-pet-ds";
 
+        /**
+         * 一键安装时安装的 Electron 版本。
+         *
+         * 刻意钉住，而不是取最新稳定版：桌宠的窗口尺寸/透明/置顶行为是在
+         * 38.2.0 上验过的。一键安装的目标是"装完就能用"，
+         * 不该在装机时顺带把运行时升级到一个没验过的版本。
+         * 与本仓库 `install-pet.ps1` 的 `-ElectronVersion` 默认值保持一致。
+         */
+        internal const string ElectronVersion = "38.2.0";
+
         /** 子目录名：用户选的是"装到哪个目录"，插件本体放它下面的这个子目录。 */
         internal const string SubDirName = "dsh-pet-ds";
 
@@ -387,8 +397,13 @@ namespace DshPetSetup
                     else
                     {
                         log("      · 下载并安装 Electron（约 100 MB，需联网）…");
+                        /*
+                         * ⚠️ 钉住版本，而不是"取最新稳定版"。
+                         * 桌宠的窗口尺寸/透明/置顶行为是在 38.2.0 上验过的，
+                         * 一键安装的目标是"装完就能用"，不该在装机时顺带升级运行时。
+                         */
                         var okElectron = DshLocator.RunNodeScript(
-                            nodeExe, electronInstaller, "", pluginDir, dshHome, 600000,
+                            nodeExe, electronInstaller, "--version=" + ElectronVersion, pluginDir, dshHome, 600000,
                             delegate(string l) { log("        " + l); });
                         if (okElectron)
                         {
@@ -1149,10 +1164,32 @@ namespace DshPetSetup
             check("含 @deepseek-ai/schemastery",
                 File.Exists(Path.Combine(nm, "@deepseek-ai", "schemastery", "package.json")), null);
 
-            /* 素材：10 个动作目录 */
+            /*
+             * 素材：关键动作目录必须在。
+             *
+             * ⚠️ 刻意**不**写死"目录数 = 某个数字"。
+             * 原先断言 `animCount == 10`，于是每加一个动作（坐下就加了 3 个目录）
+             * 这条都会假失败 —— 而它想守的其实是"素材没被打包漏掉"。
+             */
             var animRoot = Path.Combine(target, "assets", "animations");
             var animCount = Directory.Exists(animRoot) ? Directory.GetDirectories(animRoot).Length : 0;
-            check("动画动作目录数 = 10", animCount == 10, "实际 " + animCount);
+            var requiredAnims = new[]
+            {
+                "stand", "hang", "eat", "sleep", "awake",
+                "head", "chest", "stomach", "leg", "play-mc",
+                "sit", "sit-circle", "sit-stop",
+            };
+            var missingAnims = "";
+            foreach (var a in requiredAnims)
+            {
+                if (!Directory.Exists(Path.Combine(animRoot, a)))
+                {
+                    missingAnims += (missingAnims.Length == 0 ? "" : ", ") + a;
+                }
+            }
+            check("关键动画动作目录都在", missingAnims.Length == 0,
+                missingAnims.Length == 0 ? "共 " + animCount + " 个目录，关键目录齐全" : "缺：" + missingAnims);
+            check("动画动作目录数不少于 10", animCount >= 10, "实际 " + animCount);
 
             /* 二进制抽查：PNG 头必须是 0x89 'P' 'N' 'G' */
             var png = Path.Combine(animRoot, "stand", "frame_01.png");

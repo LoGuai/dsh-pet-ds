@@ -77,12 +77,35 @@ if (existsSync(realRuntimes)) {
   log('⚠ 找不到真实 dsh-runtimes —— pnpm 那步会跳过，本测试无意义')
 }
 
+/*
+ * 预置一个"已装好"的 Electron，让安装器的第 6 步直接跳过。
+ *
+ * 两个理由：
+ *  1. 不预置就要**下载约 100 MB**，每次跑测试都下、既慢又依赖网络；
+ *  2. 沙箱在仓库内（.cache），而 Electron 放在工作区内启动会直接崩
+ *     （EXCEPTION_BREAKPOINT —— 仓库里 install-electron.mjs 有详细记录），
+ *     于是校验必然失败，日志里会多出一段与本测试无关的噪音。
+ *
+ * 本测试要验的是"pnpm 能否把包装进 profile"，Electron 那一步有单独的验证。
+ */
+const seededElectron = join(home, 'electron', 'electron-v38.2.0-win32-x64')
+mkdirSync(seededElectron, { recursive: true })
+writeFileSync(join(seededElectron, 'electron.exe'), 'stub', 'utf8')
+
 // ---------------------------------------------------------------- 跑安装
 log('')
 log('运行 setup.exe --silent …')
 const { output: out, waitedMs } = await runSetup({
   setup: SETUP,
-  args: ['--silent', installBase],
+  /*
+   * `--elevated` 必须加，且要放在**最后**。
+   *
+   * 安装器在没提权的进程里会走 TryElevate：用 runas 重新拉起自己然后退出，
+   * 于是本次调用立刻返回、什么都没装 —— 表现为"输出为空、断言全红"。
+   * 那个重启会把 `--elevated` 追加在参数末尾，所以这里手工加在末尾即可绕过，
+   * 让非提权版 exe 直接在本进程里跑完（安装逻辑完全相同）。
+   */
+  args: ['--silent', installBase, '--elevated'],
   env: { DSH_HOME: home, DSH_PROFILE: 'desktop' },
   workDir: sandbox,
   timeoutMs: 600000,
