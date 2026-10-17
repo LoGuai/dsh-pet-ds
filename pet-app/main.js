@@ -982,13 +982,29 @@ ipcMain.handle('pet:get-initial', () => ({
    * 这两项来自共享核心（src/shared-core/），主进程只是**转发**给渲染进程 ——
    * 渲染进程没有模块加载能力，但这样仍然是单一真相源，不会两边各写一套。
    */
-  actions: actionMenuEntries().map((entry) => ({
-    id: entry.id,
-    label: entry.label,
-    standing: Boolean(entry.standing),
-    /** 台词占位符：动作播完时若没有专属台词，就用它。 */
-    lines: findAction(entry.id)?.lines ?? [],
-  })),
+  actions: actionMenuEntries().map((entry) => {
+    /*
+     * ⚠️ 这里必须把**路由标志**一并下发，否则渲染进程拿不到它们。
+     *
+     * 曾经漏掉过：渲染进程里写着 `if (chosen.routToSleepState) { enterSleep() }`，
+     * 而这个映射只发了 id/label/standing/lines —— 于是那个判断**永远为假**，
+     * 是死代码。睡觉之所以还能正常路由，是因为 `playAction` 里另有一条
+     * `id === SLEEP_ACTION_ID` 的判断兜住了。两套机制并存本身就是隐患，
+     * 所以这里把标志补齐，让"数据驱动"那条路真的生效（坐姿也要用它）。
+     */
+    const def = findAction(entry.id)
+    return {
+      id: entry.id,
+      label: entry.label,
+      standing: Boolean(entry.standing),
+      /** 台词占位符：动作播完时若没有专属台词，就用它。 */
+      lines: def?.lines ?? [],
+      /** 触发后进入睡眠状态（而不是播完就回站立）。 */
+      routToSleepState: Boolean(def?.routToSleepState),
+      /** 触发后进入坐姿三阶段（坐下 → 坐着循环 + 计时 → 站起）。 */
+      routToSitState: Boolean(def?.routToSitState),
+    }
+  }),
   /**
    * 点击部位定义（源头是 src/shared-core/actions.js 的 CLICK_PARTS）。
    * 渲染进程据此把点击位置换算成归一化画布坐标再判部位 ——
@@ -2590,6 +2606,9 @@ async function verifyLayoutAndResize(check, wait) {
 
   // 睡眠状态机（闲置 10 分钟 → 睡 → 尾帧循环 → 点击惊醒 → 回闲置）。
   await verifySleepState(check, wait)
+
+  // 坐姿动作（坐下 → 坐着循环 + 180 秒计时 → 站起；前两阶段点击立即站起）。
+  await verifySitAction(check, wait)
 }
 
 /**
@@ -4352,6 +4371,227 @@ async function watchSleep(seconds) {
 }
 
 /**
+ * 验证**坐姿动作**的三阶段逻辑。
+ *
+ * 用户要求（原文）：
+ * 「触发随机动作时，桌宠播放坐下动作，之后循环播放坐着的动作并从 0 开始计时，
+ *   计时器达到 180 秒后，播放站起动作，回到站立闲置状态。
+ *   其中，在前两个阶段点击桌宠将立即跳转到站立动作阶段并关闭计时。」
+ *
+ * 这里的每条断言都对应上面那句话的一个分句 —— 不靠看画面判断，
+ * 而是读 `__petTestState()` 的 `sitPhase` / `activeAnimationId` / `petState`。
+ *
+ * 180 秒没法真等，所以把「坐着」时长压到几百毫秒
+ * （`__petTestSit.setHoldMs`）来验证"计时到点会自动站起"这条逻辑本身；
+ * 默认值 180000 单独断言一次，确保压短只是测试手段、没改生产行为。
+ */
+async function verifySitAction(check, wait) {
+  const wc = win && !win.isDestroyed() ? win.webContents : null
+  if (!wc) return
+  const readState = () => wc.executeJavaScript('window.__petTestState ? window.__petTestState() : null', true)
+  const js = (code) => wc.executeJavaScript(code, true)
+
+  /* 关掉随机动作：它在用例之间可能突然触发并改变 petState，把断言打乱。 */
+  await js('window.__petTestSetIdleClock({ probability: 0 })')
+
+  // ---- 1) 三段素材都要能加载，且帧率一致 ----
+  const meta = await js(`(async () => {
+    const ids = ['sit', 'sit-circle', 'sit-stop']
+    const out = {}
+    for (const id of ids) {
+      const s = await loadAnimation(id)
+      out[id] = s ? { frames: s.frameCount, fps: s.fps } : null
+    }
+    return out
+  })()`)
+  {
+    const ids = ['sit', 'sit-circle', 'sit-stop']
+    const missing = ids.filter((id) => !meta || !meta[id])
+    check(
+      '坐姿三段素材都能加载（坐下 / 坐着 / 站起）',
+      missing.length === 0,
+      missing.length === 0
+        ? ids.map((id) => `${id}=${String(meta[id].frames)}帧@${String(meta[id].fps)}fps`).join('，')
+        : `缺：${missing.join(', ')}`,
+    )
+    /*
+     * 三段都必须"多帧"：坐下/站起是过程，坐着是循环，
+     * 任何一段只有 1 帧就说明素材没处理好（那种情况下过程看不出来）。
+     * 刻意**不写死**具体帧数 —— 换美术素材时不该因此报假失败。
+     */
+    const tooFew = ids.filter((id) => meta && meta[id] && meta[id].frames < 2)
+    check(
+      '坐姿三段都是多帧素材',
+      missing.length === 0 && tooFew.length === 0,
+      tooFew.length === 0 ? '都是 ≥2 帧' : `帧数过少：${tooFew.join(', ')}`,
+    )
+    const fpsBad = ids.filter((id) => meta && meta[id] && meta[id].fps !== 6)
+    check(
+      '坐姿三段帧率一致（6fps，否则切换阶段时速度会突变）',
+      missing.length === 0 && fpsBad.length === 0,
+      fpsBad.length === 0 ? '全部 6fps' : `帧率不符：${fpsBad.map((i) => `${i}=${String(meta[i].fps)}`).join(', ')}`,
+    )
+  }
+
+  const plan = await js('window.__petTestSit.plan()')
+  check(
+    '「坐着」阶段默认时长 = 180 秒（用户指定）',
+    (await js('window.__petTestSit.setHoldMs(null)')) === 180 * 1000,
+    `holdMs=${String(await js('window.__petTestSit.holdMs()'))}（应为 180000）`,
+  )
+
+  // ---- 2) 触发后进入第一阶段：坐下 ----
+  const entered = await js(`window.__petTestSit.enter('自测')`)
+  const down = await readState()
+  check(
+    '触发坐下后进入 sitting / down 阶段',
+    entered === true && down && down.petState === 'sitting' && down.sitPhase === 'down',
+    `enter=${String(entered)} petState=${String(down && down.petState)} sitPhase=${String(down && down.sitPhase)}`,
+  )
+  check(
+    '第一阶段播放「坐下」动画',
+    down && down.activeAnimationId === 'sit',
+    `activeAnimationId=${String(down && down.activeAnimationId)}`,
+  )
+
+  // ---- 3) 坐下播完自动进入第二阶段：坐着循环 + 计时 ----
+  await wait((plan && plan.downMs ? plan.downMs : 1500) + 500)
+  const hold = await readState()
+  check(
+    '坐下播完自动进入 hold 阶段',
+    hold && hold.sitPhase === 'hold',
+    `sitPhase=${String(hold && hold.sitPhase)}（期望 hold）`,
+  )
+  check(
+    '第二阶段循环播放「坐着」动画',
+    hold && hold.activeAnimationId === 'sit-circle',
+    `activeAnimationId=${String(hold && hold.activeAnimationId)}（期望 sit-circle）`,
+  )
+  check(
+    '坐着阶段已开始计时（180 秒计时器在跑）',
+    hold && hold.hasSitHoldTimer === true,
+    `hasSitHoldTimer=${String(hold && hold.hasSitHoldTimer)} sitHoldMs=${String(hold && hold.sitHoldMs)}`,
+  )
+  {
+    /* 采三次，只要有一次帧号变化就说明在动 —— 单次采样可能刚好落在同一帧。 */
+    const frames = []
+    for (let i = 0; i < 3; i += 1) {
+      const st = await readState()
+      frames.push(st ? st.currentFrame : null)
+      await wait(250)
+    }
+    const moved = new Set(frames).size > 1
+    check('坐着动画的帧在推进（不是静止）', moved, `三次采样帧号：${frames.join(' → ')}`)
+  }
+
+  // ---- 4) 前两阶段点击 → 立即跳站起 + 关闭计时 ----
+  const clicked = await js('window.__petTestSit.click()')
+  const up = await readState()
+  check(
+    '坐着时点击立即跳到站起阶段',
+    clicked === true && up && up.sitPhase === 'up',
+    `click=${String(clicked)} sitPhase=${String(up && up.sitPhase)}（期望 up）`,
+  )
+  check(
+    '站起阶段播放「sit-stop」动画',
+    up && up.activeAnimationId === 'sit-stop',
+    `activeAnimationId=${String(up && up.activeAnimationId)}（期望 sit-stop）`,
+  )
+  /*
+   * "关闭计时"的可观测证据：点击后**等过原本的坐着时长**，
+   * 不应该再回到 hold 阶段（若计时没关，会看到 sitPhase 又变回 hold）。
+   */
+  await wait((plan && plan.holdMs ? plan.holdMs : 600) > 800 ? 900 : 1200)
+  const afterClick = await readState()
+  check(
+    '点击后计时已关闭（不会再回到 hold 阶段）',
+    afterClick && afterClick.sitPhase !== 'hold',
+    `sitPhase=${String(afterClick && afterClick.sitPhase)}`,
+  )
+
+  // ---- 5) 站起播完 → 回到站立闲置 ----
+  await wait((plan && plan.upMs ? plan.upMs : 1500) + 800)
+  const done = await readState()
+  check(
+    '站起播完回到站立闲置',
+    done &&
+      done.petState === 'idle' &&
+      done.sitPhase === null &&
+      done.activeAnimationId === 'stand' &&
+      done.currentActionId === null,
+    `petState=${String(done && done.petState)} sitPhase=${String(done && done.sitPhase)}` +
+      ` 动画=${String(done && done.activeAnimationId)} 动作=${String(done && done.currentActionId)}`,
+  )
+
+  // ---- 6) 计时到点自动站起（把 180 秒压到 600ms 验证逻辑本身）----
+  {
+    await js('window.__petTestSit.setHoldMs(600)')
+    await js(`window.__petTestSit.enter('自测-自动站起')`)
+    await wait((plan && plan.downMs ? plan.downMs : 1500) + 500)
+    const atHold = await readState()
+    /* 再等过压缩后的坐着时长，应当自己离开 hold */
+    await wait(1200)
+    const autoUp = await readState()
+    check(
+      '坐着计时到点会自动站起（不必点击）',
+      atHold && atHold.sitPhase === 'hold' && autoUp && autoUp.sitPhase !== 'hold',
+      `计时前=${String(atHold && atHold.sitPhase)}，到点后=${String(autoUp && autoUp.sitPhase)}`,
+    )
+    await wait((plan && plan.upMs ? plan.upMs : 1500) + 800)
+    const settled = await readState()
+    check(
+      '自动站起后同样回到站立闲置',
+      settled && settled.petState === 'idle' && settled.activeAnimationId === 'stand',
+      `petState=${String(settled && settled.petState)} 动画=${String(settled && settled.activeAnimationId)}`,
+    )
+    await js('window.__petTestSit.setHoldMs(null)')
+  }
+
+  // ---- 7) 第三阶段（站起中）点击不再响应 ----
+  {
+    await js('window.__petTestSit.setHoldMs(60000)')
+    await js(`window.__petTestSit.enter('自测-站起中点击')`)
+    await wait((plan && plan.downMs ? plan.downMs : 1500) + 500)
+    await js('window.__petTestSit.click()')
+    const first = await readState()
+    const clickedAgain = await js('window.__petTestSit.click()')
+    const second = await readState()
+    check(
+      '站起阶段再次点击不会重播站起（忽略）',
+      clickedAgain === false && first && second && second.sitPhase === 'up',
+      `第二次 click=${String(clickedAgain)}（应为 false）sitPhase=${String(second && second.sitPhase)}`,
+    )
+    /* 收尾，别让这个用例把后续断言拖在 sitting 里 */
+    await js(`window.__petTestSit.cancel('自测收尾')`)
+    await js('window.__petTestSit.setHoldMs(null)')
+  }
+
+  // ---- 8) 坐着期间不能重复进入（petState 守卫）----
+  {
+    await js('window.__petTestSit.setHoldMs(60000)')
+    await js(`window.__petTestSit.enter('自测-重复进入')`)
+    const again = await js(`window.__petTestSit.enter('自测-重复进入第二次')`)
+    const st = await readState()
+    check(
+      '已经在坐着时再次触发会被拒绝（不重入）',
+      again === false && st && st.petState === 'sitting',
+      `第二次 enter=${String(again)}（应为 false）petState=${String(st && st.petState)}`,
+    )
+    await js(`window.__petTestSit.cancel('自测收尾')`)
+    await js('window.__petTestSit.setHoldMs(null)')
+  }
+
+  const finalState = await readState()
+  check(
+    '坐姿用例结束后回到闲置（不留残余状态）',
+    finalState && finalState.petState === 'idle' && finalState.sitPhase === null,
+    `petState=${String(finalState && finalState.petState)} sitPhase=${String(finalState && finalState.sitPhase)}`,
+  )
+
+  await js('window.__petTestSetIdleClock(null)')
+}
+
+/**
  * 验证闲置语音的门控、随机动作、心情值与属性面板。
  *
  * 这几项的共同点是"由事件驱动、肉眼才能看到"，所以这里直接把状态注入渲染进程
@@ -4522,30 +4762,31 @@ async function verifyIdleAndMood(check, wait, readLayout) {
   const st2 = await readState()
   const catalog = st2 && Array.isArray(st2.actionCatalog) ? st2.actionCatalog : []
   const catalogIds = catalog.map((a) => a.id)
-  // 菜单要能触达全部有素材的动作（站立 + 两个随机动作 + 睡觉 + 惊醒）。
-  const expectAll = ['stand', 'eat', 'play-mc', 'sleep', 'awake']
+  // 菜单要能触达全部有素材的动作（站立 + 三个随机动作 + 睡觉 + 惊醒）。
+  const expectAll = ['stand', 'eat', 'play-mc', 'sit', 'sleep', 'awake']
   const missing = expectAll.filter((id) => !catalogIds.includes(id))
   check(
-    '动作清单包含全部动作（站立/吃白饭/玩mc/睡觉/惊醒）',
+    '动作清单包含全部动作（站立/吃白饭/玩mc/坐下/睡觉/惊醒）',
     missing.length === 0,
     missing.length === 0 ? `清单=[${catalogIds.join(', ')}]` : `缺少 ${missing.join(', ')}；清单=[${catalogIds.join(', ')}]`,
   )
   /*
-   * 随机池 = 吃白饭 + 玩mc + **睡觉**（用户要求把睡觉放回随机池）。
+   * 随机池 = 吃白饭 + 玩mc + **坐下** + **睡觉**。
    * 惊醒与点击互动动画不在池里。
    *
-   * 断言写成"恰好等于这三个"而不是"不含某个 id" —— 后者太弱，
+   * 断言写成"恰好等于这四个"而不是"不含某个 id" —— 后者太弱，
    * 之前就因此漏掉过 awake 被抽进随机池。
    */
   const randomPool = await wc.executeJavaScript('oneShotActions().map((a) => a.id)', true)
+  const expectedPool = ['eat', 'play-mc', 'sit', 'sleep']
   const poolOk =
     Array.isArray(randomPool) &&
-    randomPool.length === 3 &&
-    ['eat', 'play-mc', 'sleep'].every((id) => randomPool.includes(id))
+    randomPool.length === expectedPool.length &&
+    expectedPool.every((id) => randomPool.includes(id))
   check(
-    '随机池恰好是 吃白饭 / 玩mc / 睡觉',
+    '随机池恰好是 吃白饭 / 玩mc / 坐下 / 睡觉',
     poolOk,
-    `随机池=[${Array.isArray(randomPool) ? randomPool.join(', ') : String(randomPool)}]（应为 eat, play-mc, sleep）`,
+    `随机池=[${Array.isArray(randomPool) ? randomPool.join(', ') : String(randomPool)}]（应为 ${expectedPool.join(', ')}）`,
   )
 
   // 右键菜单里"睡觉"只能出现一次 —— 它同时在随机池与仅菜单项里，

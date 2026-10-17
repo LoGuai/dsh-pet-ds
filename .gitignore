@@ -29,3 +29,7 @@ acl-report-*.jsonl
 Thumbs.db
 desktop.ini
 *.log
+
+# Python 字节码（build-action-asset.py 被 py_compile / 直接跑时产生）
+__pycache__/
+*.pyc

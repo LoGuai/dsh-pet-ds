@@ -118,6 +118,24 @@ const SLEEP_ACTION_ID = 'sleep'
 const WAKE_ACTION_ID = 'awake'
 
 /**
+ * 坐姿动作的三段素材 id（镜像常量，源头是 `src/shared-core/actions-library.js`）。
+ *
+ * 用户要求（原文）：
+ * 「触发随机动作时，桌宠播放坐下动作，之后循环播放坐着的动作并从 0 开始计时，
+ *   计时器达到 180 秒后，播放站起动作，回到站立闲置状态。
+ *   其中，在前两个阶段点击桌宠将立即跳转到站立动作阶段并关闭计时。」
+ *
+ * 三段素材共用同一个缩放倍数（见 build-action-asset.py 的 scale_group），
+ * 所以阶段之间切换时角色大小不会跳。
+ */
+const SIT_ACTION_ID = 'sit'
+const SIT_HOLD_ACTION_ID = 'sit-circle'
+const SIT_STOP_ACTION_ID = 'sit-stop'
+
+/** 「坐着」阶段持续多久后自动站起（用户指定 180 秒）。 */
+const SIT_HOLD_MS = 180 * 1000
+
+/**
  * 睡眠尾帧循环的轮数范围（用户指定：随机 20~40 轮后结束并播惊醒动画）。
  *
  * 一轮 = 把"最后两帧"走一遍。尾帧循环是 1fps、2 帧，所以一轮约 2 秒，
@@ -1430,6 +1448,16 @@ stage.addEventListener('mousedown', (e) => {
     if (petState === 'sleeping' || petState === 'waking') {
       // 睡眠状态被拖起来：退出睡眠（不播惊醒，见 interruptSleep 的说明）。
       interruptSleep('用户开始拖拽')
+    } else if (petState === 'sitting') {
+      /*
+       * 坐姿被拖起来：**取消**坐姿（不播站起）。
+       *
+       * 为什么不用 `jumpToSitStop`：站起动画会和马上要播的悬空动画抢画面，
+       * 而且"被拎起来"显然不是"自己站起来"。用户要求里"点击跳转到站立阶段"
+       * 说的是**点击**，不是拖拽。
+       */
+      cancelSit('用户开始拖拽')
+      endAction()
     } else {
       // 停掉正在播的一次性动作（例如"吃白饭"播到一半就被拎起来）。
       endAction()
@@ -1608,6 +1636,22 @@ function finishDrag(e) {
     // 惊醒动画播放中再点击：忽略，避免把惊醒动画打断成半截状态。
     if (petState === 'waking') {
       dragStart = null
+      return
+    }
+
+    /*
+     * 坐姿动作期间点击（用户要求）：
+     * 「在前两个阶段点击桌宠将立即跳转到站立动作阶段并关闭计时」。
+     *
+     * 所以这里**不说部位台词、不加心情** —— 这次点击的语义是"让她站起来"，
+     * 不是普通互动（与睡眠期间"点击=叫醒"同一套约定，见上面的分支）。
+     * 第三阶段（正在站起）不响应：已经站起来了，让它播完，
+     * 否则会被打断成半截姿势。
+     */
+    if (petState === 'sitting') {
+      dragStart = null
+      if (sitPhase === 'up') return
+      jumpToSitStop('用户点击')
       return
     }
 
@@ -2102,10 +2146,23 @@ async function playAction(id, options = {}) {
   }
 
   /*
-   * 从菜单手动触发「睡觉」/「惊醒」时，走**状态机**而不是普通一次性动作：
+   * 任何要播的动作都**抢占**正在进行的坐姿动作：先取消它。
+   *
+   * 必须放在下面 sleep/wake/sit 的路由**之前** —— `enterSleep` 的守卫是
+   * `petState !== 'idle'` 就返回，而坐着时 petState 是 'sitting'，
+   * 于是"坐着时从菜单选睡觉"会静默无效。先取消坐姿把它拉回 idle 才通。
+   *
+   * 用 `cancelSit`（不播站起）而不是 `jumpToSitStop`：用户已经要求做别的事了，
+   * 再插一段站起动画只会让新动作延迟、画面打架。
+   */
+  cancelSit(`切换到动作 ${id}`)
+
+  /*
+   * 从菜单手动触发「睡觉」/「惊醒」/「坐下」时，走**状态机**而不是普通一次性动作：
    *  · 睡觉 → 进入 'sleeping'（循环尾帧、停掉随机动作，直到被叫醒）；
-   *  · 惊醒 → 进入 'waking'（播完回到 'idle'）。
-   * 否则手动睡下后不会维持睡眠姿态，与自动进入睡眠的行为不一致。
+   *  · 惊醒 → 进入 'waking'（播完回到 'idle'）；
+   *  · 坐下 → 进入 'sitting'（坐下的过程 → 坐着循环 + 180 秒计时 → 站起）。
+   * 否则手动睡下/坐下后不会维持那个姿态，与随机触发的行为不一致。
    */
   if (id === SLEEP_ACTION_ID) {
     void enterSleep()
@@ -2113,6 +2170,10 @@ async function playAction(id, options = {}) {
   }
   if (id === WAKE_ACTION_ID) {
     void wakeFromSleep()
+    return
+  }
+  if (id === SIT_ACTION_ID) {
+    void enterSit('菜单手动触发')
     return
   }
 
@@ -2573,7 +2634,361 @@ function triggerRandomAction() {
     return
   }
 
+  /*
+   * 抽到"坐下"时**走坐姿状态机**（坐下 → 坐着循环 + 180 秒计时 → 站起）。
+   * 判据同样是定义里的标志（`routToSitState`，由主进程下发）。
+   * 若当普通一次性动作播，就只是"坐下又立刻站起来"，完全不对。
+   */
+  if (chosen.routToSitState) {
+    void enterSit('闲置随机触发')
+    return
+  }
+
   void playAction(chosen.id, { fromMenu: false })
+}
+
+// ---------------------------------------------------------------- 坐姿状态机
+/*
+ * 需求（用户指定，原文）：
+ *
+ *  「加一个坐下的动作，放在随机动作库中，三部分素材依次是坐下的过程、
+ *    坐着的动作、站起的过程。
+ *    动作逻辑：触发随机动作时，桌宠播放坐下动作，之后循环播放坐着的动作
+ *    并从 0 开始计时，计时器达到 180 秒后，播放站起动作，回到站立闲置状态。
+ *    其中，在前两个阶段点击桌宠将立即跳转到站立动作阶段并关闭计时。」
+ *
+ * 三个阶段：
+ *
+ *   down（坐下）→ hold（坐着循环 + 180 秒计时）→ up（站起）→ 闲置
+ *                    ↑ 点击 ─┘ 立即跳到 up，并关掉计时
+ *
+ * 为什么不像睡觉那样用 `tail_loop_frames` 拼：睡觉是"同一段素材播完后循环尾部"，
+ * 而坐着的姿势与站着的姿势是**两套完全不同的画**，只能各用一套素材。
+ *
+ * 为什么不用 `playAction` + 收尾定时器：那是"播一遍就回站立"的单阶段模型，
+ * 表达不了"播完 A 再循环 B、同时计时、然后播 C"。
+ */
+
+/**
+ * 当前坐姿阶段：`null`（不在坐姿动作里）| `'down'` | `'hold'` | `'up'`。
+ *
+ * 暴露给自测（`__petTestState` 里的 `sitPhase`），因为"现在处于哪个阶段"
+ * 是这个动作唯一的关键状态 —— 光看 `activeAnimationId` 分不清
+ * "正在坐下" 与 "坐着循环" 都要断言的东西。
+ */
+let sitPhase = null
+
+/** 「坐着」阶段的 180 秒计时器。与 `actionStopTimer` 分开，避免互相清掉。 */
+let sitHoldTimer = null
+
+/**
+ * 测试用：覆盖「坐着」的持续时长（默认 `SIT_HOLD_MS` = 180 秒）。
+ *
+ * 180 秒没法在自测里真等，所以允许压短到几百毫秒来验证
+ * "计时到点会自动站起"这条逻辑本身。生产环境永远是 null。
+ */
+let sitHoldMsOverride = null
+
+/** 当前生效的「坐着」时长。 */
+function currentSitHoldMs() {
+  return Number.isFinite(sitHoldMsOverride) && sitHoldMsOverride > 0
+    ? Math.round(sitHoldMsOverride)
+    : SIT_HOLD_MS
+}
+
+/** 坐姿状态机的兜底看门狗（理由同 wakingWatchdog，见那里的长注释）。 */
+let sitWatchdog = null
+
+function clearSitWatchdog() {
+  if (sitWatchdog) {
+    clearTimeout(sitWatchdog)
+    sitWatchdog = null
+  }
+}
+
+/**
+ * 给坐姿状态机装一个兜底看门狗：若超时后仍处于 sitting 却没在推进，强制收尾。
+ *
+ * 为什么需要：`petState` 一旦卡在 `'sitting'`，`canTriggerRandomAction()`
+ * 就恒为 false，之后所有随机动作（含睡觉）全部失效 —— 症状很隐蔽。
+ * 而各阶段是靠定时器推进的，定时器可能被别处 `clearTimeout` 掉。
+ * 这与 `wakingWatchdog` 是同一类防御（那里已经踩过一次真实缺陷）。
+ */
+function armSitWatchdog(ms, what) {
+  clearSitWatchdog()
+  sitWatchdog = setTimeout(() => {
+    sitWatchdog = null
+    if (petState !== 'sitting') return
+    console.warn(`[sit] 看门狗触发（${what}）：卡在 sitting，强制回站立`)
+    finishSit('看门狗兜底')
+  }, Math.max(1000, Math.round(ms)))
+}
+
+/** 某段的时长（毫秒）：按**播放计划**长度算，而不是帧数（理由同 playAction）。 */
+function planDurationMs(state) {
+  const frames = Math.max(1, planLengthOf(state))
+  const fps = state && state.fps > 0 ? state.fps : 6
+  return Math.max(1200, Math.round((frames / fps) * 1000) + 150)
+}
+
+/**
+ * 进入坐姿动作（第一阶段：坐下）。
+ *
+ * 三个阶段的素材在这里**一次性全部预载** —— 否则第二阶段/第三阶段切换时
+ * 才去加载图片，会在切帧的瞬间白一下。任一段缺失就整体放弃并记日志，
+ * 不留"坐到一半卡住"的中间态。
+ */
+async function enterSit(reason) {
+  if (dragging) {
+    console.warn('拖拽进行中，忽略坐姿动作')
+    return false
+  }
+  if (petState !== 'idle') {
+    console.warn(`当前状态 ${petState}，忽略坐姿动作`)
+    return false
+  }
+
+  const [downState, holdState, stopState] = await Promise.all([
+    loadAnimation(SIT_ACTION_ID),
+    loadAnimation(SIT_HOLD_ACTION_ID),
+    loadAnimation(SIT_STOP_ACTION_ID),
+  ])
+  if (!downState || !holdState || !stopState) {
+    const missing = [
+      !downState ? SIT_ACTION_ID : null,
+      !holdState ? SIT_HOLD_ACTION_ID : null,
+      !stopState ? SIT_STOP_ACTION_ID : null,
+    ].filter(Boolean)
+    console.warn(`坐姿动作素材缺失（${missing.join(', ')}），放弃本次坐下`)
+    return false
+  }
+
+  setPetState('sitting', reason)
+  // 坐姿期间不再掷骰子（与睡眠同理，省得空转）。
+  if (idleTimer) {
+    clearTimeout(idleTimer)
+    idleTimer = null
+  }
+
+  endAction()
+  hideBubble()
+  currentActionId = SIT_ACTION_ID
+  lastPlayedActionId = SIT_ACTION_ID
+  activeAnimationId = SIT_ACTION_ID
+  showFrame(0)
+  buildHitMasks()
+  startPlanPlayback(SIT_ACTION_ID)
+
+  const entry = findCatalogAction(SIT_ACTION_ID)
+  if (entry && entry.lines && entry.lines[0]) showBubble(entry.lines[0], 'say', 4000)
+
+  sitPhase = 'down'
+  const downMs = planDurationMs(downState)
+  actionStopTimer = setTimeout(() => {
+    actionStopTimer = null
+    if (sitPhase !== 'down') return
+    enterSitHold()
+  }, downMs)
+  armSitWatchdog(downMs + 4000, '坐下阶段没有推进')
+  return true
+}
+
+/** 第二阶段：开始循环"坐着"，并起 180 秒计时。 */
+function enterSitHold() {
+  /* 只允许从"坐下"阶段进入。其余情况说明状态已经变了（被打断/已站起），
+   * 这时再切循环会把画面拉回坐姿，所以直接忽略。 */
+  if (sitPhase !== 'down') return
+  const state = animations.get(SIT_HOLD_ACTION_ID)
+  if (!state || !state.ready) {
+    console.warn('坐着动作素材未就绪，直接站起')
+    void enterSitStop('坐着素材不可用')
+    return
+  }
+
+  sitPhase = 'hold'
+  stopLoop(SIT_ACTION_ID)
+  currentActionId = SIT_ACTION_ID
+  activeAnimationId = SIT_HOLD_ACTION_ID
+  showFrame(0)
+  buildHitMasks()
+  /* 用 startLoop 起循环：整个动画反复播，直到被计时器或点击打断。 */
+  startLoop(SIT_HOLD_ACTION_ID)
+
+  if (sitHoldTimer) {
+    clearTimeout(sitHoldTimer)
+    sitHoldTimer = null
+  }
+  const holdMs = currentSitHoldMs()
+  sitHoldTimer = setTimeout(() => {
+    sitHoldTimer = null
+    void enterSitStop('坐满 180 秒')
+  }, holdMs)
+  armSitWatchdog(holdMs + 4000, '坐着阶段没有推进')
+}
+
+/**
+ * 第三阶段：站起，播完回站立闲置。
+ *
+ * @param {string} reason 仅用于日志/诊断
+ */
+async function enterSitStop(reason) {
+  if (sitPhase === 'up') return
+  /*
+   * 先把阶段置为 'up' 并清掉所有计时器，**再**去 await 加载素材。
+   *
+   * 顺序很重要：
+   *  · 置位在 await 之前 —— 否则快速连点两下会让两次调用都通过上面的守卫，
+   *    站起动画被重播一次；
+   *  · 清掉 `actionStopTimer` —— "坐下"阶段的收尾定时器如果还挂着，
+   *    万一在站起过程中触发，会把阶段错当成 down 而重播坐下
+   *    （它的回调有 sitPhase 守卫，但清掉更干净）。
+   */
+  sitPhase = 'up'
+  if (sitHoldTimer) {
+    clearTimeout(sitHoldTimer)
+    sitHoldTimer = null
+  }
+  if (actionStopTimer) {
+    clearTimeout(actionStopTimer)
+    actionStopTimer = null
+  }
+  stopLoop(SIT_HOLD_ACTION_ID)
+  stopLoop(SIT_ACTION_ID)
+
+  const state = await loadAnimation(SIT_STOP_ACTION_ID)
+  if (!state) {
+    console.warn('站起动作素材缺失，直接回站立')
+    finishSit(reason)
+    return
+  }
+
+  currentActionId = SIT_STOP_ACTION_ID
+  lastPlayedActionId = SIT_STOP_ACTION_ID
+  activeAnimationId = SIT_STOP_ACTION_ID
+  showFrame(0)
+  buildHitMasks()
+  startPlanPlayback(SIT_STOP_ACTION_ID)
+
+  const ms = planDurationMs(state)
+  actionStopTimer = setTimeout(() => {
+    actionStopTimer = null
+    finishSit(reason)
+  }, ms)
+  armSitWatchdog(ms + 4000, '站起阶段没有推进')
+}
+
+/** 坐姿动作结束：回到站立闲置，闲置计时重新起算。 */
+function finishSit(reason) {
+  clearSitWatchdog()
+  if (sitHoldTimer) {
+    clearTimeout(sitHoldTimer)
+    sitHoldTimer = null
+  }
+  if (actionStopTimer) {
+    clearTimeout(actionStopTimer)
+    actionStopTimer = null
+  }
+  sitPhase = null
+  stopLoop(SIT_HOLD_ACTION_ID)
+  stopLoop(SIT_STOP_ACTION_ID)
+  currentActionId = null
+
+  const standState = animations.get('stand')
+  if (standState && standState.ready) {
+    activeAnimationId = 'stand'
+    showFrame(0)
+    buildHitMasks()
+    startLoop('stand')
+  }
+  setPetState('idle', `坐姿动作结束（${reason}）`)
+  /*
+   * 与"随机动作播完"一致：退出闲置模式，要再连续闲置 3 分钟才可能再触发。
+   * 否则站起来的瞬间就又能被抽中，看起来像没完没了地坐。
+   */
+  resetIdleTimer(true)
+}
+
+/**
+ * 点击打断：前两个阶段点击 → **立即**跳到站起阶段并关闭计时。
+ *
+ * 用户要求：「在前两个阶段点击桌宠将立即跳转到站立动作阶段并关闭计时」。
+ * 第三个阶段（站起中）不再响应点击 —— 已经在站了就让它播完，
+ * 否则会被打断成半截姿势（与 `waking` 期间忽略点击同理）。
+ *
+ * @returns {boolean} 是否拦截了这次点击
+ */
+function jumpToSitStop(reason) {
+  if (sitPhase !== 'down' && sitPhase !== 'hold') return false
+  void enterSitStop(reason)
+  return true
+}
+
+/**
+ * 完全取消坐姿（拖拽、切换其他动作、入睡时）：不播站起，直接放弃状态。
+ *
+ * 与 `jumpToSitStop` 的区别：那个是"正常站起"，这个是"被别的行为抢占"——
+ * 例如被拎起来时正在播悬空动画，再播站起会和它抢画面。
+ *
+ * @returns {boolean} 是否确实取消了坐姿
+ */
+function cancelSit(reason) {
+  if (sitPhase === null) return false
+  clearSitWatchdog()
+  if (sitHoldTimer) {
+    clearTimeout(sitHoldTimer)
+    sitHoldTimer = null
+  }
+  if (actionStopTimer) {
+    clearTimeout(actionStopTimer)
+    actionStopTimer = null
+  }
+  sitPhase = null
+  stopLoop(SIT_HOLD_ACTION_ID)
+  stopLoop(SIT_STOP_ACTION_ID)
+  if (currentActionId === SIT_ACTION_ID || currentActionId === SIT_STOP_ACTION_ID) {
+    currentActionId = null
+  }
+  if (petState === 'sitting') setPetState('idle', `坐姿被取消：${reason}`)
+  console.info(`[sit] 取消坐姿：${reason}`)
+  return true
+}
+
+/**
+ * 测试钩子：驱动坐姿状态机。
+ *
+ * 坐着要等 180 秒，自测里必须能压短（`setHoldMs`）；另外"点击打断"
+ * 走的是真实的 `jumpToSitStop`，所以测的是生产代码而不是另写一套。
+ */
+window.__petTestSit = {
+  /** 进入坐姿动作（等价于随机抽中「坐下」）。 */
+  enter: (reason) => enterSit(reason || '测试触发'),
+  /** 当前阶段：null | 'down' | 'hold' | 'up'。 */
+  phase: () => sitPhase,
+  /** 当前生效的坐着时长（毫秒）。 */
+  holdMs: () => currentSitHoldMs(),
+  /** 覆盖坐着时长（传 null 恢复默认）。 */
+  setHoldMs: (ms) => {
+    sitHoldMsOverride = Number.isFinite(ms) && ms > 0 ? Math.round(ms) : null
+    return currentSitHoldMs()
+  },
+  /** 模拟"点击桌宠"：前两阶段应立即跳站起并关掉计时。 */
+  click: () => jumpToSitStop('测试点击'),
+  /** 取消坐姿（不等站起）。 */
+  cancel: (reason) => cancelSit(reason || '测试取消'),
+  /** 诊断：各阶段的时长（毫秒），便于断言。 */
+  plan: () => {
+    const d = animations.get(SIT_ACTION_ID)
+    const u = animations.get(SIT_STOP_ACTION_ID)
+    const h = animations.get(SIT_HOLD_ACTION_ID)
+    return {
+      downMs: d ? planDurationMs(d) : null,
+      holdMs: currentSitHoldMs(),
+      upMs: u ? planDurationMs(u) : null,
+      downFrames: d ? planLengthOf(d) : null,
+      holdFrames: h ? h.frameCount : null,
+      upFrames: u ? planLengthOf(u) : null,
+    }
+  },
 }
 
 // ---------------------------------------------------------------- 睡眠状态机
@@ -3048,8 +3463,20 @@ window.__petTestState = () => {
     lastClickDecision,
     /** 渲染进程是否正处于拖拽态（诊断"拖拽态没清掉"用）。 */
     dragging,
-    /** 桌宠自己的状态机：'idle' | 'sleeping' | 'waking'。 */
+    /** 桌宠自己的状态机：'idle' | 'sleeping' | 'waking' | 'sitting'。 */
     petState,
+    /**
+     * 坐姿动作当前阶段：`null` | `'down'`（坐下中）| `'hold'`（坐着循环 +
+     * 180 秒计时）| `'up'`（站起中）。
+     *
+     * 与 `petState === 'sitting'` 配合使用 —— 光看 `activeAnimationId`
+     * 分不清"坐下"与"坐着"该断言的东西，阶段必须单独报出来。
+     */
+    sitPhase,
+    /** 「坐着」阶段的计时器是否在跑（= 180 秒计时已开始）。 */
+    hasSitHoldTimer: sitHoldTimer !== null,
+    /** 当前生效的「坐着」时长（毫秒）。测试会压短它，生产是 180000。 */
+    sitHoldMs: currentSitHoldMs(),
     /** 状态变迁日志（最近若干条），用于排查"睡眠自己中断"。 */
     stateLog: stateLog.slice(-12),
     /** 当前有没有在跑的闲置调度定时器（睡眠期间应为 false）。 */

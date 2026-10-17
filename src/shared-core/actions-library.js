@@ -55,6 +55,32 @@ export const SLEEP_ACTION_ID = 'sleep'
 /** 被叫醒时播放的动作 id。 */
 export const WAKE_ACTION_ID = 'awake'
 
+/**
+ * 坐姿动作的三段素材 id 与"坐着"的持续时长。
+ *
+ * 坐姿不是一段素材，而是**三段独立素材拼成的一个多阶段动作**：
+ *
+ * | 阶段 | id | 播放方式 |
+ * |---|---|---|
+ * | 一、坐下 | `sit` | 播一次（坐下的过程） |
+ * | 二、坐着 | `sit-circle` | **循环播放**，同时开始 180 秒计时 |
+ * | 三、站起 | `sit-stop` | 播一次（站起的过程），播完回站立闲置 |
+ *
+ * 用户要求（原文）：
+ * 「触发随机动作时，桌宠播放坐下动作，之后循环播放坐着的动作并从 0 开始计时，
+ *   计时器达到 180 秒后，播放站起动作，回到站立闲置状态。
+ *   其中，在前两个阶段点击桌宠将立即跳转到站立动作阶段并关闭计时。」
+ *
+ * 三段素材共用同一个缩放倍数（见 `build-action-asset.py` 的 `scale_group`），
+ * 否则切换阶段时角色大小会跳一下。
+ */
+export const SIT_ACTION_ID = 'sit'
+export const SIT_HOLD_ACTION_ID = 'sit-circle'
+export const SIT_STOP_ACTION_ID = 'sit-stop'
+
+/** 「坐着」阶段持续多久后自动站起（用户指定 180 秒）。 */
+export const SIT_HOLD_MS = 180 * 1000
+
 // ---------------------------------------------------------------- 随机动作的设定
 
 /**
@@ -98,6 +124,23 @@ export const SLEEP_ACTION = {
 }
 
 /**
+ * 坐下：**多阶段**动作，同样在随机池里。
+ *
+ * `routToSitState: true` 表示"这个动作不是播一遍就完事"，渲染进程据此
+ * 把它路由到坐姿状态机（坐下 → 坐着循环 + 180 秒计时 → 站起）。
+ *
+ * 与 `SLEEP_ACTION` 的区别：睡觉是**进入状态后一直待着**（直到被叫醒），
+ * 坐下是**自己会结束**（180 秒后自动站起）。
+ */
+export const SIT_ACTION = {
+  id: SIT_ACTION_ID,
+  label: '坐下',
+  lines: ['（占位·坐）那…我坐一会儿'],
+  weight: 1,
+  routToSitState: true,
+}
+
+/**
  * **随机池** —— 闲置满门槛后按概率从这里抽一个。
  *
  * ⚠️ 往这里加动作即可自动沿用 `RANDOM_ACTION_RULES` 的全部设定
@@ -119,6 +162,7 @@ export const RANDOM_ACTIONS = [
     lines: ['（占位）去挖矿了'],
     weight: 1,
   },
+  SIT_ACTION,
   SLEEP_ACTION,
 ]
 

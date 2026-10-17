@@ -134,6 +134,36 @@ ACTIONS = {
         "bubble_exclude_left_ratio": 0.15,
         "note": "玩mc（闲置动作）",
     },
+    "sit": {
+        # 坐下（随机动作的**第一阶段**：坐下的过程，只播一次）。
+        #
+        # 坐姿动作由三段独立素材拼成，阶段逻辑见渲染进程的 enterSit：
+        #   sit        —— 坐下过程（本项）
+        #   sit-circle —— 坐着循环（第二阶段：无限循环 + 180 秒计时）
+        #   sit-stop   —— 站起过程（第三阶段）
+        # 三段各有独立目录，而不是像睡觉那样用 tail_loop_frames 把尾帧拼起来 ——
+        # 因为"站着循环"与"坐着循环"是两套完全不同的姿势，不是同一素材的尾段。
+        "raw_dir": os.path.join(ROOT, ".cache", "sit-raw"),
+        # ⚠️ 三段共用同一个缩放倍数（`scale_group`）。三段在渲染时连续衔接，
+        # 各自归一化会让缩放差约 2%，切换阶段时角色大小会跳一下。
+        "scale_group": "sit",
+        "note": "坐下（第一阶段：坐下的过程）",
+    },
+    "sit-circle": {
+        # 坐着（第二阶段）：**循环播放**，持续到 180 秒计时到点、或被点击打断。
+        # `loop: True` 是声明性的 —— 渲染进程用 startLoop 起循环，
+        # 写在这里是为了让清单自解释"这个动作本意就是循环的"。
+        "raw_dir": os.path.join(ROOT, ".cache", "sit-circle-raw"),
+        "loop": True,
+        "scale_group": "sit",
+        "note": "坐着（第二阶段：循环播放）",
+    },
+    "sit-stop": {
+        # 站起（第三阶段：站起的过程，只播一次，播完回站立闲置）。
+        "raw_dir": os.path.join(ROOT, ".cache", "sit-stop-raw"),
+        "scale_group": "sit",
+        "note": "站起（第三阶段：站起的过程）",
+    },
 }
 
 
@@ -212,6 +242,74 @@ def body_bounds(img, exclude_left_ratio=0.0):
     return int(xs.min()) + cut, int(ys.min()), int(xs.max()) + cut, int(ys.max())
 
 
+def _load_bounds(cfg):
+    """按配置读出一批帧的 (完整内容边界, 角色本体边界) 列表。
+
+    会应用 `replace_frames`（复制帧）与 `bubble_exclude_left_ratio`，
+    与 `build_one` 里的做法一致 —— 抽出来是为了让"整组共用缩放"能复用同一套规则。
+    """
+    raw_dir = cfg["raw_dir"]
+    if not os.path.isdir(raw_dir):
+        raise SystemExit(f"原始帧目录不存在：{raw_dir}")
+    names = sorted(
+        (f for f in os.listdir(raw_dir) if f.endswith(".png") and f[:-4].isdigit()),
+        key=lambda f: int(f[:-4]),
+    )
+    if not names:
+        raise SystemExit(f"原始帧目录为空：{raw_dir}")
+
+    src_index_of = []
+    for i, _name in enumerate(names):
+        repl = (cfg.get("replace_frames") or {}).get(i + 1)
+        src_index_of.append(i if repl is None else repl - 1)
+
+    exclude_left = cfg.get("bubble_exclude_left_ratio", 0.0)
+    raw_bounds, body_list = [], []
+    for idx in src_index_of:
+        img = Image.open(os.path.join(raw_dir, names[idx])).convert("RGBA")
+        b = content_bounds(img)
+        if b is None:
+            raise SystemExit(f"{names[idx]} 全透明")
+        raw_bounds.append(b)
+        bb = body_bounds(img, exclude_left) if exclude_left > 0 else b
+        if bb is None:
+            raise SystemExit(f"{names[idx]} 排除左侧区域后没有内容")
+        body_list.append(bb)
+    return names, src_index_of, raw_bounds, body_list
+
+
+def group_scale(group, foot_out):
+    """算出同一 `scale_group` 里**所有动作共用**的缩放倍数。
+
+    为什么需要它：坐姿动作由**三段素材拼成**
+    （坐下的过程 → 坐着循环 → 站起的过程），三段在渲染时连续衔接。
+    若各自按"填满画布"归一化，倍数会不一致 —— 实测
+    sit 0.9582 / sit-circle 0.9621 / sit-stop 0.9441，
+    切换阶段时角色大小会跳一下（约 2%，屏幕上约 4px，肉眼能看出来）。
+
+    办法：按整组内容的**最大尺寸**算一个统一倍数。
+    理由与 `compute_scale` 完全一样（"同一套动画里单位恒定"），
+    只是把"同一套"从"一个动作"扩大到"一组动作"。
+
+    取最小值等价于按整组最大值算 —— 但显式按整组算更直观，
+    也不会因为某个动作单独重跑而漂移。
+
+    @returns {((float, int, int, int, int), list[str])} (compute_scale 结果, 成员 id)
+    """
+    members = [
+        (aid, {**ACTION_DEFAULTS, **cfg})
+        for aid, cfg in ACTIONS.items()
+        if cfg.get("scale_group") == group
+    ]
+    if not members:
+        raise SystemExit(f"scale_group={group} 没有任何动作")
+    combined = []
+    for _aid, cfg in members:
+        _names, _src, _raw, body_list = _load_bounds(cfg)
+        combined.extend(body_list)
+    return compute_scale(combined, foot_out), [aid for aid, _cfg in members]
+
+
 def build_one(action_id):
     raw = ACTIONS.get(action_id)
     if raw is None:
@@ -277,7 +375,15 @@ def build_one(action_id):
             raise SystemExit(f"{names[idx]} 排除左侧区域后没有内容（bubble_exclude_left_ratio 设太大了？）")
         body_bounds_list.append(bb)
 
-    if cfg["scale"] == "auto":
+    if cfg["scale"] == "auto" and cfg.get("scale_group"):
+        (_scale, max_w, max_h, avail_w, avail_h), members = group_scale(cfg["scale_group"], foot_out)
+        scale = _scale
+        print(
+            f"  共用缩放: {scale}  （scale_group={cfg['scale_group']}，"
+            f"成员 {', '.join(members)}；整组最大内容 {max_w}x{max_h}，可用 {avail_w}x{avail_h}）"
+        )
+        print("    ↑ 三段素材连续衔接，必须同倍数，否则切换阶段时角色大小会跳一下")
+    elif cfg["scale"] == "auto":
         scale, max_w, max_h, avail_w, avail_h = compute_scale(body_bounds_list, foot_out)
         body_note = f"（角色本体宽度，已排除左侧 {exclude_left:.0%} 的气泡区）" if exclude_left > 0 else ""
         print(

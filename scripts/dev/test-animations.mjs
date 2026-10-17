@@ -173,5 +173,38 @@ test('拖拽动画（hang）声明了静态帧池 —— 用户要求"随机播�
   )
 })
 
+test('坐姿三段（sit / sit-circle / sit-stop）共用同一缩放倍数', () => {
+  /*
+   * 坐姿是**三段素材连续衔接**的一个动作：坐下的过程 → 坐着循环 → 站起的过程。
+   *
+   * 若三段各自按"填满画布"归一化，缩放会不一致（实测未共用时是
+   * 0.9441 / 0.9582 / 0.9621），切换阶段时角色大小会跳一下（约 2%，
+   * 屏幕上约 4px，肉眼能看出来）。
+   *
+   * 所以 `build-action-asset.py` 里给三段配了同一个 `scale_group`，
+   * 这里断言生成的清单确实记录了同一个倍数 —— 防止有人改了配置却没重跑。
+   */
+  const ids = ['sit', 'sit-circle', 'sit-stop']
+  const scales = {}
+  for (const id of ids) {
+    const p = join(ANIM_ROOT, id, 'manifest.json')
+    assert.ok(existsSync(p), `缺 ${id}/manifest.json`)
+    const m = JSON.parse(readFileSync(p, 'utf8'))
+    const s = m._processing ? m._processing.scale : undefined
+    assert.ok(
+      Number.isFinite(s),
+      `${id}/manifest.json 没有记录 _processing.scale（重新跑 build-action-asset.py ${id}）`,
+    )
+    scales[id] = s
+  }
+  const values = Object.values(scales)
+  const unique = new Set(values)
+  assert.equal(
+    unique.size,
+    1,
+    `三段缩放不一致，切换阶段时角色大小会跳：${ids.map((i) => `${i}=${String(scales[i])}`).join('，')}`,
+  )
+})
+
 console.log(`\n结果：${String(passed)}/${String(passed + failed)} 通过`)
 if (failed > 0) process.exit(1)
