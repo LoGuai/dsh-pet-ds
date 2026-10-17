@@ -172,17 +172,20 @@ ACTIONS = {
         # 写在这里是为了让清单自解释"这个动作本意就是循环的"。
         "raw_dir": os.path.join(ROOT, ".cache", "sit-circle-raw"),
         "loop": True,
-        "match_head_to": "stand",
-        # 段内也要一致：实测 sit-stop 段内头宽跨度 10.5%，单一系数修不掉。
-        "match_head_per_frame": True,
+        # ⚠️ 用**整体高度**对齐，不是头宽。
+        # 按头宽对齐后四段头一样大，但坐姿轮廓更矮（成品高度只有站立的 88%），
+        # 用户仍反馈"坐着时偏小"。所以改用高度：
+        # ("sit","sit") = 恒定等于 sit 的**末帧**高度（与上一段接得上）。
+        "height_ramp": ("sit", "sit"),
         "note": "坐着（第二阶段：循环播放）",
     },
     "sit-stop": {
         # 站起（第三阶段：站起的过程，只播一次，播完回站立闲置）。
         "raw_dir": os.path.join(ROOT, ".cache", "sit-stop-raw"),
-        "match_head_to": "stand",
-        # 段内也要一致：实测 sit-stop 段内头宽跨度 10.5%，单一系数修不掉。
-        "match_head_per_frame": True,
+        # ⚠️ 高度从 **sit 末帧** 线性过渡到 **stand 均值**：
+        # 开始处与坐着那一段接得上，结束处与站立动画接得上，
+        # 中间不会突然高于下一段（那会变成另一种"跳"）。
+        "height_ramp": ("sit", "stand"),
         "note": "站起（第三阶段：站起的过程）",
     },
 }
@@ -284,6 +287,40 @@ def output_head_width(action_id):
     if not files:
         raise SystemExit(f"{action_id} 没有任何帧，无法作为头宽基准")
     return max(head_width_of(Image.open(os.path.join(d, f))) for f in files)
+
+
+def output_frame_heights(action_id):
+    """量某个**已处理**动作逐帧的内容高度（输出空间）。
+
+    直接量 PNG 而不是读清单里的 `outH`：**stand 的清单没有 `_processing`**
+    （它是最早处理的，只记了 `_processingHistory`），读清单会在 stand 上崩。
+    量图对任何动作都适用。
+    """
+    d = os.path.join(ROOT, "assets", "animations", action_id)
+    if not os.path.isdir(d):
+        raise SystemExit(f"height_ramp 引用的动作还没处理过：{d}")
+    files = sorted(f for f in os.listdir(d) if f.startswith("frame_") and f.endswith(".png"))
+    if not files:
+        raise SystemExit(f"{action_id} 没有任何帧，无法作为高度基准")
+    heights = []
+    for f in files:
+        b = content_bounds(Image.open(os.path.join(d, f)).convert("RGBA"))
+        if b:
+            heights.append(b[3] - b[1] + 1)
+    if not heights:
+        raise SystemExit(f"{action_id} 的帧全透明，量不到高度")
+    return heights
+
+
+def output_last_frame_height(action_id):
+    """某动作**末帧**的内容高度（用于"与上一段接得上"）。"""
+    return output_frame_heights(action_id)[-1]
+
+
+def output_mean_height(action_id):
+    """某动作逐帧高度的**均值**（用于"与整段观感一致"）。"""
+    hs = output_frame_heights(action_id)
+    return sum(hs) / len(hs)
 
 
 def body_bounds(img, exclude_left_ratio=0.0):
@@ -487,6 +524,70 @@ def build_one(action_id):
             "perFrameScale": per_frame_scales,
         }
         head_width_out = round(max(outs), 1)
+
+    # ---------------------------------------------------------------- 按整体高度对齐（可选，优先级更高）
+    #
+    # ## 为什么"按头宽对齐"不够
+    #
+    # 用户看完按头宽对齐的版本后仍反馈：「坐着时和起身时桌宠还是偏小」。
+    # 实测成品（头宽已全部 100%）：
+    #
+    #   stand 高度 1149.4（100%）  sit 1093.8（94.6%）
+    #   sit-circle 1010.5（88.2%）  sit-stop 1031.5（95.5%）
+    #
+    # 也就是说：头一样大了，但**整个人还是矮一截** —— 用户的"大小"判据是
+    # 整体高度/体量，不是头部。坐姿本身的轮廓更矮，按头对齐就会显得小。
+    #
+    # ## 做法：逐帧目标高度线性过渡，并要求**接缝连续**
+    #
+    #   `height_ramp: ("sit", "stand")`
+    #     → 首帧目标高度 = start 动作的**末帧**高度（保证与上一段接得上）
+    #     → 末帧目标高度 = end 动作的**均值**高度（保证与下一段接得上）
+    #     → 中间线性插值
+    #
+    # 这样既把 circle/stop 放大到与 sit/stand 同量级，又不会在某段末尾
+    # 突然比下一段高（那会变成另一种"跳"）。
+    if cfg.get("height_ramp") and scale:
+        start_id, end_id = cfg["height_ramp"]
+        start_h = output_last_frame_height(start_id)
+        # 起止是同一个动作时表示"恒定为它的末帧高度"（不要用均值，
+        # 否则会在这段内部缓慢变大，反而制造新的跳）。
+        end_h = start_h if end_id == start_id else output_mean_height(end_id)
+        fit_scale = compute_scale(body_bounds_list, foot_out)[0]
+        n = len(src_index_of)
+        raw_heights = []
+        per_frame_scales = []
+        targets = []
+        for i, idx in enumerate(src_index_of):
+            img = Image.open(os.path.join(raw_dir, names[idx])).convert("RGBA")
+            b = content_bounds(img)
+            rh = (b[3] - b[1] + 1) if b else 1
+            raw_heights.append(rh)
+            t = start_h if n <= 1 else start_h + (end_h - start_h) * (i / (n - 1))
+            targets.append(round(t, 1))
+            fs = t / max(1, rh)
+            fs = max(0.05, round(min(fs, fit_scale), 4))
+            per_frame_scales.append(fs)
+        proj = [round(rh * fs, 1) for rh, fs in zip(raw_heights, per_frame_scales)]
+        print(
+            f"  高度对齐（{start_id} 末帧 {round(start_h, 1)} → {end_id} 均值 {round(end_h, 1)}）"
+        )
+        print(
+            f"    → 逐帧缩放 {min(per_frame_scales)}~{max(per_frame_scales)}；"
+            f"成品高度 {min(proj)}~{max(proj)}px"
+        )
+        if max(proj) < max(targets) - 2:
+            print("    （部分帧受画布宽度上限约束，未能完全达到目标高度）")
+        head_match = {
+            "mode": "height-ramp",
+            "startAction": start_id,
+            "endAction": end_id,
+            "startHeight": round(start_h, 1),
+            "endHeight": round(end_h, 1),
+            "perFrame": True,
+            "perFrameScale": per_frame_scales,
+        }
+        head_width_out = None
 
     os.makedirs(out_dir, exist_ok=True)
     report = []

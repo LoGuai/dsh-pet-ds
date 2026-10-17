@@ -173,73 +173,107 @@ test('拖拽动画（hang）声明了静态帧池 —— 用户要求"随机播�
   )
 })
 
-test('坐姿三段与站立同一视觉大小（按头部宽度对齐）', () => {
+test('坐姿三段的大小互相接得上（按整体高度对齐，接缝处连续）', () => {
   /*
    * 坐姿是**三段素材连续衔接**的一个动作：坐下的过程 → 坐着循环 → 站起的过程。
    *
-   * ## 为什么不能靠"共用同一缩放倍数"
+   * ## 这里踩过两次坑，两次都是"对齐指标选错了"
    *
-   * 曾经的做法是给三段配同一个 `scale_group`，让它们乘同一个系数 ——
-   * 那个做法是**错的**，因为三段**原始素材里角色本身就画得不一样大**
-   * （实测头宽 stand 530 / sit 580 / sit-circle 627 / sit-stop 643）。
-   * 共用系数只是把差异原样保留下来，用户实测反馈"坐下前后桌宠大小不一样"，
-   * 坐在那里时比站着大 12%。
+   * 1. 最早给三段配同一个 `scale_group`（共用缩放倍数）—— 错，因为三段
+   *    **原始素材里角色本身就画得不一样大**（头宽 stand 530 / sit 580 /
+   *    sit-circle 627 / sit-stop 643），共用系数只是把差异原样留下。
+   *
+   * 2. 改成按**头部宽度**对齐（四段头宽都 530）—— 头是一样大了，但用户
+   *    仍反馈"坐着时和起身时偏小"。实测成品高度：stand 1149.4（100%）、
+   *    sit 1093.8（94.6%）、sit-circle 1010.5（88.2%）、sit-stop 1031.5（95.5%）。
+   *    也就是说：坐姿轮廓更矮，按头对齐就会显得整个人小一截。
+   *    **用户的"大小"判据是整体高度/体量，不是头。**
    *
    * ## 现在的契约
    *
-   * 按**头部宽度**对齐到站立：`build-action-asset.py` 的
-   * `match_head_to: "stand"` + `match_head_per_frame: true`。
-   * 用头宽而不是整体包围盒，是因为整体包围盒随姿势剧烈变化
-   * （裙摆铺开、手臂抬起），拿它对齐会把"姿势不同"错当成"大小不同"。
+   * `height_ramp`：逐帧目标高度线性过渡，且**接缝必须连续** ——
+   *   · sit-circle 恒定 = sit 的**末帧**高度（与上一段接得上）
+   *   · sit-stop 从 sit 末帧高度过渡到 stand **均值**高度（首尾都接得上）
    *
-   * 这里断言清单里记录的 `headWidthOut` 确实是同一个基准值 ——
-   * 防止有人改了配置却没重跑，或某段回退成"各自填满画布"。
+   * 断言用的是清单里记录的逐帧 `outH`（生成时写下的真实成品高度），
+   * 不需要在 Node 里解 PNG。
    */
-  const ids = ['sit', 'sit-circle', 'sit-stop']
-  const heads = {}
-  const refs = {}
-  for (const id of ids) {
+  const load = (id) => {
     const p = join(ANIM_ROOT, id, 'manifest.json')
     assert.ok(existsSync(p), `缺 ${id}/manifest.json`)
     const m = JSON.parse(readFileSync(p, 'utf8'))
-    const proc = m._processing
-    assert.ok(proc, `${id}/manifest.json 没有 _processing（重新跑 build-action-asset.py ${id}）`)
-    assert.ok(
-      Number.isFinite(proc.headWidthOut),
-      `${id} 没有记录 _processing.headWidthOut —— 说明没走"头宽对齐"，角色大小会与站立不一致`,
-    )
+    assert.ok(m._processing, `${id}/manifest.json 没有 _processing（重新跑 build-action-asset.py ${id}）`)
+    return m
+  }
+  const heightsOf = (m) => {
+    const pf = m._processing.perFrame
+    assert.ok(Array.isArray(pf) && pf.length > 0, '清单里没有逐帧记录')
+    return pf.map((r) => r.outH)
+  }
+
+  const sit = load('sit')
+  const circle = load('sit-circle')
+  const stop = load('sit-stop')
+
+  /* 脚底基准必须与站立一致（否则锚点会跳）。 */
+  for (const [id, m] of [['sit', sit], ['sit-circle', circle], ['sit-stop', stop]]) {
     assert.equal(
-      proc.footBaseOutput,
+      m._processing.footBaseOutput,
       1155,
-      `${id} 的脚底基准是 ${String(proc.footBaseOutput)}，应为 1155（与站立多数帧一致）`,
-    )
-    heads[id] = proc.headWidthOut
-    refs[id] = proc.headMatch && proc.headMatch.refHeadWidth
-    assert.equal(
-      proc.headMatch && proc.headMatch.ref,
-      'stand',
-      `${id} 的头宽基准不是 stand`,
+      `${id} 的脚底基准是 ${String(m._processing.footBaseOutput)}，应为 1155`,
     )
     assert.equal(
-      proc.headMatch && proc.headMatch.perFrame,
-      true,
-      `${id} 没开逐帧归一化 —— 段内仍有尺寸差（实测 sit-stop 段内跨度 10.5%）`,
-    )
-    assert.equal(
-      Array.isArray(proc.perFrameScale) ? proc.perFrameScale.length : -1,
+      Array.isArray(m._processing.perFrameScale) ? m._processing.perFrameScale.length : -1,
       m.frameCount,
       `${id} 的 perFrameScale 长度与帧数不一致`,
     )
   }
 
-  /* 三段都对齐到同一个参考头宽，且三段之间一致（容差 2%，取整误差量级）。 */
-  const ref = refs.sit
-  assert.ok(Number.isFinite(ref), 'sit 没有记录 refHeadWidth')
-  for (const id of ids) {
-    assert.equal(refs[id], ref, `${id} 的参考头宽 ${String(refs[id])} 与 sit 的 ${String(ref)} 不一致`)
+  /* circle 与 stop 都必须走"高度对齐"，否则会退回"按头对齐 → 偏小"。 */
+  assert.equal(
+    circle._processing.headMatch && circle._processing.headMatch.mode,
+    'height-ramp',
+    'sit-circle 没走高度对齐 —— 会显得比坐下过程小（曾实测 88% vs 95%）',
+  )
+  assert.equal(
+    stop._processing.headMatch && stop._processing.headMatch.mode,
+    'height-ramp',
+    'sit-stop 没走高度对齐 —— 站直时会比站立小一截',
+  )
+
+  /* 坐着是循环，高度必须恒定，否则循环时会"呼吸"。 */
+  const ch = heightsOf(circle)
+  assert.ok(
+    Math.max(...ch) - Math.min(...ch) <= 2,
+    `sit-circle 帧间高度不一致（${String(Math.min(...ch))}~${String(Math.max(...ch))}），循环时会大小脉动`,
+  )
+
+  /* 接缝连续：上一段末帧 ≈ 下一段首帧（容差 2px，取整误差量级）。 */
+  const sitH = heightsOf(sit)
+  const stopH = heightsOf(stop)
+  assert.ok(
+    Math.abs(sitH[sitH.length - 1] - ch[0]) <= 2,
+    `sit 末帧高 ${String(sitH[sitH.length - 1])} → circle 首帧 ${String(ch[0])}，接缝处会跳`,
+  )
+  assert.ok(
+    Math.abs(ch[ch.length - 1] - stopH[0]) <= 2,
+    `circle 末帧高 ${String(ch[ch.length - 1])} → stop 首帧 ${String(stopH[0])}，接缝处会跳`,
+  )
+
+  /* stop 必须真的过渡到"站立那个量级"（宽度上限可能让它差一点，容差 3%）。 */
+  const target = stop._processing.headMatch && stop._processing.headMatch.endHeight
+  assert.ok(Number.isFinite(target), 'sit-stop 没记录 endHeight')
+  const lastStop = stopH[stopH.length - 1]
+  assert.ok(
+    lastStop >= target * 0.97 && lastStop <= target * 1.02,
+    `sit-stop 末帧高 ${String(lastStop)} 偏离目标 ${String(target)} 超过容差 —— 站直瞬间会跳`,
+  )
+
+  /* 站起的过程高度应单调上升（不该忽大忽小）。 */
+  for (let i = 1; i < stopH.length; i += 1) {
     assert.ok(
-      Math.abs(heads[id] - ref) / ref <= 0.02,
-      `${id} 的对齐后头宽 ${String(heads[id])} 偏离参考 ${String(ref)} 超过 2%`,
+      stopH[i] >= stopH[i - 1] - 2,
+      `sit-stop 高度在第 ${String(i + 1)} 帧回落（${String(stopH[i - 1])} → ${String(stopH[i])}），站起过程会抖`,
     )
   }
 })
