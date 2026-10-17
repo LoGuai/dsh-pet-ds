@@ -193,7 +193,7 @@ namespace DshPetSetup
                 {
                     return Fail(log, "安装目录必须是绝对路径（例如 D:\\DSH-Pet）。");
                 }
-                log("[1/5] 准备安装目录");
+                log("[1/6] 准备安装目录");
                 log("      目标：" + pluginDir);
                 try
                 {
@@ -208,7 +208,7 @@ namespace DshPetSetup
                 // ---- 解压载荷
                 status("解压插件包体…", 10);
                 log("");
-                log("[2/5] 解压插件包体（含依赖树，约 115 MB）");
+                log("[2/6] 解压插件包体（含依赖树，约 115 MB）");
                 var payload = Payload.Bytes;
                 if (payload == null)
                 {
@@ -240,7 +240,7 @@ namespace DshPetSetup
                 // ---- 找 DSH
                 status("定位 DSH…", 50);
                 log("");
-                log("[3/5] 定位 DSH");
+                log("[3/6] 定位 DSH");
                 var dshHome = DshLocator.FindHome();
                 if (dshHome == null)
                 {
@@ -264,7 +264,7 @@ namespace DshPetSetup
                 // ---- 登记进 profile
                 status("配置 DSH…", 58);
                 log("");
-                log("[4/5] 把插件登记进 DSH profile");
+                log("[4/6] 把插件登记进 DSH profile");
                 var profileJson = Path.Combine(profileDir, "package.json");
                 if (!File.Exists(profileJson))
                 {
@@ -312,7 +312,7 @@ namespace DshPetSetup
                 // ---- 校验
                 status("校验安装…", 78);
                 log("");
-                log("[5/5] 校验");
+                log("[5/6] 校验");
 
                 var entry = Path.Combine(pluginDir, "src", "host", "index.js");
                 if (!File.Exists(entry))
@@ -350,6 +350,57 @@ namespace DshPetSetup
                     log("      · 用 DSH 自带的 pnpm 刷新 profile 依赖…");
                     var okPnpm = DshLocator.RunPnpm(pnpm, profileDir, delegate(string l) { log("        " + l); });
                     log(okPnpm ? "      ✓ pnpm install 完成" : "      ⚠ pnpm install 未成功（见上面的输出）");
+                }
+
+                // ---- Electron 运行时
+                /*
+                 * 为什么要这一步：桌宠的窗口进程是**独立 Electron**，不是 DSH 自带的那份
+                 * （DSH 的 `DeepSeek Harness.exe` 是改造过的载体，把应用目录当参数传给它
+                 * 会直接退出）。缺了它，插件能装好、能被加载，但**桌宠窗口不会出现** ——
+                 * 现象是"装了却什么都没有"，用户几乎无法自行归因。
+                 *
+                 * 失败不算致命：插件本身已经装好，这里只把补救命令明确打出来。
+                 */
+                status("安装 Electron 运行时…", 92);
+                log("");
+                log("[6/6] Electron 运行时");
+                var electronExe = DshLocator.FindElectron(dshHome);
+                if (electronExe != null)
+                {
+                    log("      ✓ 已有：" + electronExe);
+                }
+                else
+                {
+                    var nodeExe = DshLocator.FindNode(dshHome);
+                    var electronInstaller = Path.Combine(pluginDir, "scripts", "dev", "install-electron.mjs");
+                    if (nodeExe == null)
+                    {
+                        log("      ⚠ 找不到 node.exe，跳过 Electron 安装");
+                        log("        桌宠窗口需要独立 Electron；若重启后桌宠不出现，请手动执行：");
+                        log("        node \"" + electronInstaller + "\"");
+                    }
+                    else if (!File.Exists(electronInstaller))
+                    {
+                        log("      ⚠ 插件里没有 install-electron.mjs，跳过 Electron 安装");
+                        log("        若重启后桌宠不出现，请按插件目录里的 INSTALL.md 手动安装 Electron。");
+                    }
+                    else
+                    {
+                        log("      · 下载并安装 Electron（约 100 MB，需联网）…");
+                        var okElectron = DshLocator.RunNodeScript(
+                            nodeExe, electronInstaller, "", pluginDir, dshHome, 600000,
+                            delegate(string l) { log("        " + l); });
+                        if (okElectron)
+                        {
+                            log("      ✓ Electron 安装完成");
+                        }
+                        else
+                        {
+                            log("      ⚠ Electron 安装未成功 —— 插件已装好，但桌宠窗口起不来");
+                            log("        联网后重跑本安装程序，或手动执行：");
+                            log("        node \"" + electronInstaller + "\"");
+                        }
+                    }
                 }
 
                 // ---- 完成
@@ -715,6 +766,127 @@ namespace DshPetSetup
                 // 忽略
             }
             return null;
+        }
+
+        /** 只找 node.exe（跑 Electron 安装脚本用，不要求 pnpm 也在）。 */
+        internal static string FindNode(string dshHome)
+        {
+            try
+            {
+                var root = Path.Combine(dshHome, "dsh-runtimes");
+                if (!Directory.Exists(root)) return null;
+                foreach (var rt in Directory.GetDirectories(root))
+                {
+                    var node = Path.Combine(rt, "dependencies", "node", "bin", "node.exe");
+                    if (File.Exists(node)) return node;
+                }
+            }
+            catch
+            {
+                // 忽略
+            }
+            return null;
+        }
+
+        /**
+         * 找**已装好的独立 Electron**：`<dshHome>\electron\electron-v*-win32-x64\electron.exe`。
+         *
+         * 这个布局是 `install-electron.mjs` 的安装约定，也是宿主探测逻辑
+         * （`src/host/electron-locate.js`）的第 3 优先级。两边必须一致。
+         */
+        internal static string FindElectron(string dshHome)
+        {
+            try
+            {
+                var root = Path.Combine(dshHome, "electron");
+                if (!Directory.Exists(root)) return null;
+                foreach (var dir in Directory.GetDirectories(root))
+                {
+                    var name = Path.GetFileName(dir);
+                    if (name.StartsWith("electron-v", StringComparison.OrdinalIgnoreCase)
+                        && name.EndsWith("-win32-x64", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var exe = Path.Combine(dir, "electron.exe");
+                        if (File.Exists(exe)) return exe;
+                    }
+                }
+            }
+            catch
+            {
+                // 忽略
+            }
+            return null;
+        }
+
+        /**
+         * 用 DSH 自带的 node.exe 跑一个 .mjs 脚本，输出逐行回调。返回是否成功。
+         *
+         * 与 `RunPnpm` 的区别：
+         *  · 可以把 **DSH_HOME 显式传下去**（`install-electron.mjs` 靠它决定装到哪）；
+         *  · 超时更长 —— 这一步要下载约 100 MB 的 Electron。
+         */
+        internal static bool RunNodeScript(string nodeExe, string scriptPath, string extraArgs,
+                                           string cwd, string dshHome, int timeoutMs, Action<string> onLine)
+        {
+            try
+            {
+                var psi = new ProcessStartInfo
+                {
+                    FileName = nodeExe,
+                    Arguments = "\"" + scriptPath + "\""
+                                + (string.IsNullOrEmpty(extraArgs) ? "" : " " + extraArgs),
+                    WorkingDirectory = cwd,
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true,
+                };
+                /*
+                 * ⚠️ 必须显式传 DSH_HOME。
+                 *
+                 * `install-electron.mjs` 按 `DSH_HOME ?? %USERPROFILE%\.dsh` 决定装到哪，
+                 * 而本程序的 dshHome 可能是探测出来的、也可能来自环境变量。
+                 * 不传的话会装到用户默认目录，与这里认定的位置不一致 ——
+                 * 桌宠之后照样找不到 Electron，表现还是"装了没画面"。
+                 */
+                if (!string.IsNullOrEmpty(dshHome))
+                {
+                    psi.EnvironmentVariables["DSH_HOME"] = dshHome;
+                }
+                using (var proc = Process.Start(psi))
+                {
+                    if (proc == null) return false;
+                    proc.OutputDataReceived += delegate(object s, DataReceivedEventArgs e)
+                    {
+                        if (e.Data != null && onLine != null) onLine(e.Data);
+                    };
+                    proc.ErrorDataReceived += delegate(object s, DataReceivedEventArgs e)
+                    {
+                        if (e.Data != null && onLine != null) onLine(e.Data);
+                    };
+                    proc.BeginOutputReadLine();
+                    proc.BeginErrorReadLine();
+                    if (!proc.WaitForExit(timeoutMs))
+                    {
+                        try
+                        {
+                            proc.Kill();
+                        }
+                        catch
+                        {
+                            // 忽略
+                        }
+                        if (onLine != null) onLine("（超时 " + (timeoutMs / 1000) + " 秒，已终止）");
+                        return false;
+                    }
+                    return proc.ExitCode == 0;
+                }
+            }
+            catch (Exception ex)
+            {
+                if (onLine != null) onLine("执行失败：" + ex.Message);
+                return false;
+            }
         }
 
         /** 跑一次 pnpm install，输出逐行回调。返回是否成功。 */

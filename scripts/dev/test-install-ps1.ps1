@@ -56,9 +56,20 @@ Write-Output "包体  : $(Split-Path $tgz -Leaf)"
 Write-Output ''
 
 # ---------------------------------------------------------------- 跑
+$instOut = ''
 Write-Output '=== 运行 install-pet.ps1 -DshHome <沙箱> ==='
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File 'D:\dsh\pet\install-pet.ps1' -DshHome $root -Tgz $tgz 2>&1 |
-    ForEach-Object { Write-Output ("  " + $_) }
+<#
+  ⚠️ 必须加 -SkipElectron。
+
+  沙箱的 DSH_HOME 里没有 Electron，于是脚本会去下载约 100 MB 的 Electron 再解压 ——
+  这会让本测试变慢、并且**依赖网络**。而本测试要验的是"装插件 + 登记 profile"
+  这条主链路，Electron 那一步是独立的（它有自己的一句断言在下面）。
+
+  刻意保留一个"-SkipElectron 时会明确说出跳过"的检查，
+  免得哪天参数被删掉后测试仍然悄悄通过。
+#>
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File 'D:\dsh\pet\install-pet.ps1' -DshHome $root -Tgz $tgz -SkipElectron 2>&1 |
+    ForEach-Object { $script:instOut += "$_`n"; Write-Output ("  " + $_) }
 
 # ---------------------------------------------------------------- 断言
 Write-Output ''
@@ -85,6 +96,19 @@ Check '沙箱生成了备份' (Test-Path ((Join-Path $prof 'package.json') + '.b
 # 3) 沙箱里 node_modules 里应有这个包
 $linked = Join-Path $prof 'node_modules\dsh-pet-ds'
 Check '沙箱 node_modules 里有 dsh-pet-ds' (Test-Path $linked) $linked
+
+# 4) 一键装 Electron 的前提：装好的插件里必须带着安装脚本
+#
+# 安装器不自己实现 Electron 下载逻辑，而是调用插件里的 install-electron.mjs。
+# 所以这个文件必须在**装好的插件**里 —— 少打一个文件进去，
+# 用户点"一键安装"就会得到"插件在、桌宠不出现"。
+Check '装好的插件里带着 install-electron.mjs' `
+    (Test-Path (Join-Path $linked 'scripts\dev\install-electron.mjs')) `
+    (Join-Path $linked 'scripts\dev\install-electron.mjs')
+
+# 5) -SkipElectron 必须真的被识别（否则参数被删掉后测试还会悄悄通过）
+Check '-SkipElectron 被识别并明确说了跳过' ($instOut -match 'SkipElectron') `
+    "输出里没有 SkipElectron 字样"
 
 Write-Output ''
 if ($failed -eq 0) {

@@ -5,11 +5,12 @@
 #   2) 在 PowerShell 里：  powershell -ExecutionPolicy Bypass -File .\install-pet.ps1
 #   3) 传参指定包体：      .\install-pet.ps1 -Tgz D:\path\to\dsh-pet-ds-0.1.3-fix.tgz
 #
-# 它做什么（4 步）：
-#   [1/4] 找插件包体（.tgz）—— 用本脚本旁边的，或 -Tgz 指定的
-#   [2/4] 找 DSH 配置目录与目标 profile
-#   [3/4] 找 DSH 自带的 node 与 pnpm
-#   [4/4] 用 pnpm 把包装进 profile，然后登记进 bundles / dependencies
+# 它做什么（5 步）：
+#   [1/5] 找插件包体（.tgz）—— 用本脚本旁边的，或 -Tgz 指定的
+#   [2/5] 找 DSH 配置目录与目标 profile
+#   [3/5] 找 DSH 自带的 node 与 pnpm
+#   [4/5] 用 pnpm 把包装进 profile，然后登记进 bundles / dependencies
+#   [5/5] 装 Electron 运行时（桌宠的窗口进程要用它；缺了就是"插件在、桌宠不出现"）
 #
 # 为什么用 .ps1 而不是 .exe：
 #   Windows Defender SmartScreen 会拦未签名的 .exe（"Windows 已保护你的电脑"），
@@ -39,7 +40,17 @@ param(
     [string]$DshHome,
 
     # 只做检查、不改任何东西
-    [switch]$WhatIf
+    [switch]$WhatIf,
+
+    # 跳过 Electron 运行时安装（自己另有安排时才用；跳过会让桌宠窗口起不来）
+    [switch]$SkipElectron,
+
+    # 要安装的 Electron 版本。默认空 = 由 install-electron.mjs 取最新稳定版。
+    # 想复现某个版本时传，例如 -ElectronVersion 38.2.0
+    [string]$ElectronVersion,
+
+    # Electron 下载镜像（默认用脚本内置的镜像顺序）。国内网络常需要它。
+    [string]$ElectronMirror
 )
 
 $ErrorActionPreference = 'Stop'
@@ -60,7 +71,7 @@ Write-Host ''
 if ($WhatIf) { Write-Warn2 '-WhatIf：只检查，不做任何修改' ; Write-Host '' }
 
 # ---------------------------------------------------------------- 1) 包体
-Write-Step '[1/4] 插件包体'
+Write-Step '[1/5] 插件包体'
 
 if (-not $Tgz) {
     $candidates = @(
@@ -90,7 +101,7 @@ Write-Ok "$Tgz  ($([math]::Round((Get-Item -LiteralPath $Tgz).Length / 1MB, 2)) 
 
 # ---------------------------------------------------------------- 2) DSH
 Write-Step ''
-Write-Step '[2/4] DSH 配置目录'
+Write-Step '[2/5] DSH 配置目录'
 
 $home_ = if ($DshHome) { $DshHome }
          elseif ($env:DSH_HOME) { $env:DSH_HOME }
@@ -144,7 +155,7 @@ Write-Ok "$profileDir"
 
 # ---------------------------------------------------------------- 3) node / pnpm
 Write-Step ''
-Write-Step '[3/4] Node 与 pnpm（用 DSH 自带的）'
+Write-Step '[3/5] Node 与 pnpm（用 DSH 自带的）'
 
 $node = $null
 $pnpm = $null
@@ -175,7 +186,7 @@ if ($pnpm) { Write-Ok "pnpm : $pnpm" } else { Write-Warn2 'pnpm : 没找到（�
 
 # ---------------------------------------------------------------- 4) 安装
 Write-Step ''
-Write-Step '[4/4] 安装'
+Write-Step '[4/5] 安装'
 
 if ($WhatIf) {
     Write-Host ''
@@ -279,6 +290,96 @@ Write-Step "  使用 $register"
 if ($LASTEXITCODE -ne 0) {
     Write-Err '登记 profile 配置失败（若提示 JSON 不合法，原文件未被改动）'
     exit 1
+}
+
+# ---------------------------------------------------------------- 5) Electron 运行时
+Write-Step ''
+Write-Step '[5/5] Electron 运行时'
+
+<#
+  为什么这一步是"一键可用"的必要条件：
+
+  桌宠的窗口进程是**独立 Electron**，不是 DSH 自带的那份 ——
+  DSH 的 `DeepSeek Harness.exe` 是改造过的载体，把应用目录当参数传给它会直接退出。
+  所以缺了 Electron，插件能装好、能被 DSH 加载，但**桌宠窗口不会出现**，
+  现象就是"装了却什么都没有"，极难自行归因。
+
+  安装脚本就在**刚装好的插件**里（上一步已完成），所以从插件目录取它，
+  不必在安装包里再放一份。
+#>
+if ($SkipElectron) {
+    Write-Warn2 '-SkipElectron：跳过 Electron 安装'
+}
+else {
+    $electronRoot = Join-Path $dshHome 'electron'
+    $existingElectron = $null
+    if (Test-Path -LiteralPath $electronRoot) {
+        $hit = Get-ChildItem -Path (Join-Path $electronRoot 'electron-v*-win32-x64') -Directory -ErrorAction SilentlyContinue |
+               Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'electron.exe') } |
+               Select-Object -First 1
+        if ($hit) { $existingElectron = Join-Path $hit.FullName 'electron.exe' }
+    }
+
+    if ($existingElectron) {
+        Write-Ok "已有：$existingElectron"
+    }
+    else {
+        $pluginDir = Join-Path $profileDir "node_modules\$PluginName"
+        $electronInstaller = Join-Path $pluginDir 'scripts\dev\install-electron.mjs'
+        if (-not (Test-Path -LiteralPath $electronInstaller)) {
+            $alt = Join-Path $ScriptDir 'scripts\dev\install-electron.mjs'
+            if (Test-Path -LiteralPath $alt) { $electronInstaller = (Resolve-Path -LiteralPath $alt).Path }
+        }
+
+        if (-not (Test-Path -LiteralPath $electronInstaller)) {
+            Write-Warn2 '找不到 install-electron.mjs，跳过 Electron 安装'
+            Write-Host '      桌宠窗口需要独立 Electron；请手动执行：'
+            Write-Host "        node `"$pluginDir\scripts\dev\install-electron.mjs`""
+        }
+        else {
+            Write-Step '- 下载并安装 Electron（约 100 MB，需要联网）...'
+            <#
+              ⚠️ 必须把 DSH_HOME 传给子进程。
+              install-electron.mjs 自己按 `DSH_HOME ?? %USERPROFILE%\.dsh` 决定装到哪，
+              而本脚本可能用 -DshHome 指定了别的目录 —— 不传就会装到用户默认目录，
+              与这里认定的 $dshHome 不一致，之后桌宠照样找不到它。
+            #>
+            $prevDshHome = $env:DSH_HOME
+            $env:DSH_HOME = $dshHome
+            $eRc = 1
+            Push-Location $pluginDir
+            try {
+                $eArgs = @($electronInstaller)
+                if ($ElectronVersion) { $eArgs += "--version=$ElectronVersion" }
+                if ($ElectronMirror) { $eArgs += "--mirror=$ElectronMirror" }
+                & $node @eArgs
+                $eRc = $LASTEXITCODE
+            }
+            catch {
+                Write-Warn2 "Electron 安装出错：$($_.Exception.Message)"
+            }
+            finally {
+                Pop-Location
+                if ($null -eq $prevDshHome) { Remove-Item Env:DSH_HOME -ErrorAction SilentlyContinue }
+                else { $env:DSH_HOME = $prevDshHome }
+            }
+
+            if ($eRc -eq 0) {
+                Write-Ok 'Electron 安装完成'
+            }
+            else {
+                Write-Warn2 "Electron 安装失败（返回码 $eRc）—— 插件已经装好，但桌宠窗口起不来"
+                Write-Host ''
+                Write-Host '      常见原因与对策：'
+                Write-Host '        * 没有联网  -> 联网后重跑本脚本，或手动执行下面那条'
+                Write-Host '        * 下载被墙  -> 换镜像，例如：'
+                Write-Host '            .\install-pet.ps1 -ElectronMirror https://npmmirror.com/mirrors/electron/'
+                Write-Host '      手动安装命令：'
+                Write-Host "        node `"$electronInstaller`""
+                Write-Host ''
+            }
+        }
+    }
 }
 
 Write-Host ''
