@@ -3015,12 +3015,13 @@ async function verifyRealDrag(check, wait) {
     if (i % 4 === 0 || i === STEPS) measure(`第 ${String(i)} 步`)
   }
 
-  // 此时拖拽动画早已播完，应当在最后一帧停住（帧数由 manifest 决定，不写死）。
-  dragAnimState.push({ at: '播完后', ...(await readState()) })
+  // 拖拽已改为"静态随机帧"：帧不会推进，应当一直停在被选中的那一帧。
+  dragAnimState.push({ at: '稍后', ...(await readState()) })
   log(
     `参考-拖拽动画: 起播后 active=${String(dragAnimState[0].activeAnimationId)}` +
       ` 帧 ${String(dragAnimState[0].currentFrame)}/${String(dragAnimState[0].currentFrameCount)}` +
-      `；播完后 active=${String(dragAnimState[1].activeAnimationId)}` +
+      ` 静态池=${JSON.stringify(dragAnimState[0].currentStaticFrames)}` +
+      `；稍后 active=${String(dragAnimState[1].activeAnimationId)}` +
       ` 帧 ${String(dragAnimState[1].currentFrame)}/${String(dragAnimState[1].currentFrameCount)}`,
   )
   check(
@@ -3028,22 +3029,76 @@ async function verifyRealDrag(check, wait) {
     dragAnimState[0].activeAnimationId === 'hang',
     `activeAnimationId=${String(dragAnimState[0].activeAnimationId)}`,
   )
-  check(
-    '拖拽动画播完停在最后一帧（不循环）',
-    dragAnimState[1].activeAnimationId === 'hang' &&
-      dragAnimState[1].currentFrameCount > 0 &&
-      dragAnimState[1].currentFrame === dragAnimState[1].currentFrameCount - 1,
-    `active=${String(dragAnimState[1].activeAnimationId)} 帧 ` +
-      `${String(dragAnimState[1].currentFrame)}/${String(dragAnimState[1].currentFrameCount)}` +
-      `（期望停在 ${String((dragAnimState[1].currentFrameCount ?? 1) - 1)}）` +
-      // 若被切走，把"是谁结束了动作"一并打出来 —— 三种原因（定时器到点 /
-      // 宿主状态变化 / 被新动作顶掉）修法完全不同，不能只看到结果就猜。
-      (dragAnimState[1].activeAnimationId !== 'hang' && dragAnimState[1].lastEndAction
-        ? `；最近一次 endAction：动作=${String(dragAnimState[1].lastEndAction.finishedActionId)}` +
-          ` 当时的动画=${String(dragAnimState[1].lastEndAction.wasAnimation)}` +
-          ` 调用点=${String(dragAnimState[1].lastEndAction.stack)}`
-        : ''),
-  )
+  /*
+   * 拖拽已不再是一段多帧动画，而是**静态随机帧**
+   * （用户要求：「不再采用多帧动画形式，而是改为静态，
+   *   在触发拖拽时随机播放其中一个动作，其他机制不变」）。
+   *
+   * 所以这里要验的不再是"停在最后一帧"，而是三件事：
+   *   1. 该动画确实声明了静态帧池；
+   *   2. 显示的是池里的一员（随机取到其中任意一个都算对）；
+   *   3. 帧号**不再推进**（隔一会儿再看，仍是同一帧）—— 这才是"静态"。
+   */
+  {
+    const a = dragAnimState[0]
+    const b = dragAnimState[1]
+    const pool = Array.isArray(a.currentStaticFrames) ? a.currentStaticFrames : []
+    check(
+      '拖拽动画声明了静态帧池（不再是多帧动画）',
+      pool.length > 0,
+      `currentStaticFrames=${JSON.stringify(a.currentStaticFrames)}`,
+    )
+    check(
+      '拖拽显示的是池中某一帧',
+      b.activeAnimationId === 'hang' && pool.includes(b.currentFrame),
+      `active=${String(b.activeAnimationId)} 帧=${String(b.currentFrame)} 池=${JSON.stringify(pool)}` +
+        // 若被切走，把"是谁结束了动作"一并打出来 —— 三种原因（定时器到点 /
+        // 宿主状态变化 / 被新动作顶掉）修法完全不同，不能只看到结果就猜。
+        (b.activeAnimationId !== 'hang' && b.lastEndAction
+          ? `；最近一次 endAction：动作=${String(b.lastEndAction.finishedActionId)}` +
+            ` 当时的动画=${String(b.lastEndAction.wasAnimation)}` +
+            ` 调用点=${String(b.lastEndAction.stack)}`
+          : ''),
+    )
+    check(
+      '拖拽帧不再推进（静态）',
+      b.currentFrame === a.currentFrame,
+      `起播后帧=${String(a.currentFrame)}，稍后帧=${String(b.currentFrame)}（应相同）`,
+    )
+
+    /*
+     * "随机"必须真的随机 —— 只观察一次拖拽证明不了任何事
+     * （池有两帧时，连续两次抽到同一帧的概率就有 50%）。
+     * 所以连续触发 40 次，要求池里**每一帧都出现过**。
+     */
+    const many = await wc.executeJavaScript(
+      `window.__petTestDragStaticFrames(40)`,
+      true,
+    )
+    if (!many || !many.ok) {
+      check('拖拽静态帧随机采样', false, '钩子调用失败')
+    } else {
+      const pool = Array.isArray(many.pool) ? many.pool : []
+      const seen = new Set(many.frames)
+      const outside = many.frames.filter((f) => !pool.includes(f))
+      const counts = pool.map((f) => `${String(f)}×${String(many.frames.filter((x) => x === f).length)}`)
+      check(
+        '拖拽静态帧每次都在池内',
+        outside.length === 0,
+        `池=${JSON.stringify(pool)}；越界帧=${JSON.stringify(outside)}`,
+      )
+      check(
+        '拖拽静态帧确实随机（池中每一帧都出现过）',
+        pool.length > 0 && pool.every((f) => seen.has(f)),
+        `40 次采样分布：${counts.join('  ')}` +
+          (pool.every((f) => seen.has(f)) ? '' : `；未出现的帧=${JSON.stringify(pool.filter((f) => !seen.has(f)))}`),
+      )
+    }
+    /*
+     * 连续触发会改变当前帧（这是刻意的：它就是在模拟反复拖拽）。
+     * 后面 mouseup 会走正常的收尾路径切回站立，因此不需要在这里复位。
+     */
+  }
 
   /*
    * 结束渲染进程的拖拽态（合成 mouseup）—— 这会触发"立刻回站立"。

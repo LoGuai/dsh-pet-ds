@@ -122,24 +122,54 @@ for (const action of actions) {
         `${action}：loopRange ${JSON.stringify(manifest.loopRange)} 超出 1..${String(manifest.frameCount)}`,
       )
     }
+
+    /* staticFrames（若有）的帧号同样是 1 基，且必须落在范围内 */
+    if (manifest.staticFrames !== undefined) {
+      assert.ok(
+        Array.isArray(manifest.staticFrames),
+        `${action}：staticFrames 不是数组`,
+      )
+      for (const v of manifest.staticFrames) {
+        assert.ok(
+          Number.isInteger(v) && v >= 1 && v <= manifest.frameCount,
+          `${action}：staticFrames 里有非法帧号 ${String(v)}（应在 1..${String(manifest.frameCount)}）`,
+        )
+      }
+    }
   })
 }
 
-test('拖拽动画（hang）不循环 —— 用户要求"播完维持最后一帧"', () => {
+test('拖拽动画（hang）声明了静态帧池 —— 用户要求"随机播放其中一个动作"', () => {
   const manifestPath = join(ANIM_ROOT, 'hang', 'manifest.json')
   assert.ok(existsSync(manifestPath), '缺 hang/manifest.json')
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
   /*
-   * 拖拽动画必须 loop: false。
+   * 拖拽已从"多帧动画"改为"触发时随机挑一帧静态显示"
+   * （用户要求：「拖拽动作不再采用多帧动画形式，而是改为静态，
+   *   在触发拖拽时随机播放其中一个动作，其他机制不变」）。
    *
-   * 这不是审美偏好，而是行为契约：拖拽期间动画要在**最后一帧停住**
-   * （"播放完成后维持最后一帧"），松手才切回闲置。
-   * 一旦改成循环，拎着的时候会一直摆动、看不出"已拎起"的静止态。
+   * 所以契约变成：`staticFrames` 必须存在、非空、帧号合法。
+   * 帧号是 **1 基**（与 frame_NN.png 对应），便于对着帧图配置。
+   *
+   * ⚠️ 同时仍要求 `loop: false` —— 静态帧本来就不会推进，但万一将来
+   * 有人把 staticFrames 删掉、想退回多帧动画，`loop: false` 能保证
+   * 那时仍然是"播完停在最后一帧"（也就是"维持"语义），而不是变成摆动循环。
    */
+  const pool = manifest.staticFrames
+  assert.ok(
+    Array.isArray(pool) && pool.length > 0,
+    'hang 必须声明 staticFrames（如 [4, 11]）—— 否则会退回多帧动画',
+  )
+  for (const v of pool) {
+    assert.ok(
+      Number.isInteger(v) && v >= 1 && v <= manifest.frameCount,
+      `hang 的 staticFrames 里有非法帧号 ${String(v)}（应在 1..${String(manifest.frameCount)}）`,
+    )
+  }
   assert.equal(
     manifest.loop,
     false,
-    'hang 必须 loop: false —— 否则拖拽时不会停在最后一帧',
+    'hang 必须 loop: false —— 静态帧不推进；万一退回多帧动画也要"停在最后一帧"',
   )
 })
 

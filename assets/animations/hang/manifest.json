@@ -2,6 +2,10 @@
   "frameCount": 12,
   "fps": 6,
   "loop": false,
+  "staticFrames": [
+    4,
+    11
+  ],
   "sourceCanvasHeight": 1157,
   "drawOffsetY": [
     0,

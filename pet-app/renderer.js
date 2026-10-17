@@ -366,6 +366,15 @@ function createAnimationState(id) {
      * 睡觉的起伏很慢，用 1fps（用户指定）比 6fps 自然。
      */
     tailLoopFps: null,
+    /**
+     * 静态帧池（0 基帧序号数组，来自清单 `staticFrames`）。
+     *
+     * 非空表示这个动画**不播**：每次触发时从里面随机挑一帧静态显示。
+     * 拖拽用它（用户要求"不再是多帧动画，触发时随机播放其中一个动作"）。
+     * `null` = 正常播放。
+     * @type {number[] | null}
+     */
+    staticFrames: null,
     /** 已完成的循环次数（诊断用）。 */
     loopCount: 0,
   }
@@ -448,6 +457,23 @@ async function loadManifestFor(id) {
     const tailLoopFrames = Number.isFinite(data.tailLoopFrames) ? Math.max(0, Math.floor(data.tailLoopFrames)) : 0
     // 尾帧循环的帧率（可选）：睡觉用 1fps 让起伏更慢。
     const tailLoopFps = Number.isFinite(data.tailLoopFps) && data.tailLoopFps > 0 ? Number(data.tailLoopFps) : null
+    /*
+     * 可选的**静态帧池**：`staticFrames: [4, 11]`（1 基帧号）。
+     *
+     * 语义：这个动画不"播"，而是每次触发时**随机挑一帧**静态显示。
+     * 拖拽用它 —— 用户要求"不再是多帧动画，触发时随机播放其中一个动作"。
+     *
+     * 为什么不直接删掉其它帧：素材是一整套、换起来方便（保留全部帧、
+     * 只在这里声明用哪几个），而且想改回多帧动画时不用重新处理素材。
+     */
+    const staticFrames =
+      Array.isArray(data.staticFrames) && data.staticFrames.length > 0
+        ? data.staticFrames
+            .map((v) => Number(v))
+            /* 1 基 → 0 基，并把越界值丢掉（清单写错不该让动画整体失效）。 */
+            .filter((v) => Number.isInteger(v) && v >= 1 && v <= frameCount)
+            .map((v) => v - 1)
+        : null
     return {
       ok: true,
       frameCount,
@@ -459,6 +485,7 @@ async function loadManifestFor(id) {
       loopRangeCyclesRange,
       tailLoopFrames,
       tailLoopFps,
+      staticFrames: staticFrames && staticFrames.length > 0 ? staticFrames : null,
     }
   } catch {
     return {
@@ -472,6 +499,7 @@ async function loadManifestFor(id) {
       loopRangeCyclesRange: null,
       tailLoopFrames: 0,
       tailLoopFps: null,
+      staticFrames: null,
     }
   }
 }
@@ -528,6 +556,11 @@ async function loadAnimation(id) {
   state.loopRangeCyclesRange = manifest.loopRangeCyclesRange ?? null
   state.tailLoopFrames = manifest.tailLoopFrames ?? 0
   state.tailLoopFps = manifest.tailLoopFps ?? null
+  /*
+   * 静态帧池（0 基、已过滤越界）。非空表示这个动画**不播**，
+   * 而是每次触发时随机挑一帧静态显示（拖拽用，见 playStaticFrame）。
+   */
+  state.staticFrames = manifest.staticFrames ?? null
   rebuildPlaybackPlan(state)
 
   const loaded = await preloadFrames(id, state, frameCount)
@@ -754,6 +787,55 @@ function isPlaying(id) {
   return Boolean(state && state.timer)
 }
 
+/** 最近一次拖拽所用的静态帧下标（0 基）。诊断/测试用。 */
+let lastStaticFramePicked = null
+
+/**
+ * 挑一个静态帧并**静止显示它**（不播、不推进、不自动退场）。
+ *
+ * ## 用途（用户要求）
+ *
+ * 拖拽动作不再是一段多帧动画，而是**触发时随机挑一帧**静态显示：
+ *
+ *   「拖拽动作不再采用多帧动画形式，而是改为静态，
+ *     在触发拖拽时随机播放其中一个动作，其他机制不变」
+ *
+ * 所以它复用 `playOneShotHoldLast` 的"维持到被中断"语义，
+ * 只是不启动播放计划 —— 帧永远停在被选中的那一帧。
+ *
+ * ⚠️ 必须把 `state.index` 设成选中帧：`hitTest()` 用的是
+ * `hitMasks[state.index]`，不设就会用第 0 帧的轮廓判命中，
+ * 表现是"拖拽时鼠标穿透位置和看到的姿势对不上"。
+ *
+ * @param {string} id
+ * @param {number[]} pool 0 基帧序号数组（非空）
+ * @returns {Promise<{ok: boolean, frame?: number}>}
+ */
+async function playStaticFrame(id, pool) {
+  const state = await loadAnimation(id)
+  if (!state) return { ok: false }
+  if (!Array.isArray(pool) || pool.length === 0) return { ok: false }
+
+  /* 随机挑一帧。同一个池里每次触发都可能不同 —— 这正是需求要的"随机播放其中一个"。 */
+  const frame = pool[Math.floor(Math.random() * pool.length)]
+
+  /* 先停掉可能残留的播放定时器，否则它会继续推进帧、把静态姿势覆盖掉。 */
+  stopLoop(id)
+
+  activeAnimationId = id
+  /*
+   * 顺序有讲究：**先用新动画重建掩膜，再显示帧**。
+   *
+   * `showFrame()` 内部会调 `resyncHitTest()`，而它读的是
+   * `hitMasks[state.index]` —— 掩膜还是站立动画的就会拿错轮廓。
+   */
+  buildHitMasks()
+  showFrame(frame)
+
+  lastStaticFramePicked = frame
+  return { ok: true, frame }
+}
+
 /**
  * 播放一个**一次性**动画：从第 0 帧放到最后一帧，然后**停在最后一帧**。
  *
@@ -761,12 +843,21 @@ function isPlaying(id) {
  * **不自己退场** —— 由调用方（拖拽逻辑）决定什么时候中断它。
  * 拖拽动画就需要这个语义：拎着的时候一直维持最后一帧，松手立刻切回站立。
  *
+ * 若该动画声明了 `staticFrames`（静态帧池），则**不走播放计划**，
+ * 改为随机挑一帧静止显示（见 `playStaticFrame`）。
+ *
  * @param {string} id
  * @returns {Promise<boolean>} 是否成功起播（素材缺失时返回 false）
  */
 async function playOneShotHoldLast(id) {
   const state = await loadAnimation(id)
   if (!state) return false
+
+  /* 静态帧池优先：这个动画"不播"，随机挑一帧显示即可。 */
+  if (Array.isArray(state.staticFrames) && state.staticFrames.length > 0) {
+    const r = await playStaticFrame(id, state.staticFrames)
+    return r.ok
+  }
 
   activeAnimationId = id
   showFrame(0)
@@ -895,6 +986,33 @@ function planLengthOf(state) {
   if (!state) return 0
   if (Array.isArray(state.playbackPlan) && state.playbackPlan.length > 0) return state.playbackPlan.length
   return state.frameCount
+}
+
+/**
+ * 测试钩子：连续触发 N 次"拖拽静态帧"，返回每次挑中的帧序号。
+ *
+ * 用途：验证"随机播放其中一个动作"**真的会变**。
+ * 只观察一次拖拽是不够的 —— 随机恰好抽到同一个帧很常见
+ * （池有两帧时，连续两次抽到同一帧的概率就有 50%），
+ * 必须连续采样才能把"根本没随机"与"运气不好"区分开。
+ *
+ * @param {number} times 触发次数（默认 40）
+ * @returns {Promise<{ok: boolean, frames?: number[], pool?: number[]}>}
+ */
+window.__petTestDragStaticFrames = async (times = 40) => {
+  const state = await loadAnimation(DRAG_ANIMATION_ID)
+  if (!state) return { ok: false }
+  const pool = Array.isArray(state.staticFrames) ? state.staticFrames : []
+  if (pool.length === 0) return { ok: false }
+
+  const frames = []
+  const n = Math.max(1, Math.min(500, Math.floor(times) || 40))
+  for (let i = 0; i < n; i += 1) {
+    const r = await playStaticFrame(DRAG_ANIMATION_ID, pool)
+    if (!r.ok) return { ok: false }
+    frames.push(r.frame)
+  }
+  return { ok: true, frames, pool }
 }
 
 /**
@@ -2916,6 +3034,14 @@ window.__petTestState = () => {
     currentFrameCount: act ? planLengthOf(act) : null,
     /** 素材本身的帧数（诊断用）。 */
     currentAssetFrameCount: act ? act.frameCount : null,
+    /**
+     * 当前动画的**静态帧池**（0 基；null = 正常播放）。
+     * 拖拽用它验证"随机挑一帧"：`staticFrames` 非空时，
+     * `currentFrame` 必须落在池内，且不会随时间推进。
+     */
+    currentStaticFrames: act ? act.staticFrames : null,
+    /** 最近一次静态帧挑选结果（0 基，诊断/测试用）。 */
+    lastStaticFramePicked,
     /** 最近一次动作是怎么结束的（诊断"被顶掉"用）。 */
     lastEndAction: lastEndActionInfo,
     /** 最近一次"点击还是拖动"的判定输入（诊断用）。 */
