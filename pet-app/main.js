@@ -88,6 +88,8 @@ const {
 
 /** 余额取数：与宿主**共用同一份**（shared-core，ESM 经 require(esm) 加载）。 */
 const { createBalanceFetcher } = require('../src/shared-core/balance.js')
+/** 好感存档（落盘到 userData，与安装目录分离，升级不会丢）。 */
+const { createAffectionStore } = require('./affection-store.js')
 /** 余额播报的纯逻辑：消耗计算、四档台词、播不播。 */
 const { buildBalanceAnnouncement, shouldAnnounceBalance, shouldRunAnnounceWindow } = require('../src/shared-core/balance-announce.js')
 /** 从 DSH 的凭据文件里读 API Key（桌宠侧专用，CJS）。 */
@@ -939,6 +941,18 @@ function quitSelf() {
   app.isQuitting = true
   log('收到退出请求，开始退出')
 
+  /*
+   * 0) 先把好感存档刷盘。
+   *
+   * 为什么必须是**同步**的一次：`stopAllTimers()` 之后事件循环随时可能结束，
+   * 延迟写就来不及了 —— 用户最后一次点击加的那几点好感会丢。
+   */
+  try {
+    flushAffectionSave()
+  } catch (err) {
+    log(`退出前保存好感失败：${err instanceof Error ? err.message : String(err)}`)
+  }
+
   // 1) 先停掉所有定时器：它们会让事件循环保持活跃，拖住退出。
   stopAllTimers()
 
@@ -1292,6 +1306,8 @@ function grantAffection(gain, reason) {
    * 里 lastGain 还是上一次的值，界面上会"晚一格"。
    */
   lastAffectionGain = { amount: gained, at: Date.now(), reason: String(reason ?? '') }
+  lifetimeAffectionGained += gained
+  persistAffection()
   pushAffectionToRenderer()
   log(
     `好感 +${String(gained)}（${reason}）→ ${String(affection.hearts)} 心 ${String(affection.value)}/${String(stageThresholdFor(affection.hearts))}`
@@ -1600,6 +1616,11 @@ function handlePetClick() {
   let affectionGained = 0
   if (aff.gain > 0) {
     lastClickAffectionAtMs = now
+    /*
+     * 冷却锚点也要落盘（下面 grantAffection 内部会再存一次，但那是同一份数据，
+     * 延迟写会合并成一次）。存它的意义：避免"重启一次就刷新 5 分钟冷却"被用来刷好感。
+     */
+    persistAffection()
     affectionGained = grantAffection(aff.gain, lowMood ? '点击互动（低心情）' : '点击互动').gained
   }
 
@@ -1953,14 +1974,86 @@ let mood = initialMood()
 /**
  * 好感值状态（等级 + 阶段好感值）。
  *
- * ⚠️ 与心情不同的是：好感**目前不增长也不衰减**，恒为初始值
- * （等级 1、阶段 0）。增长途径待定（用户指定"先不接增长"）。
- * 数据结构和进位逻辑都已经做好并有单测，接增长时只需在合适时机调
- * `applyAffectionGain(affection, n)` 然后 `pushAffectionToRenderer()`。
+ * 增长途径见 `affection-gain.js`；**落盘**见 `affection-store.js`。
  *
- * 同样归主进程管 —— 将来若要落盘，渲染进程没有文件访问能力。
+ * 至于"为什么放主进程"：好感要持久化，而渲染进程没有文件访问能力。
+ * 心情则相反 —— 用户要求每次启动重置，所以它不落盘。
  */
 let affection = initialAffection()
+
+/**
+ * 累计获得过多少好感（只增不减）。
+ *
+ * 与 `affection` 的区别：那个是"当前进度"（晋心时会归零），
+ * 这个是"一共攒过多少"，用于「关于」窗口展示，也让用户能看出
+ * "养了这么久"这件事。
+ */
+let lifetimeAffectionGained = 0
+
+/** 好感存档的延迟写定时器（避免短时间内连写多次文件）。 */
+let affectionSaveTimer = null
+
+/** 好感存档的读写器（默认目录 = Electron 的 userData）。 */
+const affectionStore = createAffectionStore()
+
+/**
+ * 从磁盘载入好感存档。
+ *
+ * 在 `app.whenReady()` 里调用 —— `app.getPath('userData')` 在那之后才可靠。
+ *
+ * @returns {{ loaded: boolean, hearts: number }}
+ */
+function loadAffectionFromDisk() {
+  const loaded = affectionStore.load()
+  affection = loaded.state
+  lastClickAffectionAtMs = loaded.lastClickAt
+  lifetimeAffectionGained = loaded.lifetimeGained
+  if (loaded.loaded) {
+    log(
+      `已载入好感存档：${String(affection.hearts)} 心 ${String(affection.value)}/${String(stageThresholdFor(affection.hearts))}`
+      + `，累计 ${String(lifetimeAffectionGained)}`,
+    )
+  } else {
+    log('没有好感存档（首次启动，从 0 心开始）')
+  }
+  return { loaded: loaded.loaded, hearts: affection.hearts }
+}
+
+/**
+ * 把好感写进存档（默认延迟 800ms，合并短时间内的多次变更）。
+ *
+ * 为什么延迟：一次互动可能连续触发"加好感 + 更新冷却锚点"两次写，
+ * 而好感的变化频率本来就很低（每分钟最多几次），延迟写能把它们合并成一次。
+ * **退出时会强制 flush**（见 quitSelf），所以不会丢最后一次变更。
+ *
+ * @param {boolean} [immediate] 立刻写（退出、或需要确保落盘时）
+ */
+function persistAffection(immediate = false) {
+  if (affectionSaveTimer) {
+    clearTimeout(affectionSaveTimer)
+    affectionSaveTimer = null
+  }
+  const write = () => {
+    affectionSaveTimer = null
+    const ok = affectionStore.save(affection, {
+      lastClickAt: lastClickAffectionAtMs,
+      lifetimeGained: lifetimeAffectionGained,
+    })
+    if (!ok) log('警告：好感存档写入失败（数值仍在本进程内存中，重启会丢失）')
+  }
+  if (immediate) {
+    write()
+    return
+  }
+  affectionSaveTimer = setTimeout(write, 800)
+  if (typeof affectionSaveTimer.unref === 'function') affectionSaveTimer.unref()
+}
+
+/** 退出前强制落盘（同步完成）。 */
+function flushAffectionSave() {
+  persistAffection(true)
+}
+
 
 /** 心情结算/推送的周期。这一项只决定"多久算一次并推给界面"，不影响衰减本身。 */
 const MOOD_TICK_MS = 30_000
@@ -2602,6 +2695,13 @@ app.whenReady().then(() => {
       probeEsm()
       return
     }
+    /*
+     * 先载入好感存档，再开窗。
+     *
+     * 顺序很重要：`app.getPath('userData')` 在 ready 之后才可靠；
+     * 而如果放到开窗之后，面板会先画成 0 心再跳变 —— 用户会以为存档没生效。
+     */
+    loadAffectionFromDisk()
     createWindow()
     void pollLoop()
     /*
@@ -3216,6 +3316,9 @@ async function verifyLayoutAndResize(check, wait) {
 
   /* 右键菜单的 8 个入口（纯构建，不弹窗）。 */
   verifyContextMenu(check)
+
+  /* 好感存档：路径与安装目录分离 + 落盘往返。 */
+  await verifyAffectionPersistence(check, wait)
 }
 
 /**
@@ -5655,6 +5758,77 @@ async function verifyInfoWindows(check, wait) {
     await wait(300)
   }
   check('信息窗口能正常关闭', !infoWin || infoWin.isDestroyed(), `infoWin=${infoWin ? '仍在' : '已关'}`)
+}
+
+/**
+ * 自测：好感存档的**落盘与路径**。
+ *
+ * 为什么必须在这里测（而不是放在纯 Node 单测里）：
+ * 真正要保证的是"存档落在 `app.getPath('userData')`、与安装目录分离"，
+ * 而 `app` 只有在这个进程里才有。纯 Node 里 `require('electron')` 只是个路径字符串，
+ * 测出来的永远是兜底分支 —— 那种断言看着绿、其实没证明任何事。
+ *
+ * 这条用例同时钉住用户的核心诉求：
+ * 「注意更新时删除旧文件，保留用户数据」—— 存档只要不在安装目录里，
+ * 升级清文件就不可能碰到它。
+ *
+ * @param {(name: string, ok: boolean, detail?: string) => void} check
+ * @param {(ms: number) => Promise<void>} wait
+ */
+async function verifyAffectionPersistence(check, wait) {
+  /* 局部引入 path：本文件其它地方都是就地 `require('node:path')`，没有顶层 join。 */
+  const pathMod = require('node:path')
+  const storePath = affectionStore.path()
+  const userData = (() => {
+    try {
+      return app.getPath('userData')
+    } catch {
+      return ''
+    }
+  })()
+  const normalize = (p) => String(p).replace(/\\/g, '/').toLowerCase()
+
+  check(
+    '好感存档落在 Electron 的 userData 目录里',
+    Boolean(userData) && normalize(storePath).startsWith(normalize(userData)),
+    `存档 ${storePath}；userData ${String(userData)}`,
+  )
+  check(
+    '好感存档不在插件安装目录里（升级清文件不会碰到它）',
+    !normalize(storePath).startsWith(normalize(pathMod.join(__dirname, '..'))),
+    `存档 ${storePath}；插件目录 ${pathMod.join(__dirname, '..')}`,
+  )
+
+  // ---- 往返：改值 → 强制落盘 → 重新读 ----
+  const saved = { hearts: affection.hearts, value: affection.value }
+  const savedLifetime = lifetimeAffectionGained
+  const savedClickAt = lastClickAffectionAtMs
+  try {
+    affection = { hearts: 2, value: 37, updatedAt: Date.now() }
+    lifetimeAffectionGained = 4321
+    lastClickAffectionAtMs = Date.now() - 1000
+    persistAffection(true)
+
+    const reloaded = affectionStore.load()
+    check(
+      '好感能写入并原样读回（爱心/阶段/累计/冷却锚点）',
+      reloaded.loaded
+        && reloaded.state.hearts === 2
+        && reloaded.state.value === 37
+        && reloaded.lifetimeGained === 4321
+        && reloaded.lastClickAt === lastClickAffectionAtMs,
+      `读回 ${String(reloaded.state.hearts)} 心 ${String(reloaded.state.value)}，`
+      + `累计 ${String(reloaded.lifetimeGained)}，lastClickAt ${String(reloaded.lastClickAt)}`,
+    )
+  } finally {
+    // 还原真实数据并落盘，别把自测评测值留给用户
+    affection = { ...affection, hearts: saved.hearts, value: saved.value }
+    lifetimeAffectionGained = savedLifetime
+    lastClickAffectionAtMs = savedClickAt
+    persistAffection(true)
+    pushAffectionToRenderer()
+    await wait(100)
+  }
 }
 
 async function verifySitAction(check, wait) {

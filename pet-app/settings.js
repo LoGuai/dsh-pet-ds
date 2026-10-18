@@ -1,5 +1,11 @@
 /**
- * 桌宠本地设置：读写 $DSH_HOME/dsh-pet-ds/pet-config.json
+ * 桌宠本地设置：读写 `<userData>/pet-config.json`。
+ *
+ * ⚠️ 路径说明（这里曾经写错，别再写错）：
+ *   `<userData>` 是 Electron 的 `app.getPath('userData')`，
+ *   在 Windows 上实际是 `%APPDATA%\DSH Pet\`，**不是** `$DSH_HOME\dsh-pet-ds\`。
+ *   这一点很重要：它意味着**用户数据与安装目录完全分离** ——
+ *   升级/重装插件时清的是安装目录，绝不会碰到这里的配置与好感存档。
  *
  * 为什么设置放在桌宠侧而不是宿主侧：
  *  - 「尺寸」是通过右键菜单在桌宠窗口上改的，改完要立即生效、下次启动还要记得；
