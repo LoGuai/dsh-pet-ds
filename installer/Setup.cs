@@ -122,6 +122,26 @@ namespace DshPetSetup
         [STAThread]
         private static void Main(string[] args)
         {
+            /*
+             * 统一用 UTF-8 输出。
+             *
+             * .NET 的 `Console.OutputEncoding` 默认跟随**系统代码页**（中文版是 GBK/936）。
+             * 输出被重定向到管道/文件时（自动化测试、日志收集）就会写成 GBK 字节，
+             * 而消费者（Node、编辑器、CI）通常按 UTF-8 读 —— 结果是一片 `�`，
+             * 而且**信息不可恢复**（UTF-8 解码 GBK 字节会产生替换字符）。
+             *
+             * 这不会影响用户在控制台里直接看的场景：现代 Windows 终端能正确显示 UTF-8。
+             * 设置失败也不该让安装中断（老系统上偶有 IOException），所以吞掉异常。
+             */
+            try
+            {
+                Console.OutputEncoding = new UTF8Encoding(false);
+            }
+            catch
+            {
+                // 忽略：编码设置失败不影响安装流程
+            }
+
             if (args != null && args.Length >= 1 && args[0] == "--selftest")
             {
                 var target = args.Length >= 2
@@ -205,15 +225,19 @@ namespace DshPetSetup
                 }
                 log("[1/6] 准备安装目录");
                 log("      目标：" + pluginDir);
-                try
+                /*
+                 * 升级时先清掉旧版本文件（用户要求：不用手动卸载旧版本）。
+                 *
+                 * 这一步必须在**解压之前**：载荷是"叠加解压"的，
+                 * 不清就会留下新版本里已经不存在的旧文件（旧素材、旧脚本），
+                 * 那种残留最难查 —— 表现为"装的是新版、跑的还是旧代码"。
+                 *
+                 * 目录的创建与"能不能清"的判断都在 PrepareTargetDir 里。
+                 */
+                if (!PrepareTargetDir(pluginDir, log))
                 {
-                    Directory.CreateDirectory(pluginDir);
+                    return false;
                 }
-                catch (Exception ex)
-                {
-                    return Fail(log, "无法创建目录：" + ex.Message);
-                }
-                log("      ✓ 目录可用");
 
                 // ---- 解压载荷
                 status("解压插件包体…", 10);
@@ -448,6 +472,104 @@ namespace DshPetSetup
             log("");
             log("✗ " + message.Replace("\n", Environment.NewLine + "  "));
             return false;
+        }
+
+        /**
+         * 准备目标目录：**升级时先清掉旧版本文件**（用户要求：
+         * "安装新版本时先移除旧版本文件，不用手动提前卸载旧版本"）。
+         *
+         * ## 为什么不能直接"清空目录"
+         *
+         * 安装目录是**用户自己选**的。如果他把目录指到一个有别的文件的文件夹
+         * （比如 `D:\Downloads`），无脑清空就是灾难。
+         *
+         * 所以只在一个条件下才清：目录里存在 `package.json` 且它的 `name`
+         * 就是本插件 —— 那说明这是一个"以前的桌宠安装目录"，里面的文件都是我们的。
+         * 其它非空目录一律**拒绝安装**并让用户换一个，宁可多一步也不误删。
+         *
+         * ## 用户数据不受影响
+         *
+         * 桌宠的本地配置与日志在 `<DSH_HOME>\dsh-pet-ds\`，**不在**安装目录里，
+         * 所以清库不会丢好感/尺寸设置。
+         */
+        private static bool PrepareTargetDir(string pluginDir, Action<string> log)
+        {
+            if (!Directory.Exists(pluginDir))
+            {
+                try
+                {
+                    Directory.CreateDirectory(pluginDir);
+                }
+                catch (Exception ex)
+                {
+                    return Fail(log, "无法创建目录：" + ex.Message);
+                }
+                log("      ✓ 目录可用（新建）");
+                return true;
+            }
+
+            var entries = Directory.GetFileSystemEntries(pluginDir);
+            if (entries.Length == 0)
+            {
+                log("      ✓ 目录可用（空目录）");
+                return true;
+            }
+
+            // 判断"这是不是以前的桌宠安装目录"
+            var looksLikePetDir = false;
+            var oldVersion = "未知版本";
+            var pkgJson = Path.Combine(pluginDir, "package.json");
+            if (File.Exists(pkgJson))
+            {
+                try
+                {
+                    var text = File.ReadAllText(pkgJson, new UTF8Encoding(false));
+                    // 不引依赖，简单判两个字段即可
+                    looksLikePetDir = text.Contains("\"" + PluginName + "\"");
+                    var m = System.Text.RegularExpressions.Regex.Match(text, "\"version\"\\s*:\\s*\"([^\"]+)\"");
+                    if (m.Success) oldVersion = "v" + m.Groups[1].Value;
+                }
+                catch
+                {
+                    looksLikePetDir = false;
+                }
+            }
+
+            if (!looksLikePetDir)
+            {
+                log("      [refuse] 目标目录非空，且不是之前安装的桌宠目录：" + pluginDir);
+                return Fail(log,
+                    "目标目录非空，而且看起来不是之前安装的桌宠目录：\n" + pluginDir +
+                    "\n为避免误删你的文件，请换一个空目录（或先手动清空它）。");
+            }
+
+            /*
+             * 日志里带一个 ASCII 标签 `[upgrade]`：中文在不同控制台代码页下
+             * 可能变成乱码，而自动化测试/日志检索需要稳定的锚点。
+             */
+            log("      [upgrade] 检测到旧版本（" + oldVersion + "），先移除旧版本文件 …");
+            var removed = 0;
+            try
+            {
+                foreach (var dir in Directory.GetDirectories(pluginDir))
+                {
+                    Directory.Delete(dir, true);
+                    removed++;
+                }
+                foreach (var file in Directory.GetFiles(pluginDir))
+                {
+                    File.Delete(file);
+                    removed++;
+                }
+            }
+            catch (Exception ex)
+            {
+                return Fail(log,
+                    "清理旧版本文件失败：" + ex.Message +
+                    "\n请先关掉正在运行的桌宠，或手动删除这个目录后重试：\n" + pluginDir);
+            }
+            log("      ✓ 已清理 " + removed + " 项旧文件（用户配置与日志不在这个目录，未受影响）");
+            return true;
         }
     }
 

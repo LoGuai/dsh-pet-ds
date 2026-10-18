@@ -49,6 +49,31 @@ $profileJson = @'
 # 联接 dsh-runtimes，让脚本找得到 node 与 pnpm
 cmd /c mklink /J "$root\dsh-runtimes" "$env:USERPROFILE\.dsh\dsh-runtimes" | Out-Null
 
+# ---------------------------------------------------------------- 预置"旧版本"
+#
+# 验证升级路径：安装器应当**先清掉旧版本文件**再装新版（用户要求
+# "不用手动提前卸载旧版本"）。
+#
+# 预置三样东西：
+#   1. node_modules\dsh-pet-ds\ —— 旧包目录（含 package.json 与一个"只在旧版存在"的标记文件）
+#   2. node_modules\.pnpm\dsh-pet-ds@old\ —— pnpm 存储里的旧副本
+#   3. <DSH_HOME>\dsh-pet-ds\pet-config.json —— **用户数据**，升级时必须保留
+$oldPkg = Join-Path $prof 'node_modules\dsh-pet-ds'
+New-Item -ItemType Directory -Path $oldPkg -Force | Out-Null
+[System.IO.File]::WriteAllText((Join-Path $oldPkg 'package.json'), '{"name":"dsh-pet-ds","version":"0.0.9"}', (New-Object System.Text.UTF8Encoding($false)))
+$oldMarker = Join-Path $oldPkg 'STALE-ONLY-IN-0.0.9.txt'
+[System.IO.File]::WriteAllText($oldMarker, 'stale', (New-Object System.Text.UTF8Encoding($false)))
+
+$oldPnpm = Join-Path $prof 'node_modules\.pnpm\dsh-pet-ds@old'
+New-Item -ItemType Directory -Path $oldPnpm -Force | Out-Null
+$oldPnpmMarker = Join-Path $oldPnpm 'STALE.txt'
+[System.IO.File]::WriteAllText($oldPnpmMarker, 'stale', (New-Object System.Text.UTF8Encoding($false)))
+
+$userDataDir = Join-Path $root 'dsh-pet-ds'
+New-Item -ItemType Directory -Path $userDataDir -Force | Out-Null
+$userConfig = Join-Path $userDataDir 'pet-config.json'
+[System.IO.File]::WriteAllText($userConfig, '{"petWidth":240,"marker":"keep-me"}', (New-Object System.Text.UTF8Encoding($false)))
+
 $tgz = (Get-ChildItem 'D:\dsh\pet\dist\dsh-pet-ds-*.tgz' | Select-Object -First 1).FullName
 
 Write-Output "沙箱  : $root"
@@ -109,6 +134,35 @@ Check '装好的插件里带着 install-electron.mjs' `
 # 5) -SkipElectron 必须真的被识别（否则参数被删掉后测试还会悄悄通过）
 Check '-SkipElectron 被识别并明确说了跳过' ($instOut -match 'SkipElectron') `
     "输出里没有 SkipElectron 字样"
+
+# 6) 升级：旧版本文件要被清掉，用户数据要留下
+#
+# 这两条是本次新增能力的核心断言：
+#   · 不清理 → 旧文件残留，可能出现"装了新版、跑的旧代码"；
+#   · 清理过头 → 把用户配置一起删了，好感/尺寸设置全丢。
+Check '升级时检测到了旧版本' ($instOut -match '\[upgrade\]') `
+    '安装输出里没有 [upgrade] 标签，说明升级检测没生效'
+Check '旧版本的残留文件已被清除' (-not (Test-Path $oldMarker)) `
+    "旧文件仍在：$oldMarker"
+Check 'pnpm 存储里的旧副本已被清除' (-not (Test-Path $oldPnpmMarker)) `
+    "旧副本仍在：$oldPnpmMarker"
+Check '旧包目录已换成新版本（不再是 0.0.9）' `
+    (Test-Path (Join-Path $oldPkg 'package.json')) `
+    "新包没有装到 $oldPkg"
+$newVersion = $null
+if (Test-Path (Join-Path $oldPkg 'package.json')) {
+    try { $newVersion = ([System.IO.File]::ReadAllText((Join-Path $oldPkg 'package.json'), [System.Text.Encoding]::UTF8) | ConvertFrom-Json).version } catch { }
+}
+Check '装好的版本不是旧的 0.0.9' ($newVersion -and $newVersion -ne '0.0.9') `
+    "读到的版本：$newVersion"
+Check '用户配置在升级后仍在（没被一起删掉）' (Test-Path $userConfig) `
+    "用户配置不见了：$userConfig"
+$configKept = $false
+if (Test-Path $userConfig) {
+    $configKept = ([System.IO.File]::ReadAllText($userConfig, [System.Text.Encoding]::UTF8)) -match 'keep-me'
+}
+Check '用户配置内容未被改动' $configKept `
+    '配置内容变了（升级不该动用户数据）'
 
 Write-Output ''
 if ($failed -eq 0) {

@@ -28,7 +28,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 /** 睡眠。 */
@@ -51,8 +51,30 @@ function runningSetupCount() {
 export async function runSetup({ setup, args, env = {}, workDir, timeoutMs = 600000 }) {
   const runner = join(workDir, 'run-setup.ps1')
   const lines = []
+  /*
+   * ⚠️ 先把控制台的**输出编码**设成 UTF-8。
+   *
+   * 安装器用 `Console.WriteLine` 输出中文（UTF-8 字节），而中文版 Windows 的
+   * PowerShell 默认按 GBK 解码子进程输出 —— 于是拿到的是一堆乱码，
+   * 测试里凡是"断言输出包含某个中文提示"的检查都会失效（看起来像功能没生效）。
+   * 实测踩过：断言"检测到旧版本"明明该命中，却是红的。
+   */
+  lines.push('[Console]::OutputEncoding = [System.Text.Encoding]::UTF8')
   for (const [k, v] of Object.entries(env)) lines.push(`$env:${k} = '${v}'`)
-  lines.push(`& '${setup}' ${args.map((a) => `'${a}'`).join(' ')}`)
+  /*
+   * 把子进程输出**重定向到文件**，而不是让 PowerShell 通过管道交回来。
+   *
+   * 为什么：安装器用 UTF-8 输出中文，而中文版 Windows 的 PowerShell 在
+   * 管道/重定向下会用 GBK 去解码子进程的字节 —— 于是拿到的是一堆 `�`，
+   * 信息已经丢了（utf8 解码 GBK 字节会产生替换字符，事后无法还原）。
+   * 先把 `[Console]::OutputEncoding` 设成 UTF-8（上面那行）让 PowerShell 正确解码，
+   * 再用 `Out-File -Encoding utf8` 落成 UTF-8 文件，Node 直接按 utf8 读。
+   *
+   * 实测：不落文件时，`/检测到旧版本/` 这类中文断言永远是红的，
+   * 看起来像"功能没生效"，其实功能是对的、只是文本读坏了。
+   */
+  const outFile = join(workDir, 'setup-output.log')
+  lines.push(`& '${setup}' ${args.map((a) => `'${a}'`).join(' ')} 2>&1 | Out-File -FilePath '${outFile}' -Encoding utf8`)
   writeFileSync(runner, lines.join('\r\n'), 'utf8')
 
   let output = ''
@@ -66,14 +88,13 @@ export async function runSetup({ setup, args, env = {}, workDir, timeoutMs = 600
    * 所以我们本来就不指望它的返回值，只借它把进程拉起来。
    */
   try {
-    output = execFileSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', runner], {
+    execFileSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', runner], {
       encoding: 'utf8',
       maxBuffer: 32 * 1024 * 1024,
       timeout: 120000,
     })
   } catch (err) {
     // 超时或非零都无所谓 —— 下面靠轮询进程判断真正的结束
-    output = String(err?.stdout ?? '') + String(err?.stderr ?? '')
   }
 
   /* 等 setup 进程真的消失。 */
@@ -83,7 +104,16 @@ export async function runSetup({ setup, args, env = {}, workDir, timeoutMs = 600
     await sleep(1500)
     waited += 1500
   }
-  await sleep(500) // 给它最后一点时间落盘
+  await sleep(800) // 给它最后一点时间落盘
+
+  /* 从文件里读真正的输出（UTF-8，去掉 BOM）。 */
+  try {
+    if (existsSync(outFile)) {
+      output = readFileSync(outFile, 'utf8').replace(/^\uFEFF/, '')
+    }
+  } catch {
+    // 读不到就算了，断言会给出"输出为空"的线索
+  }
 
   return { output, waitedMs: Date.now() - started }
 }

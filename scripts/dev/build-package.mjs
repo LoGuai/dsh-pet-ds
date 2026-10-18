@@ -77,6 +77,18 @@ function findPnpm() {
 
 // ---------------------------------------------------------------- 打包
 console.log('生成安装包…')
+/*
+ * ⚠️ 这一行会**清空整个 `dist/`**，包括 `build-installer.mjs` 产出的
+ * `setup.exe` / `setup-noelevate.exe`。
+ *
+ * 所以发布顺序必须是：
+ *   1. `node scripts/dev/build-package.mjs`   （tgz + 载荷 + 源码归档）
+ *   2. `node scripts/dev/build-installer.mjs` （把载荷嵌进 exe）
+ *
+ * 反过来跑（或先 build-installer 再 build-package）会得到一个"看起来构建成功、
+ * 但 dist 里没有 exe"的结果 —— 实测踩过：build-installer 打印了
+ * "已生成 145.93 MB"，紧接着跑 build-package 就把它们删了。
+ */
 rmSync(OUT_DIR, { recursive: true, force: true })
 mkdirSync(OUT_DIR, { recursive: true })
 

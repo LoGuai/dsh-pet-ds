@@ -67,6 +67,31 @@ function Write-Ok([string]$Text) { Write-Host "  [OK] $Text" -ForegroundColor Gr
 function Write-Warn2([string]$Text) { Write-Host "  [!] $Text" -ForegroundColor Yellow }
 function Write-Err([string]$Text) { Write-Host "  [X] $Text" -ForegroundColor Red }
 
+<#
+  删除一个"可能是指向别处的链接"的目录。
+
+  ⚠️ 为什么不能直接用 `Remove-Item -Recurse`：
+  浏览器/开发版会把 `node_modules\<插件名>` 做成 **Junction**，指到用户的工作区。
+  `Remove-Item -Recurse` 会**递归删掉目标里的真实文件** —— 那是灾难性的
+  （用户的工作区被清空）。本项目实际就是这种开发形态。
+
+  所以顺序是：
+    1. 先 `cmd /c rmdir`：对链接/联接它只删链接本身；对**非空的真目录**它会失败，
+       因此不会误删内容（这一步是"安全的试探"）；
+    2. 若还残留（说明是真目录），再走递归删除。
+
+  @returns {boolean} 是否已不存在
+#>
+function Remove-LinkOrDir([string]$Path) {
+    if (Test-Path -LiteralPath $Path) {
+        & cmd /c rmdir "$Path" 2>$null | Out-Null
+    }
+    if (Test-Path -LiteralPath $Path) {
+        Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    return -not (Test-Path -LiteralPath $Path)
+}
+
 Write-Host ''
 Write-Host '  ============================================'
 Write-Host '   DSH 桌宠插件 - 一键安装'
@@ -204,6 +229,62 @@ if ($WhatIf) {
     Write-Warn2 '检查完毕（-WhatIf，未做任何修改）。去掉 -WhatIf 即开始安装。'
     Write-Host ''
     exit 0
+}
+
+# ---- 4-0) 升级：先清掉旧版本的文件 ----
+#
+# 用户要求：「安装新版本时先移除旧版本文件，不用手动提前卸载旧版本」。
+#
+# 为什么不能只靠 pnpm 覆盖：pnpm 会把新包解到一个**按来源路径取名**的目录
+# （`node_modules\.pnpm\dsh-pet-ds@file+D++...`）。换一个 tgz 路径就是另一个目录，
+# 旧目录会留着；而 `node_modules\dsh-pet-ds` 这个入口若仍指向旧目录，
+# 就会出现"装了新包、跑的还是旧代码"这种最难查的问题。
+# 所以升级时**先明确移除**，再安装。
+#
+# 保留什么：`<DSH_HOME>\dsh-pet-ds\`（本地配置 pet-config.json、日志）
+# 属于**用户数据**，绝不删 —— 否则升一次级好感/尺寸设置全丢。
+Write-Step '- 检查是否已安装旧版本 ...'
+{
+    $pkgDir = Join-Path $profileDir "node_modules\$PluginName"
+    $pnpmRoot = Join-Path $profileDir 'node_modules\.pnpm'
+
+    $installedVersion = $null
+    $installedPkgJson = Join-Path $pkgDir 'package.json'
+    if (Test-Path -LiteralPath $installedPkgJson) {
+        try {
+            $installedVersion = (Get-Content -LiteralPath $installedPkgJson -Raw -Encoding UTF8 | ConvertFrom-Json).version
+        }
+        catch {
+            $installedVersion = $null
+        }
+    }
+
+    if (Test-Path -LiteralPath $pkgDir) {
+        $label = if ($installedVersion) { "v$installedVersion" } else { '未知版本' }
+        Write-Warn2 "[upgrade] 检测到已安装 $label，先移除旧版本文件 ..."
+
+        # 1) node_modules 里的入口（可能是 Junction/符号链接 —— 见 Remove-LinkOrDir 的说明）
+        if (-not (Remove-LinkOrDir $pkgDir)) {
+            Write-Warn2 "移除旧包目录失败，pnpm 可能复用旧文件：$pkgDir"
+        }
+
+        # 2) pnpm 存储里的副本。换过 tgz 路径时会有**多个**，全清。
+        if (Test-Path -LiteralPath $pnpmRoot) {
+            Get-ChildItem -LiteralPath $pnpmRoot -Directory -Filter "$PluginName@*" -ErrorAction SilentlyContinue |
+                ForEach-Object {
+                    if (Remove-LinkOrDir $_.FullName) {
+                        Write-Step "    清理 pnpm 副本：$($_.Name)"
+                    }
+                    else {
+                        Write-Warn2 "    清理失败（可忽略，pnpm 会另建新目录）：$($_.Name)"
+                    }
+                }
+        }
+        Write-Ok '旧版本文件已移除（用户配置与本地数据保留）'
+    }
+    else {
+        Write-Step '  未检测到已安装的旧版本（全新安装）'
+    }
 }
 
 # ---- 4a) 用 DSH 自带 pnpm 把包体装进 profile
