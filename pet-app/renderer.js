@@ -3743,13 +3743,27 @@ function renderAffection() {
   }
 }
 
-/** 显示/隐藏属性面板。 */
+/**
+ * 显示/隐藏属性面板。
+ *
+ * ⚠️ 显示时必须把**两块**都重绘一遍（心情 + 好感）。
+ *
+ * 这是一个真实缺陷的修复：原先只调了 `renderMood()`，忘了 `renderAffection()`。
+ * 而 `pet:affection` 的推送处理里有 `if (statsVisible) renderAffection()` ——
+ * 面板隐藏期间收到的好感变化**不会被画**。于是：
+ *   闲置几分钟（+1 / +5 在涨）→ 悬停展开面板 → 好感数字还是几十分钟前的旧值；
+ *   直到下一次推送（例如点击加了 2~8 点）才把它刷新 ——
+ *   用户看到的就是"一开始没变化，点了之后才反馈出来"。
+ */
 function setStatsVisible(visible) {
   if (visible === statsVisible) return
   statsVisible = visible
   if (!statsPanel) return
   statsPanel.hidden = !visible
-  if (visible) renderMood()
+  if (visible) {
+    renderMood()
+    renderAffection()
+  }
 }
 
 /**

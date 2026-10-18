@@ -5362,6 +5362,49 @@ async function verifyAffectionAndFeedback(check, wait) {
     )
   }
 
+  // ---- 4b) 面板重新展开时，好感显示必须是最新值 ----
+  /*
+   * 这条来自用户的真实反馈：「好感值一开始没变化，点击之后才反馈出来」。
+   *
+   * 根因：`setStatsVisible(true)` 只重绘了心情、**漏了好感**。
+   * 而 `pet:affection` 的处理里有 `if (statsVisible) renderAffection()` ——
+   * 面板隐藏期间攒的好感不会被画；要等下一次推送（例如点击）才刷新。
+   *
+   * 断言方式：隐藏面板 → 加好感（推送被跳过）→ 展开面板 → 读 DOM 文本。
+   *
+   * ⚠️ 必须放在上面"5 分钟冷却"用例**之后**：这里会把好感归零、冷却锚点清掉，
+   * 放在前面会让冷却用例失去前提（实测就是这么红的）。
+   */
+  {
+    await js('window.__petTestForceStats(false)')
+    await wait(200)
+    affection = initialAffection()
+    pushAffectionToRenderer()
+    await wait(150)
+
+    // 面板隐藏时加 7 点：推送会到，但按设计不该重绘
+    grantAffection(7, '面板可见性测试')
+    await wait(250)
+
+    await js('window.__petTestForceStats(true)')
+    await wait(250)
+    const shown = await js('window.__petTestState()')
+    const affNow = shown && shown.affection ? shown.affection : null
+    check(
+      '面板展开时好感显示是最新值（隐藏期间的变化不会丢）',
+      Boolean(affNow)
+        && affNow.value === affection.value
+        && affNow.valueText === `${String(affection.value)}/${String(stageThresholdFor(affection.hearts))}`,
+      affNow
+        ? `面板 ${String(affNow.valueText)}，主进程 ${String(affection.value)}/${String(stageThresholdFor(affection.hearts))}`
+        : '拿不到面板状态',
+    )
+    await js('window.__petTestForceStats(false)')
+    await wait(150)
+    // 后面的低心情用例要能重新拿到点击好感，所以把冷却锚点清掉
+    lastClickAffectionAtMs = null
+  }
+
   // ---- 5) 低心情点击：心情 +50、好感含 +10 奖励、说信赖语音 ----
   {
     mood = { value: 30, updatedAt: Date.now() }
