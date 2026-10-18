@@ -36,7 +36,7 @@
     "perFrame": [
       {
         "src": "1.png",
-        "out": "frame_01.png",
+        "out": "frame_01.webp",
         "srcBounds": [
           202,
           6,
@@ -55,7 +55,7 @@
       },
       {
         "src": "2.png",
-        "out": "frame_02.png",
+        "out": "frame_02.webp",
         "srcBounds": [
           203,
           6,
@@ -74,7 +74,7 @@
       },
       {
         "src": "3.png",
-        "out": "frame_03.png",
+        "out": "frame_03.webp",
         "srcBounds": [
           200,
           6,
@@ -93,7 +93,7 @@
       },
       {
         "src": "4.png",
-        "out": "frame_04.png",
+        "out": "frame_04.webp",
         "srcBounds": [
           203,
           7,
@@ -112,7 +112,7 @@
       },
       {
         "src": "5.png",
-        "out": "frame_05.png",
+        "out": "frame_05.webp",
         "srcBounds": [
           203,
           6,
@@ -131,7 +131,7 @@
       },
       {
         "src": "6.png",
-        "out": "frame_06.png",
+        "out": "frame_06.webp",
         "srcBounds": [
           203,
           6,
@@ -150,7 +150,7 @@
       },
       {
         "src": "7.png",
-        "out": "frame_07.png",
+        "out": "frame_07.webp",
         "srcBounds": [
           202,
           6,
@@ -169,7 +169,7 @@
       },
       {
         "src": "8.png",
-        "out": "frame_08.png",
+        "out": "frame_08.webp",
         "srcBounds": [
           205,
           5,
@@ -188,7 +188,7 @@
       },
       {
         "src": "9.png",
-        "out": "frame_09.png",
+        "out": "frame_09.webp",
         "srcBounds": [
           202,
           6,
@@ -207,7 +207,7 @@
       },
       {
         "src": "10.png",
-        "out": "frame_10.png",
+        "out": "frame_10.webp",
         "srcBounds": [
           199,
           8,
@@ -226,7 +226,7 @@
       },
       {
         "src": "11.png",
-        "out": "frame_11.png",
+        "out": "frame_11.webp",
         "srcBounds": [
           204,
           5,
@@ -245,7 +245,7 @@
       },
       {
         "src": "12.png",
-        "out": "frame_12.png",
+        "out": "frame_12.webp",
         "srcBounds": [
           202,
           5,
@@ -264,7 +264,7 @@
       },
       {
         "src": "13.png",
-        "out": "frame_13.png",
+        "out": "frame_13.webp",
         "srcBounds": [
           199,
           8,
@@ -283,7 +283,7 @@
       },
       {
         "src": "14.png",
-        "out": "frame_14.png",
+        "out": "frame_14.webp",
         "srcBounds": [
           200,
           9,
@@ -302,7 +302,7 @@
       },
       {
         "src": "15.png",
-        "out": "frame_15.png",
+        "out": "frame_15.webp",
         "srcBounds": [
           204,
           5,
@@ -321,7 +321,7 @@
       },
       {
         "src": "16.png",
-        "out": "frame_16.png",
+        "out": "frame_16.webp",
         "srcBounds": [
           201,
           6,
@@ -340,7 +340,7 @@
       },
       {
         "src": "17.png",
-        "out": "frame_17.png",
+        "out": "frame_17.webp",
         "srcBounds": [
           205,
           11,

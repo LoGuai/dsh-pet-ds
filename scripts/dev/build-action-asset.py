@@ -26,6 +26,25 @@ ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 STAND_DIR = os.path.join(ROOT, "assets", "animations", "stand")
 
 ALPHA_THRESHOLD = 8
+
+# ---------------------------------------------------------------- 输出格式
+#
+# 成品帧输出成 **WebP（有损 q92，alpha 无损）**，不再用 PNG。
+#
+# 实测（864×1157 RGBA，131 帧）：PNG 共 143 MB → WebP q92 约 30 MB。
+# 按桌宠的实际显示尺寸（角色宽 180~400 px，素材 864 宽）目视无差；
+# alpha 完全无损，所以轮廓/阴影边缘不会出现调色板那种硬边。
+# 详见 scripts/dev/compress-assets.py 的对比表。
+#
+# ⚠️ 换格式时这三处必须同步：本文件的输出、渲染进程的 FRAME_EXT、
+# 以及测试里的文件头校验。漏一处就是"桌宠整个不显示"。
+FRAME_EXT = "webp"
+OUTPUT_WEBP_QUALITY = 92
+
+
+def _is_frame_file(name):
+    """是不是一帧成品（PNG 或 WebP 都认，便于新旧素材共存时迁移）。"""
+    return name.startswith("frame_") and (name.endswith(".png") or name.endswith(".webp"))
 # 脚底对齐容差。浮点缩放会带来 1~2px 的抗锯齿边缘差异，
 # 这属于正常误差而非错误 —— 真正的错误（算错基准线）会偏几十像素。
 EPS = 2
@@ -213,7 +232,7 @@ def standing_foot_output():
 
     众数正好落在站立最常处的位置，衔接时不会跳。
     """
-    files = sorted(f for f in os.listdir(STAND_DIR) if f.startswith("frame_") and f.endswith(".png"))
+    files = sorted(f for f in os.listdir(STAND_DIR) if f.startswith("frame_") and _is_frame_file(f))
     if not files:
         raise SystemExit(f"站立素材目录里没有帧：{STAND_DIR}")
     feet = []
@@ -283,7 +302,7 @@ def output_head_width(action_id):
     d = os.path.join(ROOT, "assets", "animations", action_id)
     if not os.path.isdir(d):
         raise SystemExit(f"match_head_to 指向的动作还没处理过：{d}")
-    files = sorted(f for f in os.listdir(d) if f.startswith("frame_") and f.endswith(".png"))
+    files = sorted(f for f in os.listdir(d) if f.startswith("frame_") and _is_frame_file(f))
     if not files:
         raise SystemExit(f"{action_id} 没有任何帧，无法作为头宽基准")
     return max(head_width_of(Image.open(os.path.join(d, f))) for f in files)
@@ -299,7 +318,7 @@ def output_frame_heights(action_id):
     d = os.path.join(ROOT, "assets", "animations", action_id)
     if not os.path.isdir(d):
         raise SystemExit(f"height_ramp 引用的动作还没处理过：{d}")
-    files = sorted(f for f in os.listdir(d) if f.startswith("frame_") and f.endswith(".png"))
+    files = sorted(f for f in os.listdir(d) if f.startswith("frame_") and _is_frame_file(f))
     if not files:
         raise SystemExit(f"{action_id} 没有任何帧，无法作为高度基准")
     heights = []
@@ -655,8 +674,8 @@ def build_one(action_id):
         canvas.alpha_composite(content, (px, py))
 
         ob = content_bounds(canvas)
-        out_name = f"frame_{i + 1:02d}.png"
-        canvas.save(os.path.join(out_dir, out_name))
+        out_name = f"frame_{i + 1:02d}.webp"
+        canvas.save(os.path.join(out_dir, out_name), "WEBP", quality=OUTPUT_WEBP_QUALITY, alpha_quality=100, method=6)
         report.append(
             {
                 "src": name,

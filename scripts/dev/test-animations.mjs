@@ -4,7 +4,7 @@
  * ## 为什么需要它
  *
  * 动画素材经常被替换（美术迭代）。而 `manifest.json` 里的 `frameCount`
- * 是**手写/脚本生成的声明值**，与实际的 `frame_NN.png` 数量是两份数据 ——
+ * 是**手写/脚本生成的声明值**，与实际的 `frame_NN.<ext>` 数量是两份数据 ——
  * 它们不一致时不会报错，只会**静默少播几帧或多出空帧**：
  *
  *   · `frameCount` 大于实际帧数 → 播放时取不到图，出现空帧或停在旧帧；
@@ -16,7 +16,7 @@
  * ## 检查项
  *
  * 1. 每个动作目录都有 `manifest.json`
- * 2. `frameCount` = 实际 `frame_NN.png` 数量，且文件名从 01 连续到 frameCount
+ * 2. `frameCount` = 实际 `frame_NN.<ext>` 数量，且文件名从 01 连续到 frameCount
  * 3. `drawOffsetY` 长度 = `frameCount`
  * 4. `loopRange`（若有）的 from/to 落在 1..frameCount 内且 from ≤ to
  * 5. `stand` 存在（其它动作的对齐基准是它）
@@ -54,12 +54,29 @@ const actions = existsSync(ANIM_ROOT)
       .sort()
   : []
 
-/** 某个动作的帧文件（按名字里的数字升序）。 */
+/**
+ * 某个动作的帧文件（按名字里的数字升序）。
+ *
+ * 扩展名同时接受 `.png` 与 `.webp`：素材现在是 WebP（体积只有 PNG 的 ~20%，
+ * 见 `scripts/dev/compress-assets.py`），但保留 PNG 兼容性，
+ * 免得"某天又转回 PNG"时这条测试先红。
+ */
 function frameFiles(action) {
   const dir = join(ANIM_ROOT, action)
   return readdirSync(dir)
-    .filter((f) => /^frame_\d+\.png$/.test(f))
+    .filter((f) => /^frame_\d+\.(png|webp)$/i.test(f))
     .sort((a, b) => Number(/\d+/.exec(a)[0]) - Number(/\d+/.exec(b)[0]))
+}
+
+/**
+ * 某个动作帧文件的扩展名。
+ *
+ * 必须**整组一致**：混用会让"按序号取帧"的路径拼法出错
+ * （渲染进程只用一个固定扩展名）。
+ */
+function frameExtOf(action) {
+  const exts = new Set(frameFiles(action).map((f) => (/\.([a-z0-9]+)$/i.exec(f) ?? [])[1]?.toLowerCase()))
+  return exts.size === 1 ? [...exts][0] : null
 }
 
 test('存在动作目录', () => {
@@ -79,21 +96,23 @@ for (const action of actions) {
     const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
     const files = frameFiles(action)
 
-    assert.ok(files.length > 0, `${action} 没有任何 frame_NN.png`)
+    assert.ok(files.length > 0, `${action} 没有任何 frame_NN.<ext>`)
 
     /* frameCount 必须等于磁盘上的帧数 —— 这条是本次检查的核心 */
     assert.equal(
       manifest.frameCount,
       files.length,
       `${action}：manifest.frameCount=${String(manifest.frameCount)}，` +
-        `但磁盘上有 ${String(files.length)} 个 frame_NN.png。\n` +
+        `但磁盘上有 ${String(files.length)} 个 frame_NN.<ext>。\n` +
         '      换素材后忘了重新生成 manifest 时就会出现这个。',
     )
 
     /* 文件名必须从 01 连续到 frameCount（不跳号，否则中间会出现空帧） */
+    const ext = frameExtOf(action)
+    assert.ok(ext, `${action}：帧文件扩展名混用（必须整组一致）`)
     const expected = Array.from(
       { length: files.length },
-      (_, i) => `frame_${String(i + 1).padStart(2, '0')}.png`,
+      (_, i) => `frame_${String(i + 1).padStart(2, '0')}.${ext}`,
     )
     assert.deepEqual(files, expected, `${action}：帧文件名不连续`)
 
@@ -149,7 +168,7 @@ test('拖拽动画（hang）声明了静态帧池 —— 用户要求"随机播�
    *   在触发拖拽时随机播放其中一个动作，其他机制不变」）。
    *
    * 所以契约变成：`staticFrames` 必须存在、非空、帧号合法。
-   * 帧号是 **1 基**（与 frame_NN.png 对应），便于对着帧图配置。
+   * 帧号是 **1 基**（与 frame_NN.<ext> 对应），便于对着帧图配置。
    *
    * ⚠️ 同时仍要求 `loop: false` —— 静态帧本来就不会推进，但万一将来
    * 有人把 staticFrames 删掉、想退回多帧动画，`loop: false` 能保证

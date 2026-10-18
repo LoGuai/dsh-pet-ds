@@ -29,7 +29,7 @@
     "perFrame": [
       {
         "src": "1.png",
-        "out": "frame_01.png",
+        "out": "frame_01.webp",
         "srcBounds": [
           233,
           40,
@@ -48,7 +48,7 @@
       },
       {
         "src": "2.png",
-        "out": "frame_02.png",
+        "out": "frame_02.webp",
         "srcBounds": [
           232,
           40,
@@ -67,7 +67,7 @@
       },
       {
         "src": "3.png",
-        "out": "frame_03.png",
+        "out": "frame_03.webp",
         "srcBounds": [
           220,
           49,
@@ -86,7 +86,7 @@
       },
       {
         "src": "4.png",
-        "out": "frame_04.png",
+        "out": "frame_04.webp",
         "srcBounds": [
           231,
           39,
@@ -105,7 +105,7 @@
       },
       {
         "src": "5.png",
-        "out": "frame_05.png",
+        "out": "frame_05.webp",
         "srcBounds": [
           231,
           39,
@@ -124,7 +124,7 @@
       },
       {
         "src": "6.png",
-        "out": "frame_06.png",
+        "out": "frame_06.webp",
         "srcBounds": [
           234,
           40,
@@ -143,7 +143,7 @@
       },
       {
         "src": "7.png",
-        "out": "frame_07.png",
+        "out": "frame_07.webp",
         "srcBounds": [
           229,
           38,
@@ -162,7 +162,7 @@
       },
       {
         "src": "8.png",
-        "out": "frame_08.png",
+        "out": "frame_08.webp",
         "srcBounds": [
           232,
           40,
@@ -181,7 +181,7 @@
       },
       {
         "src": "9.png",
-        "out": "frame_09.png",
+        "out": "frame_09.webp",
         "srcBounds": [
           230,
           34,
@@ -200,7 +200,7 @@
       },
       {
         "src": "10.png",
-        "out": "frame_10.png",
+        "out": "frame_10.webp",
         "srcBounds": [
           231,
           39,

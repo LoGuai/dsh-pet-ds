@@ -52,7 +52,7 @@
     "perFrame": [
       {
         "src": "1.png",
-        "out": "frame_01.png",
+        "out": "frame_01.webp",
         "srcBounds": [
           230,
           29,
@@ -71,7 +71,7 @@
       },
       {
         "src": "2.png",
-        "out": "frame_02.png",
+        "out": "frame_02.webp",
         "srcBounds": [
           225,
           36,
@@ -90,7 +90,7 @@
       },
       {
         "src": "3.png",
-        "out": "frame_03.png",
+        "out": "frame_03.webp",
         "srcBounds": [
           220,
           50,
@@ -109,7 +109,7 @@
       },
       {
         "src": "4.png",
-        "out": "frame_04.png",
+        "out": "frame_04.webp",
         "srcBounds": [
           220,
           50,
@@ -128,7 +128,7 @@
       },
       {
         "src": "5.png",
-        "out": "frame_05.png",
+        "out": "frame_05.webp",
         "srcBounds": [
           226,
           30,
@@ -147,7 +147,7 @@
       },
       {
         "src": "6.png",
-        "out": "frame_06.png",
+        "out": "frame_06.webp",
         "srcBounds": [
           222,
           34,

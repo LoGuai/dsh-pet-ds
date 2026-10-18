@@ -1313,18 +1313,26 @@ namespace DshPetSetup
                 missingAnims.Length == 0 ? "共 " + animCount + " 个目录，关键目录齐全" : "缺：" + missingAnims);
             check("动画动作目录数不少于 10", animCount >= 10, "实际 " + animCount);
 
-            /* 二进制抽查：PNG 头必须是 0x89 'P' 'N' 'G' */
-            var png = Path.Combine(animRoot, "stand", "frame_01.png");
-            if (File.Exists(png))
+            /*
+             * 二进制抽查：帧文件必须是**完整的 WebP**（RIFF....WEBP）。
+             *
+             * 素材已从 PNG 换成 WebP（体积只有 ~20%，alpha 无损，见
+             * scripts/dev/compress-assets.py）。这条检查的作用是抓
+             * "解压把二进制弄坏"——换格式不该把检查丢掉。
+             */
+            var frame = Path.Combine(animRoot, "stand", "frame_01.webp");
+            if (File.Exists(frame))
             {
-                var head = File.ReadAllBytes(png);
-                var okPng = head.Length > 8 && head[0] == 0x89 && head[1] == 0x50 && head[2] == 0x4E && head[3] == 0x47;
-                check("PNG 文件头正确（二进制未被损坏）", okPng,
-                    okPng ? head.Length + " 字节" : "头部不是 PNG 签名");
+                var head = File.ReadAllBytes(frame);
+                var okWebp = head.Length > 12
+                    && head[0] == 0x52 && head[1] == 0x49 && head[2] == 0x46 && head[3] == 0x46   /* RIFF */
+                    && head[8] == 0x57 && head[9] == 0x45 && head[10] == 0x42 && head[11] == 0x50; /* WEBP */
+                check("WebP 文件头正确（二进制未被损坏）", okWebp,
+                    okWebp ? head.Length + " 字节" : "头部不是 WebP 签名");
             }
             else
             {
-                check("PNG 文件头正确（二进制未被损坏）", false, "找不到 stand/frame_01.png");
+                check("WebP 文件头正确（二进制未被损坏）", false, "找不到 stand/frame_01.webp");
             }
 
             emit("");

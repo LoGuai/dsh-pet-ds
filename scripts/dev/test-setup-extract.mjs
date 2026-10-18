@@ -199,14 +199,23 @@ if (!existsSync(target)) {
   )
   check('动画动作目录数不少于 10', animCount >= 10, `实际 ${String(animCount)}`)
 
-  /* 二进制抽查：PNG 头必须是 0x89 'P' 'N' 'G' */
-  const png = join(animRoot, 'stand', 'frame_01.png')
-  if (existsSync(png)) {
-    const head = readFileSync(png)
-    const okPng = head.length > 8 && head[0] === 0x89 && head[1] === 0x50 && head[2] === 0x4e && head[3] === 0x47
-    check('PNG 文件头正确（二进制未被损坏）', okPng, okPng ? `${String(head.length)} 字节` : '头部不是 PNG 签名')
+  /*
+   * 二进制抽查：帧文件必须是**完整的 WebP**（RIFF....WEBP）。
+   *
+   * 素材已从 PNG 换成 WebP（体积只有原来的 ~20%，alpha 无损），
+   * 所以校验 WebP 头：偏移 0 处 "RIFF"，偏移 8 处 "WEBP"。
+   * 这条能抓到"解压把二进制弄坏"这类真问题 —— 换格式不该把检查丢掉。
+   */
+  const frame = join(animRoot, 'stand', 'frame_01.webp')
+  if (existsSync(frame)) {
+    const head = readFileSync(frame)
+    const okWebp =
+      head.length > 12
+      && head[0] === 0x52 && head[1] === 0x49 && head[2] === 0x46 && head[3] === 0x46
+      && head[8] === 0x57 && head[9] === 0x45 && head[10] === 0x42 && head[11] === 0x50
+    check('WebP 文件头正确（二进制未被损坏）', okWebp, okWebp ? `${String(head.length)} 字节` : '头部不是 WebP 签名')
   } else {
-    check('PNG 文件头正确（二进制未被损坏）', false, '找不到 stand/frame_01.png')
+    check('WebP 文件头正确（二进制未被损坏）', false, '找不到 stand/frame_01.webp')
   }
 }
 

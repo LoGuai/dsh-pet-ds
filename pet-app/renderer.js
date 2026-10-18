@@ -353,7 +353,7 @@ function hideBubble() {
 /*
  * 站立待机动画：12 帧、6fps、2 秒一轮，无限循环。
  *
- * 素材：assets/animations/stand/frame_01.png ~ frame_12.png（1254×1254 RGBA）
+ * 素材：assets/animations/stand/frame_01.webp ~ frame_12.webp（1254×1254 RGBA）
  * 清单：assets/animations/stand/manifest.json
  *
  * 三个设计决定：
@@ -377,7 +377,7 @@ const FALLBACK_FRAME_COUNT = 12
  * 已加载动画的注册表：id → 动画状态。
  *
  * 通用化的理由：现在有多个动作（站立 + 吃白饭/睡觉/玩mc），
- * 它们共用同一套素材约定（`assets/animations/<id>/frame_NN.png` + `manifest.json`），
+ * 它们共用同一套素材约定（`assets/animations/<id>/frame_NN.webp` + `manifest.json`），
  * 因此加载、播放、命中掩膜三件事都可以共用一份实现。
  *
  * 内存策略：**站立常驻**（要一直循环），一次性动作**按需加载、播完释放**，
@@ -457,10 +457,22 @@ function activeAnimation() {
   return animations.get(activeAnimationId) ?? null
 }
 
+/**
+ * 帧图的扩展名。
+ *
+ * 用 **WebP（q92, alpha 无损）** 而不是 PNG：实测体积只有 PNG 的 ~20%
+ * （131 帧从 143 MB 降到约 30 MB），而在**实际显示尺寸**（180~400 px 宽，
+ * 素材 864 宽）下与原图目视无差 —— 详见 `scripts/dev/compress-assets.py` 的说明。
+ *
+ * ⚠️ 换扩展名时这个常量必须与素材、清单、构建脚本一起改，
+ * 否则表现是"桌宠整个不显示"（图片 404），很难一眼看出是格式问题。
+ */
+const FRAME_EXT = 'webp'
+
 /** 由动作 id 与帧序号算出图片路径。 */
 function framePathFor(id, index) {
   const n = String(index + 1).padStart(2, '0')
-  return `../assets/animations/${id}/frame_${n}.png`
+  return `../assets/animations/${id}/frame_${n}.${FRAME_EXT}`
 }
 
 /** 清单路径。 */
