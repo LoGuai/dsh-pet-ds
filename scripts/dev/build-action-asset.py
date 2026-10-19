@@ -443,6 +443,17 @@ def build_one(action_id):
     out_dir = os.path.join(ROOT, "assets", "animations", action_id)
     foot_out = standing_foot_output()
 
+    # 先清掉输出目录里**旧的成品帧**。
+    #
+    # 为什么必须清：帧数可能变少（实测：思考循环从 4 帧换成 3 帧，
+    # 结果旧的 frame_04 留了下来，`manifest.frameCount=3` 与磁盘上的 4 个文件
+    # 对不上，test-animations 直接红）。写新帧时只覆盖同名的，多出来的不会自己消失。
+    # manifest.json 不删 —— 它会被完整重写。
+    if os.path.isdir(out_dir):
+        for f in os.listdir(out_dir):
+            if f.startswith("frame_") and (f.endswith(".png") or f.endswith(".webp")):
+                os.remove(os.path.join(out_dir, f))
+
     names = sorted(
         (f for f in os.listdir(raw_dir) if f.endswith(".png") and f[:-4].isdigit()),
         key=lambda f: int(f[:-4]),

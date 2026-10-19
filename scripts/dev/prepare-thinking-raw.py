@@ -138,28 +138,48 @@ def bubble_mask(lum, existing_bg):
     return np.asarray(cm) > 128
 
 
+def is_transparent(img):
+    """这张图本身就已经抠好了吗（有真正的透明通道）？
+
+    素材有两代：
+      · 老版 thinking.zip：RGB 黑底（alpha 全 255）→ 需要抠；
+      · 新版（2026-10-20）：RGBA 透明底 → **原样使用**，只由构建脚本压成 WebP。
+    不能无条件抠黑底：对透明素材跑一遍键控会把暗部当背景吃掉。
+    """
+    if img.mode not in ("RGBA", "LA"):
+        return False
+    alpha = np.asarray(img.convert("RGBA"))[:, :, 3]
+    return float(np.mean(alpha <= 8)) > 0.05
+
+
 def process_loop(src, dst, preview_name=None):
-    img = Image.open(src).convert("RGB")
-    rgba, bg = key_black(img)
-    a = np.asarray(rgba).astype(np.uint8)
+    img = Image.open(src)
+    if is_transparent(img):
+        # 已经是透明素材：原样另存，不做任何像素级改动（气泡等内容一律保留）。
+        out = img.convert("RGBA")
+        out.save(dst)
+        print(f"    · {os.path.basename(src)} 已是透明素材，原样沿用")
+    else:
+        rgba, bg = key_black(img.convert("RGB"))
+        a = np.asarray(rgba).astype(np.uint8)
 
-    if REMOVE_BUBBLE:
-        rgb = np.asarray(img.convert("RGB")).astype(np.int16)
-        lum = luminance(rgb)
-        sat = rgb.max(axis=2) - rgb.min(axis=2)
+        if REMOVE_BUBBLE:
+            rgb = np.asarray(img.convert("RGB")).astype(np.int16)
+            lum = luminance(rgb)
+            sat = rgb.max(axis=2) - rgb.min(axis=2)
 
-        # 1) 气泡本体（白块 + 文字）
-        bub = bubble_mask(lum, bg)
-        a[bub, 3] = 0
+            # 1) 气泡本体（白块 + 文字）
+            bub = bubble_mask(lum, bg)
+            a[bub, 3] = 0
 
-        # 2) 气泡投影：顶部窗口里"低饱和 + 中低亮度"的像素一并清掉
-        win = np.zeros(lum.shape, dtype=bool)
-        win[: min(lum.shape[0], BUBBLE_MAX_Y), :] = True
-        shadow = win & (lum <= SHADOW_MAX_LUM) & (sat <= SHADOW_MAX_SAT)
-        a[shadow, 3] = 0
+            # 2) 气泡投影：顶部窗口里"低饱和 + 中低亮度"的像素一并清掉
+            win = np.zeros(lum.shape, dtype=bool)
+            win[: min(lum.shape[0], BUBBLE_MAX_Y), :] = True
+            shadow = win & (lum <= SHADOW_MAX_LUM) & (sat <= SHADOW_MAX_SAT)
+            a[shadow, 3] = 0
 
-    out = Image.fromarray(a, "RGBA")
-    out.save(dst)
+        out = Image.fromarray(a, "RGBA")
+        out.save(dst)
 
     if preview_name:
         small = out.resize((400, round(out.height * 400 / out.width)), Image.LANCZOS)

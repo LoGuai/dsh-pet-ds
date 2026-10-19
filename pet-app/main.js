@@ -4246,10 +4246,31 @@ async function verifyIdleTriggerRule(check, wait) {
   await wc.executeJavaScript('window.__petTestIdleTickNow()', true)
   await wait(300)
   const after2 = await readState()
+  /*
+   * ⚠️ 不能只看 `lastPlayedActionId` 有没有变。
+   *
+   * 随机抽到**坐下 / 睡觉**时走的是状态机（enterSit / enterSleep），
+   * 它们**不经过 `playAction`**，所以 `lastPlayedActionId` 不会更新 ——
+   * 于是"确实触发了"却被判成没触发。这是真出现过的偶发误判
+   * （同一份代码一轮过、一轮红，取决于随机抽中哪个）。
+   *
+   * 正确的判据是"现在有随机动作在演"：动作在播 / 进入坐姿 / 进入睡眠，任一成立即可。
+   */
+  const playingSomeAction = Boolean(after2)
+    && (
+      after2.lastPlayedActionId !== before1
+      || (after2.currentActionId !== null && after2.currentActionId !== undefined)
+      || after2.petState === 'sitting'
+      || after2.petState === 'sleeping'
+      || (after2.activeAnimationId && after2.activeAnimationId !== 'stand')
+    )
   check(
     '闲置到达 1 分钟且概率命中时触发动作',
-    after2.lastPlayedActionId !== before1 && after2.lastPlayedActionId !== null,
-    `lastPlayedActionId=${String(after2.lastPlayedActionId)}，动画=${String(after2.activeAnimationId)}`,
+    playingSomeAction,
+    `lastPlayedActionId=${String(after2 && after2.lastPlayedActionId)}，`
+      + `动作=${String(after2 && after2.currentActionId)}，`
+      + `petState=${String(after2 && after2.petState)}，`
+      + `动画=${String(after2 && after2.activeAnimationId)}`,
   )
   // 收尾：停下这个动作，避免影响后续断言。
   testPushState({ workStatus: 'thinking', workLabel: '思考中…', seq: 9101 })

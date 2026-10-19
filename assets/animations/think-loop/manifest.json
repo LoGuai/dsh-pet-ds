@@ -1,10 +1,9 @@
 {
-  "frameCount": 4,
+  "frameCount": 3,
   "fps": 6,
   "loop": true,
   "sourceCanvasHeight": 1157,
   "drawOffsetY": [
-    0,
     0,
     0,
     0
@@ -15,14 +14,14 @@
       "w": 864,
       "h": 1157
     },
-    "scale": 0.9467,
+    "scale": 0.9444,
     "footBaseOutput": 1155,
-    "headWidthOut": 477.1,
+    "headWidthOut": 475.0,
     "headMatch": {
       "ref": "stand",
       "refHeadWidth": 530,
-      "rawHeadWidth": 504,
-      "correction": 1.1108
+      "rawHeadWidth": 503,
+      "correction": 1.1157
     },
     "perFrameScale": null,
     "perFrame": [
@@ -30,38 +29,38 @@
         "src": "1.png",
         "out": "frame_01.webp",
         "srcBounds": [
-          245,
-          8,
-          987,
-          1225
+          244,
+          6,
+          988,
+          1226
         ],
         "placedAt": [
           81,
           3
         ],
-        "scale": 0.9467,
+        "scale": 0.9444,
         "outTop": 3,
         "outFoot": 1155,
-        "outW": 703,
+        "outW": 704,
         "outH": 1153
       },
       {
         "src": "2.png",
         "out": "frame_02.webp",
         "srcBounds": [
-          245,
-          8,
-          987,
+          244,
+          4,
+          988,
           1225
         ],
         "placedAt": [
           81,
-          3
+          2
         ],
-        "scale": 0.9467,
+        "scale": 0.9444,
         "outTop": 3,
         "outFoot": 1155,
-        "outW": 703,
+        "outW": 704,
         "outH": 1153
       },
       {
@@ -69,37 +68,18 @@
         "out": "frame_03.webp",
         "srcBounds": [
           263,
-          8,
+          7,
           970,
-          1226
+          1227
         ],
         "placedAt": [
-          97,
-          2
-        ],
-        "scale": 0.9467,
-        "outTop": 2,
-        "outFoot": 1155,
-        "outW": 670,
-        "outH": 1154
-      },
-      {
-        "src": "4.png",
-        "out": "frame_04.webp",
-        "srcBounds": [
-          245,
-          8,
-          987,
-          1225
-        ],
-        "placedAt": [
-          81,
+          98,
           3
         ],
-        "scale": 0.9467,
+        "scale": 0.9444,
         "outTop": 3,
         "outFoot": 1155,
-        "outW": 703,
+        "outW": 669,
         "outH": 1153
       }
     ]
