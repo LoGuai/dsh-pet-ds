@@ -15,7 +15,34 @@
 
 $ErrorActionPreference = 'Continue'
 
-$flat = 'D:\dsh\pet\dist\桌宠插件-一键安装'
+# ---------------------------------------------------------------- 自组交付目录
+#
+# 测试**自己去组**这个目录，不依赖 dist 里预先存在的构建产物。
+#
+# 为什么改：原先写死 `dist\桌宠插件-一键安装`，而 `build-package.mjs` 会清空
+# 整个 dist —— 于是"先构建再跑测试"时那个目录不复存在，这条测试就红了，
+# 看起来像 install.cmd 坏了，其实只是没组包。
+#
+# 现在按交付包的真实构成组到沙箱里：
+#   install.cmd / install-pet.ps1 / register-profile.mjs / dsh-pet-ds-<版本>.tgz
+# 这也更贴近"用户从 zip 解压出来得到什么"（zip 的端到端验证另见
+# scripts/dev/verify-release-zip.mjs）。
+$repo = 'D:\dsh\pet'
+$version = (Get-Content (Join-Path $repo 'package.json') -Raw -Encoding UTF8 | ConvertFrom-Json).version
+$tgz = Join-Path $repo "dist\dsh-pet-ds-$version.tgz"
+if (-not (Test-Path $tgz)) {
+    $candidates = Get-ChildItem (Join-Path $repo 'dist') -Filter 'dsh-pet-ds-*.tgz' -ErrorAction SilentlyContinue
+    if ($candidates) { $tgz = ($candidates | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName }
+}
+
+$flat = Join-Path $repo '.cache\click-flat'
+if (Test-Path $flat) { Remove-Item $flat -Recurse -Force -ErrorAction SilentlyContinue }
+New-Item -ItemType Directory -Path $flat -Force | Out-Null
+Copy-Item (Join-Path $repo 'install.cmd') (Join-Path $flat 'install.cmd') -Force
+Copy-Item (Join-Path $repo 'install-pet.ps1') (Join-Path $flat 'install-pet.ps1') -Force
+Copy-Item (Join-Path $repo 'scripts\register-profile.mjs') (Join-Path $flat 'register-profile.mjs') -Force
+if (Test-Path $tgz) { Copy-Item $tgz (Join-Path $flat (Split-Path $tgz -Leaf)) -Force }
+
 $root = 'D:\dsh\pet\.cache\click-test'
 $prof = Join-Path $root 'profiles\desktop'
 $realProfile = Join-Path $env:USERPROFILE '.dsh\profiles\desktop\package.json'
