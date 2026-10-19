@@ -782,6 +782,34 @@ function showFrame(index) {
   if (!img) return
   state.index = index
   frameEl.src = img.src
+  /*
+   * 帧高按**素材自身比例**设置，而不是一律用 petHeight。
+   *
+   * 绝大多数动作的画布都是 864x1157，与 petHeight 一致；但「深度思考·循环段」
+   * 为了保住头顶自带的气泡，画布加高到了 864x1210（见 build-action-asset.py 的
+   * canvas_height 说明）。若这里仍写死 petHeight，那张帧会被纵向压扁 ——
+   * 角色会变形，命中测试也会跟着错位。
+   *
+   * 多出来的高度向上溢出：`.character` 是 flex-end 对齐、且不裁切，
+   * 上面正好是气泡区（有 50+px 富余），所以气泡显示得下、脚底位置不变。
+   */
+  const natW = img.naturalWidth || 0
+  const natH = img.naturalHeight || 0
+  if (natW > 0 && natH > 0) {
+    /*
+     * 宽度取**帧元素当前已设定的宽度**，不直接读 `petWidth`：
+     * 那个变量在文件后段才初始化，而 `showFrame` 在启动预加载阶段就会被调用 ——
+     * 直接引用会踩 TDZ（实测报 "petWidth is not defined"，整个渲染进程挂掉）。
+     */
+    const widthNow = Number.parseFloat(frameEl.style.width) || frameEl.getBoundingClientRect().width || 0
+    if (widthNow > 0) {
+      const wanted = Math.round((widthNow * natH) / natW)
+      const current = Number.parseFloat(frameEl.style.height)
+      if (!Number.isFinite(current) || Math.abs(current - wanted) > 0.5) {
+        frameEl.style.height = `${String(wanted)}px`
+      }
+    }
+  }
   // translateY 为正表示向下；清单里的 offset 正值表示"人物上移"，所以要取负。
   const ratio = state.offsetRatios[index] ?? 0
   frameEl.style.transform = ratio === 0 ? '' : `translateY(${(-ratio * 100).toFixed(3)}%)`

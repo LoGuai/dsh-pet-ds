@@ -2,26 +2,26 @@
   "frameCount": 3,
   "fps": 6,
   "loop": true,
-  "sourceCanvasHeight": 1157,
+  "sourceCanvasHeight": 1210,
   "drawOffsetY": [
     0,
     0,
     0
   ],
-  "_note": "由 scripts/dev/build-action-asset.py think-loop 生成；与站立素材同一画布约定（水平居中 + 脚底基准 y=1155）。",
+  "_note": "由 scripts/dev/build-action-asset.py think-loop 生成；与站立素材同一画布约定（水平居中 + 脚底基准 y=1208）。",
   "_processing": {
     "canvas": {
       "w": 864,
-      "h": 1157
+      "h": 1210
     },
-    "scale": 0.9444,
-    "footBaseOutput": 1155,
-    "headWidthOut": 475.0,
+    "scale": 0.9707,
+    "footBaseOutput": 1208,
+    "headWidthOut": 530.0,
     "headMatch": {
       "ref": "stand",
       "refHeadWidth": 530,
-      "rawHeadWidth": 503,
-      "correction": 1.1157
+      "rawHeadWidth": 546,
+      "correction": 0.9707
     },
     "perFrameScale": null,
     "perFrame": [
@@ -35,14 +35,14 @@
           1226
         ],
         "placedAt": [
-          81,
-          3
+          71,
+          24
         ],
-        "scale": 0.9444,
-        "outTop": 3,
-        "outFoot": 1155,
-        "outW": 704,
-        "outH": 1153
+        "scale": 0.9707,
+        "outTop": 24,
+        "outFoot": 1208,
+        "outW": 723,
+        "outH": 1185
       },
       {
         "src": "2.png",
@@ -54,33 +54,33 @@
           1225
         ],
         "placedAt": [
-          81,
-          2
+          71,
+          23
         ],
-        "scale": 0.9444,
-        "outTop": 3,
-        "outFoot": 1155,
-        "outW": 704,
-        "outH": 1153
+        "scale": 0.9707,
+        "outTop": 24,
+        "outFoot": 1208,
+        "outW": 723,
+        "outH": 1185
       },
       {
         "src": "3.png",
         "out": "frame_03.webp",
         "srcBounds": [
-          263,
-          7,
-          970,
-          1227
+          245,
+          6,
+          988,
+          1226
         ],
         "placedAt": [
-          98,
-          3
+          71,
+          24
         ],
-        "scale": 0.9444,
-        "outTop": 3,
-        "outFoot": 1155,
-        "outW": 669,
-        "outH": 1153
+        "scale": 0.9707,
+        "outTop": 24,
+        "outFoot": 1208,
+        "outW": 722,
+        "outH": 1185
       }
     ]
   }

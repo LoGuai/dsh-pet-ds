@@ -314,15 +314,28 @@ test('所有动作的脚底基准一致（切换动作时角色不会上下跳�
     const p = join(ANIM_ROOT, action, 'manifest.json')
     if (!existsSync(p)) continue
     const m = JSON.parse(readFileSync(p, 'utf8'))
-    const f = m._processing ? m._processing.footBaseOutput : undefined
-    if (f !== undefined) feet[action] = f
+    const proc = m._processing ?? {}
+    const f = proc.footBaseOutput
+    if (f === undefined) continue
+    /*
+     * 比较的是**距画布底边的距离**，不是脚底的绝对 y。
+     *
+     * 为什么：绝大多数动作画布是 864x1157（脚底 1155，距底 2px），
+     * 但「深度思考·循环段」为了保住头顶自带的气泡把画布加高到了 1210
+     * （脚底 1208，同样距底 2px）。绝对 y 不同、但**脚底与画布底边的关系一致** ——
+     * 那才是"切换动作时角色不会上下跳"的判据。
+     * 写死绝对 y 会让这种"画布高度不同的合法情况"被误判成错。
+     */
+    const canvasH = (proc.canvas && proc.canvas.h) || m.sourceCanvasHeight
+    if (!Number.isFinite(canvasH)) continue
+    feet[action] = canvasH - f
   }
   const values = [...new Set(Object.values(feet))]
   assert.equal(
     values.length,
     1,
-    '各动作的脚底基准不一致（切换动作时角色会跳）：'
-      + Object.entries(feet).map(([a, f]) => `${a}=${String(f)}`).join('，'),
+    '各动作"脚底距画布底边"不一致（切换动作时角色会跳）：'
+      + Object.entries(feet).map(([a, d]) => `${a}=距底 ${String(d)}px`).join('，'),
   )
   /* 至少要有"绝大多数动作"记录了这个值，避免这条断言因为全空而恒真。 */
   assert.ok(

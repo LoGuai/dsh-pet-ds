@@ -233,11 +233,18 @@ ACTIONS = {
         # 循环段头顶有"深度求索中…"气泡 —— 它是**素材的一部分，要保留**
         # （用户明确："气泡就是素材本身应该有的"）。
         #
-        # ⚠️ 别为了气泡去"排除顶部再量尺寸"：试过 `bubble_ignore_top_ratio: 0.18`，
-        # 结果量尺落到了更宽的头发上（原始头宽从 544 变成 676），缩放被压到 0.784，
-        # 角色明显变小。留着气泡时 fit 上限并不吃紧（0.975），
-        # 头宽对齐算出来的 0.974 才是对的 —— 气泡只是站在头顶上方，不参与头宽与脚底。
+        # ⚠️ 这里有两个互相牵制的约束，解法是**加高画布**：
+        #   · 按站立大小画（用户要求"动作全程始终大小和正常站立一致"）时，
+        #     内容（角色 + 气泡）高约 1189px，超过 1157 的画布，气泡顶部会被切；
+        #   · 想不切气泡，就只能把角色缩到站立的 ~94%（看起来明显小一圈）。
         #
+        # 加高到 1210 后：角色按头宽对齐站立（缩放约 0.974），气泡完整保留；
+        # 多出来的透明区域都在顶部 —— 渲染进程按素材自身比例设置帧高，
+        # 这部分向上溢出到气泡区（那里有 50+px 富余）。
+        "canvas_height": 1210,
+        # 量尺寸时剔除顶部气泡（占内容高度约 9.5%，取 0.10）。
+        # 不剔的话"内容顶部"变成气泡顶，band 会落在气泡上，量出来的不是头宽。
+        "bubble_ignore_top_ratio": 0.10,
         # 声明式：渲染进程用 startLoop 无限循环这一段。
         "loop": True,
         "note": "深度思考（循环：思考中）",
@@ -441,7 +448,16 @@ def build_one(action_id):
         raise SystemExit(f"原始帧目录不存在：{raw_dir}")
 
     out_dir = os.path.join(ROOT, "assets", "animations", action_id)
-    foot_out = standing_foot_output()
+
+    # 画布高度可以**按动作**加高（默认 1157，与站立同高）。
+    #
+    # 为什么需要：深度思考的循环段在头顶上方有一个"深度求索中…"气泡（素材自带、必须保留）。
+    # 若画布仍是 1157，为了保证气泡不被裁，角色只能缩到站立的 ~90%，看起来很突兀；
+    # 而按站立大小画，气泡顶部会超出画布 ~34px 被切掉。
+    # 加高画布后两者都满足：**角色大小不变**，多出来的透明区域只放气泡。
+    # 渲染进程按素材自身比例设置帧高，多出来的高度会向上溢出到气泡区（那里有富余）。
+    canvas_h = int(cfg.get("canvas_height") or CANVAS_H)
+    foot_out = canvas_h - (CANVAS_H - standing_foot_output())
 
     # 先清掉输出目录里**旧的成品帧**。
     #
@@ -463,7 +479,7 @@ def build_one(action_id):
 
     print(f"\n=== {action_id}（{cfg['note']}）===")
     print(
-        f"  脚底基准（与站立一致）: y={foot_out}   画布 {CANVAS_W}x{CANVAS_H}   "
+        f"  脚底基准: y={foot_out}   画布 {CANVAS_W}x{canvas_h}   "
         f"帧率 {cfg['fps']} fps{'（默认）' if cfg['fps'] == DEFAULT_FPS else '（显式指定）'}"
     )
 
@@ -729,7 +745,7 @@ def build_one(action_id):
 
         # 垂直越界直接报错 —— 宁可失败也不要偷偷裁掉角色的头或脚。
         # 水平方向允许溢出（气泡），但**角色本体必须完整落在画布内**。
-        if py < 0 or py + content.height > CANVAS_H:
+        if py < 0 or py + content.height > canvas_h:
             raise SystemExit(
                 f"{name} 垂直方向越界：内容高 {content.height}，落点 y={py}。"
                 f"需要更小的 fs（当前 {fs}）。"
@@ -738,13 +754,13 @@ def build_one(action_id):
         body_px1 = px + int((body[2] - sb[0]) * fs)
         body_py0 = py + int((body[1] - sb[1]) * fs)
         body_py1 = py + int((body[3] - sb[1]) * fs)
-        if body_px0 < 0 or body_px1 >= CANVAS_W or body_py0 < 0 or body_py1 >= CANVAS_H:
+        if body_px0 < 0 or body_px1 >= CANVAS_W or body_py0 < 0 or body_py1 >= canvas_h:
             raise SystemExit(
                 f"{name} 的角色本体越出画布：x {body_px0}~{body_px1}，y {body_py0}~{body_py1}"
-                f"（画布 {CANVAS_W}x{CANVAS_H}）。需要更小的 fs（当前 {fs}）。"
+                f"（画布 {CANVAS_W}x{canvas_h}）。需要更小的 fs（当前 {fs}）。"
             )
 
-        canvas = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
+        canvas = Image.new("RGBA", (CANVAS_W, canvas_h), (0, 0, 0, 0))
         canvas.alpha_composite(content, (px, py))
 
         ob = content_bounds(canvas)
@@ -788,11 +804,11 @@ def build_one(action_id):
         "frameCount": len(report),
         "fps": cfg["fps"],
         "loop": cfg["loop"],
-        "sourceCanvasHeight": CANVAS_H,
+        "sourceCanvasHeight": canvas_h,
         "drawOffsetY": [0] * len(report),
         "_note": f"由 scripts/dev/build-action-asset.py {action_id} 生成；与站立素材同一画布约定（水平居中 + 脚底基准 y={foot_out}）。",
         "_processing": {
-            "canvas": {"w": CANVAS_W, "h": CANVAS_H},
+            "canvas": {"w": CANVAS_W, "h": canvas_h},
             "scale": scale,
             "footBaseOutput": foot_out,
             # 成品头宽（输出空间）。做"与站立同大小"的校验时读它 ——

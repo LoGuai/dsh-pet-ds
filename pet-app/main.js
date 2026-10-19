@@ -5632,6 +5632,13 @@ async function verifyAffectionAndFeedback(check, wait) {
      */
     await js('window.__petTestRefresh()')
     await wait(300)
+    /*
+     * 记下"站立时"的角色矩形：思考循环段的画布更高（864x1210，为了放头顶气泡），
+     * 帧会向上溢出 —— 但**脚底必须纹丝不动**，否则角色会像被抬起来。
+     */
+    const rectStand = await js(
+      '(() => { const r = document.getElementById("frame").getBoundingClientRect(); return { w: r.width, h: r.height, bottom: r.bottom } })()',
+    )
     testPushState({ workStatus: 'thinking', workLabel: '思考中…', seq: 9601 })
     await wait(500)
     const t1 = await js('window.__petTestThink.state()')
@@ -5661,6 +5668,25 @@ async function verifyAffectionAndFeedback(check, wait) {
       '进入段播完 → 自动循环 think-loop',
       Boolean(tLoop) && tLoop.phase === 'loop' && tLoop.activeAnimationId === 'think-loop',
       `phase=${String(tLoop && tLoop.phase)}，动画=${String(tLoop && tLoop.activeAnimationId)}`,
+    )
+
+    /*
+     * 循环段画布比其他动作高（864x1210，多出来的是头顶气泡所需的空间）。
+     * 帧高要按素材自身比例走（否则会被压扁），而脚底必须与站立一致。
+     */
+    const rectLoop = await js(
+      '(() => { const r = document.getElementById("frame").getBoundingClientRect(); return { w: r.width, h: r.height, bottom: r.bottom } })()',
+    )
+    check(
+      '思考循环段的帧按自身比例变高（不被压扁）',
+      Boolean(rectStand) && Boolean(rectLoop) && rectLoop.h > rectStand.h + 4,
+      `站立高 ${String(rectStand && rectStand.h)} → 循环高 ${String(rectLoop && rectLoop.h)}`
+        + `（宽度 ${String(rectLoop && rectLoop.w)}，期望高 ≈ 宽 × 1210/864）`,
+    )
+    check(
+      '思考循环段的脚底位置与站立一致（角色没被抬起）',
+      Boolean(rectStand) && Boolean(rectLoop) && Math.abs(rectLoop.bottom - rectStand.bottom) <= 1.5,
+      `站立底 ${String(rectStand && rectStand.bottom)} → 循环底 ${String(rectLoop && rectLoop.bottom)}`,
     )
 
     await js('window.__petTestClick()')
