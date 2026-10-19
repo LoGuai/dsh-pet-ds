@@ -108,6 +108,30 @@ test('原子写：写完不留下 .tmp 残余', () => {
   }
 })
 
+test('每次写入把上一份留成 .bak（存档是不可再生数据，要能手工找回）', () => {
+  const { dir, store, cleanup } = makeStore()
+  try {
+    store.save({ hearts: 1, value: 11 }, { lifetimeGained: 11 })
+    // 第一次写时还没有旧文件，不该凭空造 .bak
+    assert.ok(!existsSync(join(dir, `${FILE_NAME}.bak`)), '首次写入不该有 .bak')
+
+    store.save({ hearts: 2, value: 22 }, { lifetimeGained: 22 })
+    const bak = join(dir, `${FILE_NAME}.bak`)
+    assert.ok(existsSync(bak), '第二次写入应留下 .bak')
+
+    // .bak 里必须是**上一份**（值 11），不是当前值
+    const bakJson = JSON.parse(readFileSync(bak, 'utf8'))
+    assert.equal(bakJson.hearts, 1)
+    assert.equal(bakJson.value, 11)
+
+    // 当前文件是新的
+    const cur = JSON.parse(readFileSync(join(dir, FILE_NAME), 'utf8'))
+    assert.equal(cur.value, 22)
+  } finally {
+    cleanup()
+  }
+})
+
 // ---------------------------------------------------------------- 容错
 test('坏存档容错：不抛、不删原文件、按默认值继续', () => {
   const { dir, store, cleanup } = makeStore()

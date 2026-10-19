@@ -106,7 +106,12 @@ function createAffectionStore(options = {}) {
   }
 
   /**
-   * 写存档（原子替换）。
+   * 写存档（原子替换 + 保留上一份为 `.bak`）。
+   *
+   * 为什么要留 `.bak`：存档是**不可再生**的数据（用户养成的时间）。
+   * 万一某次写入发生了意料之外的损坏（磁盘满、断电、被外部程序改坏），
+   * 至少还能手工从 `affection.json.bak` 找回上一次的值。
+   * 代价只有一次文件复制，值得。
    *
    * @param {{ hearts: number, value: number, updatedAt?: number }} state
    * @param {{ lastClickAt?: number | null, lifetimeGained?: number }} [meta]
@@ -131,6 +136,14 @@ function createAffectionStore(options = {}) {
       const file = storePath()
       const tmp = `${file}.tmp`
       fs.writeFileSync(tmp, `${JSON.stringify(payload, null, 2)}\n`, 'utf8')
+      // 轮转：把现有存档复制成 .bak，再原子换上新的
+      if (fs.existsSync(file)) {
+        try {
+          fs.copyFileSync(file, `${file}.bak`)
+        } catch {
+          // .bak 失败不影响主存档写入
+        }
+      }
       fs.renameSync(tmp, file)
       return true
     } catch {
