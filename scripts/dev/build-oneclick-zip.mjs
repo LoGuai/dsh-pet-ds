@@ -48,26 +48,34 @@ rmSync(pkgDir, { recursive: true, force: true })
 mkdirSync(pkgDir, { recursive: true })
 
 /*
- * 从 CHANGELOG.md 抽出**本版本**那一段，写成独立的更新日志文件。
+ * 更新日志出两种范围、各三种格式：
+ *  · `V0.2.0-更新日志.*` —— 只有本版本（用户拿到包想确认"这版改了什么"）
+ *  · `全部更新日志.*`     —— 从最初版本到现在（想回看历史）
  *
- * 为什么要放进交付包：用户拿到 zip 后想确认"这版改了什么"，
- * 不该还要去仓库翻 CHANGELOG.md。而 CHANGELOG.md 本身会继续增长，
- * 抽出来的是**这一版的定稿**，不会随后续改动变形。
+ * 为什么放进交付包：不该让人为了看日志去翻仓库。而抽出来的是**定稿**，
+ * 不会随后续改动变形（`全部更新日志` 则反映构建当时的最新状态）。
+ *
+ * 三种格式各有用途：
+ *  · `.md`   —— 仓库同款；
+ *  · `.txt`  —— UTF-8 **带 BOM + CRLF**，记事本双击不乱码；
+ *  · `.docx` —— Python 生成（缺 Python 时跳过，不阻塞出包）。
  */
+const CHANGELOG_SRC = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8')
+const changelogLines = CHANGELOG_SRC.split(/\r?\n/)
+
+/* ---- 1) 单版本 ---- */
 const changelogPath = join(DIST, `${TAG}-更新日志.md`)
 {
-  const text = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8')
-  const lines = text.split(/\r?\n/)
   const re = new RegExp(`^##\\s*\\[${version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\]`)
-  const start = lines.findIndex((l) => re.test(l))
+  const start = changelogLines.findIndex((l) => re.test(l))
   if (start < 0) {
     console.log(`  ✗ CHANGELOG.md 里找不到 ## [${version}] 段落`)
     process.exit(1)
   }
-  let end = lines.findIndex((l, i) => i > start && /^##\s/.test(l))
-  if (end < 0) end = lines.length
+  let end = changelogLines.findIndex((l, i) => i > start && /^##\s/.test(l))
+  if (end < 0) end = changelogLines.length
 
-  const body = lines
+  const body = changelogLines
     .slice(start + 1, end)
     .join('\n')
     .replace(/\n+---\s*$/, '')
@@ -83,7 +91,7 @@ const changelogPath = join(DIST, `${TAG}-更新日志.md`)
     [
       `# ${TAG} 更新日志`,
       '',
-      `> 完整历史见插件目录里的 \`CHANGELOG.md\`。`,
+      `> 完整历史见同目录的 \`全部更新日志\`（md / txt / docx 各一份）。`,
       '',
       body,
       '',
@@ -91,34 +99,69 @@ const changelogPath = join(DIST, `${TAG}-更新日志.md`)
     'utf8',
   )
   console.log(`  ✓ ${TAG}-更新日志.md`)
+}
 
+/* ---- 2) 全部历史 ---- */
+const allPath = join(DIST, '全部更新日志.md')
+{
   /*
-   * 同一份内容再出两个"给人看"的格式：
-   *  · `.txt` —— 纯文本，UTF-8 **带 BOM + CRLF**，双击用记事本打开不乱码；
-   *  · `.docx` —— 交给 scripts/dev/export-changelog-docx.py 生成（需要 python-docx）。
+   * 只保留**版本段**，从第一个 `## [` 开始。
    *
-   * docx 那步在缺少 Python 时**跳过而不中断构建**：日志不该阻塞出包。
+   * 文件开头那段是「记录约定」（给维护者看的写法规则），不是更新日志内容；
+   * 把它塞进给用户看的文档只会让人以为在讲功能。抽掉它，换一句自解释的引言。
    */
-  const txtPath = join(DIST, `${TAG}-更新日志.txt`)
-  const mdText = readFileSync(changelogPath, 'utf8').replace(/\r?\n/g, '\r\n')
-  writeFileSync(txtPath, `\uFEFF${mdText}`, 'utf8')
-  console.log(`  ✓ ${TAG}-更新日志.txt`)
+  const firstVersion = changelogLines.findIndex((l) => /^##\s*\[/.test(l))
+  if (firstVersion < 0) {
+    console.log('  ✗ CHANGELOG.md 里没有任何版本段')
+    process.exit(1)
+  }
+  const body = changelogLines
+    .slice(firstVersion)
+    .join('\n')
+    .replace(/\n+---\s*$/, '')
+    .trim()
+    .replace(/^---\s*$/gm, '')
+  writeFileSync(
+    allPath,
+    [
+      '# 桌宠插件 · 全部更新日志',
+      '',
+      '> 按版本从新到旧汇总。每条一句话；展开的细节见各版本的 RELEASE-NOTES。',
+      '',
+      body,
+      '',
+    ].join('\n'),
+    'utf8',
+  )
+  console.log('  ✓ 全部更新日志.md')
+}
 
-  const docxPath = join(DIST, `${TAG}-更新日志.docx`)
-  const python = findPython()
-  if (python) {
-    try {
-      execFileSync(
-        python,
-        [join(ROOT, 'scripts', 'dev', 'export-changelog-docx.py'), changelogPath, docxPath],
-        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
-      )
-      console.log(`  ✓ ${TAG}-更新日志.docx`)
-    } catch (err) {
-      console.log(`  [!] docx 生成失败（跳过）：${String(err.stderr ?? err.message).split('\n')[0]}`)
-    }
-  } else {
-    console.log('  [!] 没找到 python，跳过 docx（md 与 txt 已生成）')
+/* ---- 3) 两种范围各出 txt 与 docx ---- */
+const python = findPython()
+const variants = [
+  { base: `${TAG}-更新日志`, md: changelogPath },
+  { base: '全部更新日志', md: allPath },
+]
+for (const v of variants) {
+  const txtPath = join(DIST, `${v.base}.txt`)
+  const mdText = readFileSync(v.md, 'utf8').replace(/\r?\n/g, '\r\n')
+  writeFileSync(txtPath, `\uFEFF${mdText}`, 'utf8')
+  console.log(`  ✓ ${v.base}.txt`)
+
+  const docxPath = join(DIST, `${v.base}.docx`)
+  if (!python) {
+    console.log(`  [!] 没找到 python，跳过 ${v.base}.docx`)
+    continue
+  }
+  try {
+    execFileSync(
+      python,
+      [join(ROOT, 'scripts', 'dev', 'export-changelog-docx.py'), v.md, docxPath],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+    )
+    console.log(`  ✓ ${v.base}.docx`)
+  } catch (err) {
+    console.log(`  [!] ${v.base}.docx 生成失败（跳过）：${String(err.stderr ?? err.message).split('\n')[0]}`)
   }
 }
 
@@ -146,10 +189,14 @@ const files = [
   [tgzPath, tgzName],
   [changelogPath, `${TAG}-更新日志.md`],
   [join(DIST, `${TAG}-更新日志.txt`), `${TAG}-更新日志.txt`],
+  [allPath, '全部更新日志.md'],
+  [join(DIST, '全部更新日志.txt'), '全部更新日志.txt'],
 ]
 /* docx 可能因为缺 Python 没生成 —— 有就放进去，没有不报错。 */
-const docxPath = join(DIST, `${TAG}-更新日志.docx`)
-if (existsSync(docxPath)) files.push([docxPath, `${TAG}-更新日志.docx`])
+for (const base of [`${TAG}-更新日志`, '全部更新日志']) {
+  const p = join(DIST, `${base}.docx`)
+  if (existsSync(p)) files.push([p, `${base}.docx`])
+}
 for (const [from, to] of files) {
   if (!existsSync(from)) {
     console.log(`  ✗ 缺少源文件：${from}`)

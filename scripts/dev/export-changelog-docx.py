@@ -53,15 +53,63 @@ def set_font(run, name=FONT_CJK, size=None, bold=None, color=None, mono=False):
     rfonts.set(qn("w:hAnsi"), target)
 
 
+def _tokenize_inline(text):
+    """把一行拆成 [(文字, 是否粗体, 是否代码)]。
+
+    为什么用状态机而不是正则 split：
+      · 正则 `\\*\\*[^*]+\\*\\*` 只能处理"同一行内成对"的粗体；
+        而本文件的段落是**手工折行**的，一个粗体常常跨行 ——
+        正则匹配不到，星号就漏成字面量（实测在 0.1.5 段里到处都是）；
+      · 粗体里还嵌行内代码（`**离线机器应改用 `setup.exe`**`），
+        单层 split 会把反引号一起当普通文字。
+    状态机同时跟踪两个开关，嵌套与"未闭合"都能安全退化（只影响样式，不漏字符）。
+    """
+    out = []
+    buf = ""
+    bold = False
+    code = False
+    i = 0
+    while i < len(text):
+        if text.startswith("`", i):
+            if buf:
+                out.append((buf, bold, code))
+                buf = ""
+            code = not code
+            i += 1
+        elif text.startswith("**", i):
+            if buf:
+                out.append((buf, bold, code))
+                buf = ""
+            bold = not bold
+            i += 2
+        else:
+            buf += text[i]
+            i += 1
+    if buf:
+        out.append((buf, bold, code))
+    return out
+
+
 def add_rich_text(paragraph, text, size=11, bold=False, color=None):
-    """把含 `code` 的一行拆成若干 run，代码片段用等宽字体。"""
-    for i, chunk in enumerate(re.split(r"`([^`]+)`", text)):
+    """渲染一行行内 markdown。
+
+    支持：`**粗体**`、`` `代码` ``、`[文字](网址)`（只保留文字）。
+    逐个 run 设置字体 —— 中文必须带 `w:eastAsia`，见 set_font。
+    """
+    # 链接降级为纯文字：日志里的链接都是"参考规范"类外链，保留网址反而碍眼
+    text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)
+
+    for chunk, is_bold, is_code in _tokenize_inline(text):
         if chunk == "":
             continue
         run = paragraph.add_run(chunk)
-        is_code = i % 2 == 1  # 奇数是代码片段
-        set_font(run, size=size - 0.5 if is_code else size, bold=bold,
-                 color=color, mono=is_code)
+        set_font(
+            run,
+            size=size - 0.5 if is_code else size,
+            bold=bold or is_bold,
+            color=color,
+            mono=is_code,
+        )
 
 
 def main():
@@ -102,10 +150,30 @@ def main():
 
         elif line.startswith("## "):
             p = doc.add_paragraph(style="Heading 1")
-            run = p.add_run(line[3:].strip())
+            head = line[3:].strip()
+            # `[0.2.0] - 2026-10-18` → `0.2.0 · 2026-10-18`
+            # 方括号是 Keep a Changelog 的写法，在 Word 里读起来像代码，去掉更顺眼。
+            m = re.match(r"^\[(.+?)\]\s*(?:-\s*(.+))?$", head)
+            if m:
+                head = m.group(1) if not m.group(2) else f"{m.group(1)} · {m.group(2)}"
+            run = p.add_run(head)
             set_font(run, size=14, bold=True, color=(0x1F, 0x3B, 0x63))
             p.paragraph_format.space_before = Pt(14)
             p.paragraph_format.space_after = Pt(6)
+
+        elif line.startswith("### "):
+            p = doc.add_paragraph(style="Heading 2")
+            run = p.add_run(line[4:].strip())
+            set_font(run, size=12, bold=True, color=(0x2A, 0x4C, 0x7A))
+            p.paragraph_format.space_before = Pt(10)
+            p.paragraph_format.space_after = Pt(4)
+
+        elif line.startswith("#### "):
+            p = doc.add_paragraph(style="Heading 3")
+            run = p.add_run(line[5:].strip())
+            set_font(run, size=11, bold=True, color=(0x33, 0x33, 0x33))
+            p.paragraph_format.space_before = Pt(8)
+            p.paragraph_format.space_after = Pt(3)
 
         elif line.startswith("> "):
             p = doc.add_paragraph()
