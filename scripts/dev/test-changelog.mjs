@@ -117,7 +117,59 @@ test(`当前版本条目（${version}）不是空壳`, () => {
   assert.ok(
     n >= 3,
     `\`${sec.head}\` 下面只有 ${String(n)} 行有效内容，太少了。\n` +
-      '      至少写清「新增 / 变更 / 修复」里适用的一两类。',
+      '      至少写清「新增 / 修复」里适用的一两类。',
+  )
+})
+
+/*
+ * 行文风格（用户指定：「写简洁一点，就分条列举…每条用一句话表述」，
+ * 并要求「以后的更新日志都要这么写」）。
+ *
+ * 只检查**当前版本段**与「未发布」段，不检查历史版本 ——
+ * 老版本段是既成事实，改成新风格只会篡改历史。
+ *
+ * 三条规则：
+ *  1. 小节只允许 `### 新增` / `### 修复`（不要 `变更`/`备注`/`####` 细分）；
+ *  2. 每个要点一行、不超过 MAX_BULLET 字；
+ *  3. 至少各有一条 —— 空小节说明没按两类组织。
+ *
+ * 为什么上限取 150 字：一句话讲清"加了什么"通常 40~80 字；
+ * 超过 150 基本就是在写推理过程或贴日志，那属于 RELEASE-NOTES。
+ */
+const MAX_BULLET = 150
+
+test(`当前版本条目（${version}）符合约定行文：只分「新增/修复」、一条一句话`, () => {
+  const sec = findVersionSection(version)
+  if (!sec) return
+
+  /* 注意：`findVersionSection` 里的 body 是**字符串**，这里按行拆开用。 */
+  const bodyLines = sec.body.split(/\r?\n/)
+
+  const heads = bodyLines
+    .filter((l) => /^### /.test(l))
+    .map((l) => l.trim())
+  const badHeads = heads.filter((h) => h !== '### 新增' && h !== '### 修复')
+  assert.deepEqual(
+    badHeads,
+    [],
+    `\`${sec.head}\` 里出现了不该有的小节：${badHeads.join('、')}。\n` +
+      '      约定只写 `### 新增` 与 `### 修复` 两节（细节放 RELEASE-NOTES）。',
+  )
+  assert.ok(heads.includes('### 新增'), `\`${sec.head}\` 缺少 \`### 新增\` 小节`)
+  assert.ok(heads.includes('### 修复'), `\`${sec.head}\` 缺少 \`### 修复\` 小节`)
+
+  const deep = bodyLines.filter((l) => /^####/.test(l))
+  assert.deepEqual(deep, [], '不要用 `####` 再细分 —— 一条一句话列在 `###` 小节下即可')
+
+  const bullets = bodyLines.filter((l) => /^- /.test(l))
+  assert.ok(bullets.length >= 2, `\`${sec.head}\` 的要点太少（${String(bullets.length)} 条）`)
+
+  const tooLong = bullets.filter((l) => l.length > MAX_BULLET)
+  assert.deepEqual(
+    tooLong.map((l) => `${l.slice(0, 40)}…（${String(l.length)} 字）`),
+    [],
+    `每条要点请控制在一句话内（≤ ${String(MAX_BULLET)} 字）；`
+      + '把推理过程/日志/对比表挪到 RELEASE-NOTES-v<版本>.md。',
   )
 })
 
