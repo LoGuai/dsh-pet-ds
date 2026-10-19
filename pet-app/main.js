@@ -2705,6 +2705,27 @@ app.whenReady().then(() => {
     createWindow()
     void pollLoop()
     /*
+     * 启动自检：把"这个进程里到底有哪些动作素材"打一行日志。
+     *
+     * 为什么值得打：本项目已经两次因为**进程比素材旧**而出现"动作不触发"
+     * （一次是 WebP 化之后，一次是深度思考素材导入之后）——
+     * 那种情况下日志里只有"素材缺失"，很难一眼看出是"进程该重启了"。
+     * 有了这行，对照"现在的仓库里应该有几个动作"就能立刻判断。
+     */
+    try {
+      const animRoot = require('node:path').join(__dirname, '..', 'assets', 'animations')
+      const ids = require('node:fs')
+        .readdirSync(animRoot)
+        .filter((name) => require('node:fs').existsSync(require('node:path').join(animRoot, name, 'manifest.json')))
+        .sort()
+      const thinkOk = ['think-enter', 'think-loop', 'think-exit'].every((id) => ids.includes(id))
+      /* 注意 `log()` 自带 `[pet] ` 前缀，这里不要再加一遍。 */
+      log(`素材自检：${ids.length} 个动作（${ids.join(', ')}）`)
+      log(`深度思考素材：${thinkOk ? 'enter/loop/exit 三段就位' : '缺失（这个进程可能比素材旧，请重启桌宠）'}`)
+    } catch (err) {
+      log(`素材自检失败：${err instanceof Error ? err.message : String(err)}`)
+    }
+    /*
      * 好感第 4 条：每连续运行 10 分钟 +5。
      * 由独立定时器结算（与心情的 30 秒 tick 无关，见 startUptimeAffectionTimer 的说明）。
      */
