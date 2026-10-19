@@ -230,6 +230,14 @@ ACTIONS = {
     "think-loop": {
         "raw_dir": os.path.join(ROOT, ".cache", "think-loop-raw"),
         "match_head_to": "stand",
+        # 循环段头顶有"深度求索中…"气泡 —— 它是**素材的一部分，要保留**
+        # （用户明确："气泡就是素材本身应该有的"）。
+        #
+        # ⚠️ 别为了气泡去"排除顶部再量尺寸"：试过 `bubble_ignore_top_ratio: 0.18`，
+        # 结果量尺落到了更宽的头发上（原始头宽从 544 变成 676），缩放被压到 0.784，
+        # 角色明显变小。留着气泡时 fit 上限并不吃紧（0.975），
+        # 头宽对齐算出来的 0.974 才是对的 —— 气泡只是站在头顶上方，不参与头宽与脚底。
+        #
         # 声明式：渲染进程用 startLoop 无限循环这一段。
         "loop": True,
         "note": "深度思考（循环：思考中）",
@@ -306,13 +314,16 @@ def compute_scale(bounds_list, foot_out, canvas_w=CANVAS_W):
     return round(scale, 4), max_w, max_h, avail_w, avail_h
 
 
-def head_width_of(img, band=HEAD_BAND):
+def head_width_of(img, band=HEAD_BAND, ignore_top_ratio=0.0):
     """内容顶部往下 band 区间内最宽的一行（≈ 头部/头发宽度）。
 
     为什么用这个指标判断"角色画多大"：
     Q 版角色里头部占绝对主导，同一人物的头部像素宽度几乎恒定；
     而整体包围盒会随姿势（裙摆铺开、手臂抬起）大幅变化，
     光看它会把"姿势不同"误判成"大小不同"。
+
+    `ignore_top_ratio`：先剔掉顶部那一块（气泡）再算 band，
+    否则"内容顶部"变成气泡顶边，band 会落在气泡上，量出来的不是头宽。
     """
     a = np.array(img.convert("RGBA"))
     al = a[:, :, 3] > ALPHA_THRESHOLD
@@ -320,7 +331,12 @@ def head_width_of(img, band=HEAD_BAND):
     if len(xs) == 0:
         return 0
     y0, y1 = int(ys.min()), int(ys.max())
+    if ignore_top_ratio > 0:
+        content_h = y1 - y0 + 1
+        y0 = y0 + int(content_h * max(0.0, min(0.9, ignore_top_ratio)))
     h = y1 - y0 + 1
+    if h <= 0:
+        return 0
     best = 0
     for y in range(y0 + int(h * band[0]), y0 + int(h * band[1]) + 1):
         row = np.where(al[y])[0]
@@ -374,32 +390,41 @@ def output_mean_height(action_id):
     return sum(hs) / len(hs)
 
 
-def body_bounds(img, exclude_left_ratio=0.0):
+def body_bounds(img, exclude_left_ratio=0.0, ignore_top_ratio=0.0):
     """
-    求"角色本体"的包围盒，可**排除左侧一条区域**。
+    求"角色本体"的包围盒，可**排除左侧一条区域**或**顶部一条区域**。
 
-    为什么需要：玩mc 的第 4~6 帧在角色左上方有一个"想法气泡"（画着 Minecraft 场景）。
+    为什么需要（左侧）：玩mc 的第 4~6 帧在角色左上方有一个"想法气泡"（画着 Minecraft 场景）。
     它属于动画内容、应当保留，但**不该参与缩放计算** ——
     否则自动缩放会按"气泡 + 角色"的整体宽度来算，角色被缩小一大截
     （实测从 0.96 掉到 0.87，比其他动画小 13%，切换动作时会明显一跳）。
 
-    做法：把最左侧 `exclude_left_ratio` 比例的像素当作"可能是气泡"排除掉，
-    在这个范围内求包围盒。取值要保证**角色本体仍在范围内**：
-    实测其他帧的角色左边界约在 x/1090 ≈ 0.21 附近，气泡在 0.02 附近，
-    所以取 0.15 能排除气泡、又包住角色。
+    为什么需要（顶部）：深度思考的循环段在**头顶上方**有一个"深度求索中…"气泡
+    （用户明确：气泡是素材本身的一部分，要保留）。它同样会把内容高度顶高，
+    于是自动缩放按"气泡 + 角色"的高度算，角色被压小 11%（实测头宽 478 vs 530）。
+    排除顶部 `ignore_top_ratio` 比例后再量，角色大小就对了；气泡本身照常显示。
 
     @param {Image.Image} img
     @param {float} exclude_left_ratio 0 = 不排除（默认，与其他动画一致）
+    @param {float} ignore_top_ratio   0 = 不排除顶部（默认）
     """
     a = np.array(img.convert("RGBA"))
     H, W = a.shape[:2]
     cut = int(W * max(0.0, min(0.9, exclude_left_ratio)))
-    alpha = a[:, cut:, 3] > ALPHA_THRESHOLD
+    # 顶部的"排除区"按**内容高度**算，而不是画布高度 ——
+    # 素材画布上下留白很多，按画布比例切会切不到气泡。
+    top = 0
+    if ignore_top_ratio > 0:
+        full = content_bounds(img)
+        if full is not None:
+            content_h = full[3] - full[1] + 1
+            top = full[1] + int(content_h * max(0.0, min(0.9, ignore_top_ratio)))
+    alpha = a[top:, cut:, 3] > ALPHA_THRESHOLD
     ys, xs = np.where(alpha)
     if len(xs) == 0:
         return None
-    # xs 是相对 cut 的偏移，加回去变成绝对坐标。
-    return int(xs.min()) + cut, int(ys.min()), int(xs.max()) + cut, int(ys.max())
+    # xs/ys 是相对 (cut, top) 的偏移，加回去变成绝对坐标。
+    return int(xs.min()) + cut, int(ys.min()) + top, int(xs.max()) + cut, int(ys.max()) + top
 
 
 def build_one(action_id):
@@ -454,6 +479,7 @@ def build_one(action_id):
     # 两者分开的理由见 body_bounds 的说明：玩mc 第 4~6 帧左侧有想法气泡，
     # 若按含气泡的宽度算缩放，角色会比其他动画小 13%，切换动作时明显一跳。
     exclude_left = cfg.get("bubble_exclude_left_ratio", 0.0)
+    ignore_top = cfg.get("bubble_ignore_top_ratio", 0.0)
     raw_bounds = []
     body_bounds_list = []
     for idx in src_index_of:
@@ -462,14 +488,19 @@ def build_one(action_id):
         if b is None:
             raise SystemExit(f"{names[idx]} 全透明")
         raw_bounds.append(b)
-        bb = body_bounds(img, exclude_left) if exclude_left > 0 else b
+        bb = body_bounds(img, exclude_left, ignore_top) if (exclude_left > 0 or ignore_top > 0) else b
         if bb is None:
-            raise SystemExit(f"{names[idx]} 排除左侧区域后没有内容（bubble_exclude_left_ratio 设太大了？）")
+            raise SystemExit(f"{names[idx]} 排除气泡区域后没有内容（bubble_* 比例设太大了？）")
         body_bounds_list.append(bb)
 
     if cfg["scale"] == "auto":
         scale, max_w, max_h, avail_w, avail_h = compute_scale(body_bounds_list, foot_out)
-        body_note = f"（角色本体宽度，已排除左侧 {exclude_left:.0%} 的气泡区）" if exclude_left > 0 else ""
+        notes = []
+        if exclude_left > 0:
+            notes.append(f"已排除左侧 {exclude_left:.0%}")
+        if ignore_top > 0:
+            notes.append(f"已排除顶部 {ignore_top:.0%}")
+        body_note = f"（角色本体，{'、'.join(notes)} 的气泡区）" if notes else ""
         print(
             f"  自动缩放: {scale}  （最大内容 {max_w}x{max_h}{body_note}，可用 {avail_w}x{avail_h}）"
             + ("" if scale < 1.0 else "  ← 无需缩放")
@@ -508,7 +539,7 @@ def build_one(action_id):
             raise SystemExit(f"{ref_id} 的头部宽度量不到（为 0），无法作为基准")
         raw_heads = []
         for idx in src_index_of:
-            raw_heads.append(head_width_of(Image.open(os.path.join(raw_dir, names[idx])).convert("RGBA")))
+            raw_heads.append(head_width_of(Image.open(os.path.join(raw_dir, names[idx])).convert("RGBA"), ignore_top_ratio=ignore_top))
         cur_head = max(raw_heads) if raw_heads else 0
         if cur_head > 0:
             projected = cur_head * scale
@@ -550,7 +581,7 @@ def build_one(action_id):
         per_frame_scales = []
         raw_heads = []
         for idx in src_index_of:
-            hw = head_width_of(Image.open(os.path.join(raw_dir, names[idx])).convert("RGBA"))
+            hw = head_width_of(Image.open(os.path.join(raw_dir, names[idx])).convert("RGBA"), ignore_top_ratio=ignore_top)
             raw_heads.append(hw)
             if hw <= 0:
                 per_frame_scales.append(scale)

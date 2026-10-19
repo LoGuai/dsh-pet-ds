@@ -51,6 +51,17 @@ BUBBLE_GROW = 3      # 最后再膨胀几像素（覆盖描边/阴影）
 SHADOW_MAX_LUM = 110
 SHADOW_MAX_SAT = 30
 
+# ⚠️ **是否删除气泡：不删**（用户明确："气泡就是素材本身应该有的"）。
+#
+# 我一开始把它当"多余的文字"删掉了 —— 那是错的：素材是完整的画面，
+# 气泡里的"深度求索中…"是这套动作的一部分，删掉就丢了原作的内容。
+# 只把**黑底**抠成透明（那是格式问题，不处理会是一个黑方块），
+# 其余像素一律原样保留。
+#
+# 保留 REMOVE_BUBBLE 这个开关是为了留痕：万一以后确实需要去气泡
+# （例如素材换了导出方式、又带上背景色），逻辑还在，不必重写。
+REMOVE_BUBBLE = False
+
 
 def luminance(rgb):
     return rgb.max(axis=2).astype(np.int16)
@@ -131,19 +142,21 @@ def process_loop(src, dst, preview_name=None):
     img = Image.open(src).convert("RGB")
     rgba, bg = key_black(img)
     a = np.asarray(rgba).astype(np.uint8)
-    rgb = np.asarray(img.convert("RGB")).astype(np.int16)
-    lum = luminance(rgb)
-    sat = rgb.max(axis=2) - rgb.min(axis=2)
 
-    # 1) 气泡本体（白块 + 文字）
-    bub = bubble_mask(lum, bg)
-    a[bub, 3] = 0
+    if REMOVE_BUBBLE:
+        rgb = np.asarray(img.convert("RGB")).astype(np.int16)
+        lum = luminance(rgb)
+        sat = rgb.max(axis=2) - rgb.min(axis=2)
 
-    # 2) 气泡投影：顶部窗口里"低饱和 + 中低亮度"的像素一并清掉
-    win = np.zeros(lum.shape, dtype=bool)
-    win[: min(lum.shape[0], BUBBLE_MAX_Y), :] = True
-    shadow = win & (lum <= SHADOW_MAX_LUM) & (sat <= SHADOW_MAX_SAT)
-    a[shadow, 3] = 0
+        # 1) 气泡本体（白块 + 文字）
+        bub = bubble_mask(lum, bg)
+        a[bub, 3] = 0
+
+        # 2) 气泡投影：顶部窗口里"低饱和 + 中低亮度"的像素一并清掉
+        win = np.zeros(lum.shape, dtype=bool)
+        win[: min(lum.shape[0], BUBBLE_MAX_Y), :] = True
+        shadow = win & (lum <= SHADOW_MAX_LUM) & (sat <= SHADOW_MAX_SAT)
+        a[shadow, 3] = 0
 
     out = Image.fromarray(a, "RGBA")
     out.save(dst)
@@ -162,6 +175,8 @@ def process_loop(src, dst, preview_name=None):
 
 
 def main():
+    # 预览目录可能被清理掉 —— 先建好，否则写预览会中断整个加工流程
+    os.makedirs(OUT_PREVIEW, exist_ok=True)
     for d in (ENTER_RAW, LOOP_RAW, EXIT_RAW):
         os.makedirs(d, exist_ok=True)
         for f in os.listdir(d):

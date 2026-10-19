@@ -4191,6 +4191,21 @@ async function verifyIdleTriggerRule(check, wait) {
     await wc.executeJavaScript('endAction()', true)
     await wait(250)
   }
+  /*
+   * ⚠️ 还要确保「深度思考」已经退出，并等它的退出段播完。
+   *
+   * 随机动作的门控是 `isTrulyIdle()`，而思考期间它为假 ——
+   * 若前面的用例把宿主推到 thinking 后没收干净（或退出段还在播），
+   * 这里的随机动作**一次都不会触发**，表现成
+   * 「到达门槛却没动作，lastPlayedActionId 停在旧值」。
+   * 这条断言因此偶发失败过（同一份代码一轮通过、一轮红）。
+   */
+  await wc.executeJavaScript('window.__petTestThink && window.__petTestThink.exit("闲置用例前置：确保已退出思考")', true)
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const st = await wc.executeJavaScript('window.__petTestThink.state()', true)
+    if (st && st.phase === null && st.active === false) break
+    await wait(250)
+  }
   // 顺带把闲置计时起点重置为"现在"，避免带着上一用例的旧起点。
   await wait(200)
 
