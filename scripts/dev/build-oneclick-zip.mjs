@@ -91,6 +91,52 @@ const changelogPath = join(DIST, `${TAG}-更新日志.md`)
     'utf8',
   )
   console.log(`  ✓ ${TAG}-更新日志.md`)
+
+  /*
+   * 同一份内容再出两个"给人看"的格式：
+   *  · `.txt` —— 纯文本，UTF-8 **带 BOM + CRLF**，双击用记事本打开不乱码；
+   *  · `.docx` —— 交给 scripts/dev/export-changelog-docx.py 生成（需要 python-docx）。
+   *
+   * docx 那步在缺少 Python 时**跳过而不中断构建**：日志不该阻塞出包。
+   */
+  const txtPath = join(DIST, `${TAG}-更新日志.txt`)
+  const mdText = readFileSync(changelogPath, 'utf8').replace(/\r?\n/g, '\r\n')
+  writeFileSync(txtPath, `\uFEFF${mdText}`, 'utf8')
+  console.log(`  ✓ ${TAG}-更新日志.txt`)
+
+  const docxPath = join(DIST, `${TAG}-更新日志.docx`)
+  const python = findPython()
+  if (python) {
+    try {
+      execFileSync(
+        python,
+        [join(ROOT, 'scripts', 'dev', 'export-changelog-docx.py'), changelogPath, docxPath],
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+      )
+      console.log(`  ✓ ${TAG}-更新日志.docx`)
+    } catch (err) {
+      console.log(`  [!] docx 生成失败（跳过）：${String(err.stderr ?? err.message).split('\n')[0]}`)
+    }
+  } else {
+    console.log('  [!] 没找到 python，跳过 docx（md 与 txt 已生成）')
+  }
+}
+
+/**
+ * 找一个能用的 Python（要带 python-docx）。
+ *
+ * 优先环境变量 `DSH_PET_PYTHON`，其次 DSH 运行时的自带 Python ——
+ * 不猜系统里装了什么，避免拿到一个没有 python-docx 的解释器。
+ */
+function findPython() {
+  const candidates = [
+    process.env.DSH_PET_PYTHON,
+    join(process.env.USERPROFILE ?? '', '.dsh', 'dsh-runtimes', 'dsh-primary-runtime', 'dependencies', 'python', 'python.exe'),
+  ].filter(Boolean)
+  for (const c of candidates) {
+    if (existsSync(c)) return c
+  }
+  return null
 }
 
 const files = [
@@ -99,7 +145,11 @@ const files = [
   [join(ROOT, 'scripts', 'register-profile.mjs'), 'register-profile.mjs'],
   [tgzPath, tgzName],
   [changelogPath, `${TAG}-更新日志.md`],
+  [join(DIST, `${TAG}-更新日志.txt`), `${TAG}-更新日志.txt`],
 ]
+/* docx 可能因为缺 Python 没生成 —— 有就放进去，没有不报错。 */
+const docxPath = join(DIST, `${TAG}-更新日志.docx`)
+if (existsSync(docxPath)) files.push([docxPath, `${TAG}-更新日志.docx`])
 for (const [from, to] of files) {
   if (!existsSync(from)) {
     console.log(`  ✗ 缺少源文件：${from}`)
