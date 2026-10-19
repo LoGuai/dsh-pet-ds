@@ -463,16 +463,28 @@ function activeAnimation() {
  * 用 **WebP（q92, alpha 无损）** 而不是 PNG：实测体积只有 PNG 的 ~20%
  * （131 帧从 143 MB 降到约 30 MB），而在**实际显示尺寸**（180~400 px 宽，
  * 素材 864 宽）下与原图目视无差 —— 详见 `scripts/dev/compress-assets.py` 的说明。
- *
- * ⚠️ 换扩展名时这个常量必须与素材、清单、构建脚本一起改，
- * 否则表现是"桌宠整个不显示"（图片 404），很难一眼看出是格式问题。
  */
 const FRAME_EXT = 'webp'
 
-/** 由动作 id 与帧序号算出图片路径。 */
-function framePathFor(id, index) {
+/**
+ * 帧文件扩展名的候选顺序（按优先级）。
+ *
+ * ⚠️ 为什么不只用 `FRAME_EXT`：
+ * 桌宠是**常驻长跑**的进程。若素材格式变了（PNG ↔ WebP）而正在跑的桌宠
+ * 还是**旧代码**，它就会一直请求已不存在的那个扩展名 —— 表现是
+ * 「除了站立（启动时已载入内存）之外，所有动作都不播，而且没有任何报错」。
+ * 这是真实踩过的坑：素材转 WebP 时桌宠已经跑了 11 小时，
+ * 于是只有内存里那份 stand 还能动。
+ *
+ * 现在加载时会**先探一下实际扩展名**：既能自愈，也会在不一致时打一条
+ * 明确的警告（提示重启）。将来再换格式也不会重演。
+ */
+const FRAME_EXT_CANDIDATES = ['webp', 'png']
+
+/** 由动作 id、帧序号与扩展名算出图片路径。 */
+function framePathFor(id, index, ext = FRAME_EXT) {
   const n = String(index + 1).padStart(2, '0')
-  return `../assets/animations/${id}/frame_${n}.${FRAME_EXT}`
+  return `../assets/animations/${id}/frame_${n}.${ext}`
 }
 
 /** 清单路径。 */
@@ -586,6 +598,44 @@ async function loadManifestFor(id) {
 }
 
 /**
+ * 加载某一帧（指定扩展名），失败返回 null 而不是抛错。
+ *
+ * @param {string} id
+ * @param {number} index 0 基下标
+ * @param {string} ext 扩展名（不带点）
+ * @returns {Promise<HTMLImageElement | null>}
+ */
+function loadFrameAt(id, index, ext) {
+  return new Promise((resolve) => {
+    const img = new Image()
+    img.onload = () => {
+      // decode() 让浏览器提前完成解码，切帧时不会卡一下。
+      const done = () => resolve(img)
+      if (typeof img.decode === 'function') img.decode().then(done, done)
+      else done()
+    }
+    img.onerror = () => resolve(null)
+    img.src = framePathFor(id, index, ext)
+  })
+}
+
+/**
+ * 探出某个动作实际的帧扩展名（顺带把第 0 帧载入）。
+ *
+ * 见 `FRAME_EXT_CANDIDATES` 的说明：这是为了兼容"素材格式与代码不一致"，
+ * 典型场景是改了素材格式但桌宠进程还没重启。
+ *
+ * @returns {Promise<{ ext: string, firstImage: HTMLImageElement } | null>}
+ */
+async function resolveFrameExt(id) {
+  for (const ext of FRAME_EXT_CANDIDATES) {
+    const img = await loadFrameAt(id, 0, ext)
+    if (img) return { ext, firstImage: img }
+  }
+  return null
+}
+
+/**
  * 预加载某个动画的全部帧。
  * @param {string} id
  * @param {AnimationState} state
@@ -594,24 +644,37 @@ async function loadManifestFor(id) {
  */
 async function preloadFrames(id, state, frameCount) {
   if (!(frameCount > 0)) return 0
-  const tasks = []
-  for (let i = 0; i < frameCount; i += 1) {
-    tasks.push(
-      new Promise((resolve) => {
-        const img = new Image()
-        img.onload = () => {
-          // decode() 让浏览器提前完成解码，切帧时不会卡一下。
-          const done = () => resolve(true)
-          if (typeof img.decode === 'function') img.decode().then(done, done)
-          else done()
-        }
-        img.onerror = () => resolve(false)
-        img.src = framePathFor(id, i)
-        state.images[i] = img
-      }),
+
+  const probed = await resolveFrameExt(id)
+  if (!probed) {
+    /*
+     * 一帧都找不到：明确报出来，别静默回落到站立。
+     *
+     * 这种故障原本是"点了没反应"，用户完全无从判断 —— 而真正的原因
+     * （素材扩展名与代码期望不一致）恰恰是最不容易想到的那个。
+     */
+    console.error(
+      `[pet] 素材缺失：${id} 连第一帧都加载不到（试过 ${FRAME_EXT_CANDIDATES.join(' / ')}）。`
+      + '如果是刚换过素材格式，请重启桌宠。',
+    )
+    return 0
+  }
+  if (probed.ext !== FRAME_EXT) {
+    console.warn(
+      `[pet] 素材实际是 .${probed.ext}，而代码默认 .${FRAME_EXT} —— 已自动兼容。`
+      + '重启桌宠可消除这条警告。',
     )
   }
+  state.frameExt = probed.ext
+
+  const tasks = []
+  for (let i = 0; i < frameCount; i += 1) {
+    // 第 0 帧直接用探测时已经加载好的那张，省一次请求。
+    tasks.push(i === 0 ? Promise.resolve(probed.firstImage) : loadFrameAt(id, i, probed.ext))
+    state.images[i] = null
+  }
   const results = await Promise.all(tasks)
+  for (let i = 0; i < results.length; i += 1) state.images[i] = results[i]
   return results.filter(Boolean).length
 }
 
@@ -649,7 +712,16 @@ async function loadAnimation(id) {
     state.ready = true
     return state
   }
-  // 加载失败：不留下半成品状态，避免下次被误判为"已就绪"。
+  /*
+   * 加载失败：不留下半成品状态（避免下次被误判为"已就绪"），并**明确报错**。
+   *
+   * 为什么必须打日志：这里的失败会被上层"回落到站立"吞掉 ——
+   * 用户看到的只是"点了没反应"，而根因通常很具体（素材缺失/格式不符/路径错）。
+   */
+  console.error(
+    `[pet] 动画加载失败：${id}（只成功 ${String(loaded)}/${String(frameCount)} 帧，`
+    + `至少需要 2 帧）。动作会回落到站立。`,
+  )
   animations.delete(id)
   return null
 }
