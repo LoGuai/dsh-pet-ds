@@ -5550,9 +5550,26 @@ async function verifyAffectionAndFeedback(check, wait) {
       `active=${String(t1 && t1.active)}，petState=${String(t1 && t1.petState)}`,
     )
     check(
+      '进入段先播 think-enter（不是直接循环）',
+      Boolean(t1) && (t1.phase === 'enter' || t1.phase === 'loop') && t1.activeAnimationId === 'think-enter',
+      `phase=${String(t1 && t1.phase)}，动画=${String(t1 && t1.activeAnimationId)}`,
+    )
+    check(
       '深度思考期间不触发随机动作',
       Boolean(t1) && t1.canTriggerRandom === false,
       `canTriggerRandom=${String(t1 && t1.canTriggerRandom)}`,
+    )
+
+    /*
+     * 进入段 6 帧 @6fps ≈ 1s，播完应自动切到循环段。
+     * 这里等 1.6s 再读，验证"串起来"这件事真的发生了。
+     */
+    await wait(1600)
+    const tLoop = await js('window.__petTestThink.state()')
+    check(
+      '进入段播完 → 自动循环 think-loop',
+      Boolean(tLoop) && tLoop.phase === 'loop' && tLoop.activeAnimationId === 'think-loop',
+      `phase=${String(tLoop && tLoop.phase)}，动画=${String(tLoop && tLoop.activeAnimationId)}`,
     )
 
     await js('window.__petTestClick()')
@@ -5562,6 +5579,20 @@ async function verifyAffectionAndFeedback(check, wait) {
       '点击桌宠 → 结束深度思考',
       Boolean(t2) && t2.active === false,
       `active=${String(t2 && t2.active)}`,
+    )
+    check(
+      '结束时播退出段 think-exit（倒放进入段）',
+      Boolean(t2) && t2.phase === 'exit' && t2.activeAnimationId === 'think-exit',
+      `phase=${String(t2 && t2.phase)}，动画=${String(t2 && t2.activeAnimationId)}`,
+    )
+
+    /* 退出段同样 6 帧 ≈ 1s，播完应回站立闲置 */
+    await wait(1600)
+    const tAfter = await js('window.__petTestThink.state()')
+    check(
+      '退出段播完 → 回站立闲置',
+      Boolean(tAfter) && tAfter.phase === null && tAfter.activeAnimationId === 'stand',
+      `phase=${String(tAfter && tAfter.phase)}，动画=${String(tAfter && tAfter.activeAnimationId)}`,
     )
 
     // 再进一次，这次让宿主自己结束思考
@@ -5576,6 +5607,8 @@ async function verifyAffectionAndFeedback(check, wait) {
       Boolean(t3) && t3.active === true && Boolean(t4) && t4.active === false,
       `进入=${String(t3 && t3.active)} → 结束=${String(t4 && t4.active)}`,
     )
+    // 等退出段播完，别把 exit 状态留给后面的用例
+    await wait(1600)
   }
 
   // ---- 7) 刷新状态：无条件回闲置 ----
@@ -6093,7 +6126,16 @@ async function verifyIdleAndMood(check, wait, readLayout) {
   )
   check(
     '思考状态下不触发随机动作',
-    st1 !== null && st1.currentActionId === null,
+    /*
+     * ⚠️ 这里**不能**再要求 `currentActionId === null`。
+     *
+     * 素材补齐前，思考动作加载不到、会回落站立，所以那时"当前动作"确实是 null。
+     * 现在三段素材都在，进入思考后 `currentActionId` 会是 `think-enter` / `think-loop`
+     * —— 那正是"在演思考"，不是随机动作。
+     * 断言的本意是"没有随机动作被触发"，所以改成"当前动作不是随机池里的动作"。
+     */
+    st1 !== null
+      && (st1.currentActionId === null || String(st1.currentActionId).startsWith('think-')),
     `currentActionId=${String(st1 && st1.currentActionId)}`,
   )
 

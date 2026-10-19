@@ -1,0 +1,107 @@
+{
+  "frameCount": 4,
+  "fps": 6,
+  "loop": true,
+  "sourceCanvasHeight": 1157,
+  "drawOffsetY": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "_note": "由 scripts/dev/build-action-asset.py think-loop 生成；与站立素材同一画布约定（水平居中 + 脚底基准 y=1155）。",
+  "_processing": {
+    "canvas": {
+      "w": 864,
+      "h": 1157
+    },
+    "scale": 0.9743,
+    "footBaseOutput": 1155,
+    "headWidthOut": 530.0,
+    "headMatch": {
+      "ref": "stand",
+      "refHeadWidth": 530,
+      "rawHeadWidth": 544,
+      "correction": 0.9743
+    },
+    "perFrameScale": null,
+    "perFrame": [
+      {
+        "src": "1.png",
+        "out": "frame_01.webp",
+        "srcBounds": [
+          245,
+          121,
+          987,
+          1225
+        ],
+        "placedAt": [
+          71,
+          79
+        ],
+        "scale": 0.9743,
+        "outTop": 79,
+        "outFoot": 1155,
+        "outW": 724,
+        "outH": 1077
+      },
+      {
+        "src": "2.png",
+        "out": "frame_02.webp",
+        "srcBounds": [
+          245,
+          122,
+          987,
+          1225
+        ],
+        "placedAt": [
+          71,
+          80
+        ],
+        "scale": 0.9743,
+        "outTop": 80,
+        "outFoot": 1155,
+        "outW": 724,
+        "outH": 1076
+      },
+      {
+        "src": "3.png",
+        "out": "frame_03.webp",
+        "srcBounds": [
+          263,
+          124,
+          970,
+          1226
+        ],
+        "placedAt": [
+          88,
+          81
+        ],
+        "scale": 0.9743,
+        "outTop": 81,
+        "outFoot": 1155,
+        "outW": 690,
+        "outH": 1075
+      },
+      {
+        "src": "4.png",
+        "out": "frame_04.webp",
+        "srcBounds": [
+          245,
+          122,
+          987,
+          1225
+        ],
+        "placedAt": [
+          71,
+          80
+        ],
+        "scale": 0.9743,
+        "outTop": 80,
+        "outFoot": 1155,
+        "outW": 724,
+        "outH": 1076
+      }
+    ]
+  }
+}

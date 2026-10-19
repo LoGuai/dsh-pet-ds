@@ -207,6 +207,38 @@ ACTIONS = {
         "height_ramp": ("sit", "stand"),
         "note": "站起（第三阶段：站起的过程）",
     },
+
+    # ---------------------------------------------------------------- 深度思考
+    #
+    # 用户给了两批素材，要求"压缩到与现有素材一致"后导入：
+    #   thinking_pre（6 帧）= 准备与结束过程；thinking（4 帧）= 思考中的循环。
+    #
+    # 拆成**三段动作**而不是一个动作，是因为退出的那 6 帧是**倒放**的：
+    # 现有动画模型只有"顺序播放一遍 / 循环尾帧 / 区间循环 N 次"，
+    # 表达不了"被打断时倒放进入段"。拆成 think-enter / think-loop / think-exit
+    # 之后，渲染进程按状态机串联即可（见 renderer.js 的 enterThink / exitThink）。
+    #
+    # 三段都用 `match_head_to: stand`：这是站姿的三段，头宽恒定的假设成立，
+    # 按头宽对齐能把"同一角色同样大小"表达对。
+    # 不用 height_ramp —— 思考时人是**低头含胸**的，整体高度天然比站立矮，
+    # 按高度硬拉会把角色放大 4%（这正是坐姿那轮踩过的坑的另一面）。
+    "think-enter": {
+        "raw_dir": os.path.join(ROOT, ".cache", "think-enter-raw"),
+        "match_head_to": "stand",
+        "note": "深度思考（进入：抬头→低头沉思）",
+    },
+    "think-loop": {
+        "raw_dir": os.path.join(ROOT, ".cache", "think-loop-raw"),
+        "match_head_to": "stand",
+        # 声明式：渲染进程用 startLoop 无限循环这一段。
+        "loop": True,
+        "note": "深度思考（循环：思考中）",
+    },
+    "think-exit": {
+        "raw_dir": os.path.join(ROOT, ".cache", "think-exit-raw"),
+        "match_head_to": "stand",
+        "note": "深度思考（退出：倒放进入段，回站立）",
+    },
 }
 
 

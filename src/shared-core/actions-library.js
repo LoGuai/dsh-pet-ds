@@ -165,7 +165,12 @@ export const SIT_ACTION = {
 export const THINK_ACTION_ID = 'think'
 
 /**
- * 深度思考的动作定义（占位素材）。
+ * 深度思考的动作定义。
+ *
+ * 素材已补（2026-10-19）。因为"退出时要倒放进入段"，一个素材目录表达不了，
+ * 所以实际素材拆成三段 —— `think-enter` / `think-loop` / `think-exit`，
+ * 由渲染进程的状态机串联（见 renderer.js 的 enterThink / exitThink）。
+ * 这里的 `id: 'think'` 是**逻辑动作 id**（菜单项与随机池排除都用它）。
  *
  * 只进 `MENU_ONLY_ACTIONS`（便于手动验证），**不进随机池** ——
  * 它会由宿主工作状态自动触发，随机播出来会莫名其妙。
@@ -175,6 +180,9 @@ export const THINK_ACTION = {
   label: '深度思考',
   lines: actionLines('think'),
 }
+
+/** 深度思考的三段素材 id（菜单/随机池仍只认 {@link THINK_ACTION_ID}）。 */
+export const THINK_ASSET_IDS = ['think-enter', 'think-loop', 'think-exit']
 
 /**
  * **随机池** —— 闲置满门槛后按概率从这里抽一个。
@@ -222,7 +230,7 @@ export const MENU_ONLY_ACTIONS = [
   },
   /*
    * 深度思考：正常由宿主状态触发，这里放一份只为"右键菜单能手动验证"。
-   * 素材补齐前它就是站起来的样子，属预期。
+   * 菜单点它 = 走完整套（进入段 → 循环段），再点一下桌宠或「刷新状态」结束。
    */
   THINK_ACTION,
 ]

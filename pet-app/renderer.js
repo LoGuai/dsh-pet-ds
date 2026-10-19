@@ -124,11 +124,21 @@ const WAKE_ACTION_ID = 'awake'
  * 用户要求：**DSH 开始思考时**，桌宠停下当前动作、播这个动作；
  * 思考结束或桌宠被点击时结束它、回到闲置。
  *
- * ⚠️ 素材还没给（用户："具体动作素材之后补充，现在先占位"）。
- * 所以现在触发它只会走"素材加载失败 → 退回站立动画"的兜底路径，
- * 状态机与门控是完整可测的，补素材时不用改逻辑。
+ * 素材已补（2026-10-19）。因为"退出时要倒放进入段"，一个动作表达不了，
+ * 所以拆成三段素材，由下面的状态机串联：
+ *   think-enter  进入（6 帧，按 1→6 播一次）
+ *   think-loop   思考中（4 帧，无限循环）
+ *   think-exit   退出（6 帧，即进入段的 6→1 倒放，播一次后回站立）
+ *
+ * `THINK_ACTION_ID` 仍是**逻辑上的动作 id**（菜单项、随机池排除、自测断言都用它），
+ * 但它不再对应素材目录 —— 三个素材目录见下面的 THINK_*_ID。
  */
 const THINK_ACTION_ID = 'think'
+
+/** 深度思考三段素材 id。 */
+const THINK_ENTER_ID = 'think-enter'
+const THINK_LOOP_ID = 'think-loop'
+const THINK_EXIT_ID = 'think-exit'
 
 /**
  * 坐姿动作的三段素材 id（镜像常量，源头是 `src/shared-core/actions-library.js`）。
@@ -1772,6 +1782,17 @@ function finishDrag(e) {
       return
     }
     /*
+     * 正在播**退出段**（6→1）时忽略点击。
+     *
+     * 用户要求"被打断时按 6→1 播放完再回站立"，所以这一秒不能又被新动作顶掉；
+     * 否则点击会让她从退出动画的一半直接跳到部位动画，看起来像抽搐。
+     */
+    if (thinkPhase === 'exit') {
+      dragStart = null
+      console.info('[think] 退出段播放中，忽略这次点击')
+      return
+    }
+    /*
      * 睡眠期间点击 = **叫醒**（用户要求）。
      *
      * 这条语义与普通点击不同：不说部位台词、不加心情，只播惊醒动画。
@@ -2395,6 +2416,17 @@ async function playAction(id, options = {}) {
     return
   }
 
+  // 从菜单手动触发「深度思考」：走 enterThink（进入段 → 循环段）。
+  if (id === THINK_ACTION_ID) {
+    /*
+     * 菜单触发时给一句台词：这是用户主动点的，弹一句话反馈更好。
+     * 宿主状态驱动的思考**不弹**（长时间思考一直挂气泡会很吵）。
+     */
+    if (entry && entry.lines && entry.lines[0]) showBubble(entry.lines[0], 'say', 5000)
+    void enterThink()
+    return
+  }
+
   // 先停掉上一个动作，保证任何时刻只播一个。
   endAction()
   currentActionId = id
@@ -2740,7 +2772,104 @@ function canTriggerRandomAction() {
 let thinkActive = false
 
 /**
- * 进入深度思考：**先停掉当前动作**，再播思考动作。
+ * 深度思考当前处于哪一段：`'enter'` / `'loop'` / `'exit'` / `null`。
+ *
+ * 为什么要单独记：三段是**串联**的（进入播完才进循环、退出播完才回站立），
+ * 只用一个 `thinkActive` 布尔表达不了"正在进入"和"正在退出"这两种
+ * 都算"未完成"的中间态 —— 而点击/状态变化恰恰可能落在中间态里。
+ */
+let thinkPhase = null
+
+/**
+ * 思考序列的**版本号**。每次进入/退出/刷新都 +1。
+ *
+ * 为什么需要：进入段与退出段都是"延迟一拍再切下一段"（setTimeout 或 await）。
+ * 而宿主的思考状态会抖动（thinking → working → thinking），
+ * 于是会有多个"待执行"的切换同时在飞。没有版本号时，**旧的那次会在 1 秒后
+ * 把新的状态顶掉** —— 实测症状是：思考早已结束，1 秒后突然又播一段退出动画，
+ * 或者别的动作（点击互动、拖拽）播到一半被它切回站立。
+ *
+ * 有版本号后，每个异步回调只在自己版本仍是最新时才动作。
+ */
+let thinkSeq = 0
+
+/** 思考某一段的收尾定时器。**独立保存**，不占用 `actionStopTimer`。 */
+let thinkTimer = null
+
+/** 清掉待执行的思考切换。 */
+function cancelThinkTimer() {
+  if (thinkTimer) {
+    clearTimeout(thinkTimer)
+    thinkTimer = null
+  }
+}
+
+/**
+ * 播放一段"思考"素材（内部用，不走动作目录、不弹台词、不动闲置计时）。
+ *
+ * @param {string} id 素材 id
+ * @param {{ loop?: boolean, onFinish?: (() => void) | null, token: number }} options
+ *        `loop: true` 时无限循环（循环段用），否则播一遍后调 `onFinish`。
+ *        `token` 是调用时的 {@link thinkSeq} 快照，用于丢弃过期回调。
+ * @returns {Promise<boolean>} 素材是否成功加载并起播
+ */
+async function playThinkPhase(id, options) {
+  const { loop = false, onFinish = null, token } = options
+  if (dragging) return false
+
+  cancelThinkTimer()
+  // 先收掉上一段：它可能还挂着收尾定时器，不清会和新的一段打架。
+  endAction()
+  if (token !== thinkSeq) return false
+  currentActionId = id
+
+  const loaded = await loadAnimation(id)
+  /*
+   * 加载是异步的。这期间思考可能已经结束、或者用户点了/换了动作 ——
+   * 那就不该再把这个动作推上前台（否则会把别人的动画顶掉）。
+   */
+  if (token !== thinkSeq) {
+    if (currentActionId === id) currentActionId = null
+    return false
+  }
+  if (!loaded) {
+    console.error(`[think] 素材 ${id} 加载失败`)
+    currentActionId = null
+    if (onFinish) onFinish()
+    return false
+  }
+
+  activeAnimationId = id
+  showFrame(0)
+  buildHitMasks()
+
+  if (loop) {
+    startLoop(id)
+    return true
+  }
+
+  startPlanPlayback(id)
+  /*
+   * 收尾定时器：按**播放计划长度**算，而不是帧数 ——
+   * 与 playAction 里的理由相同（`loopRange` 会让实际时长长于帧数）。
+   */
+  const frames = Math.max(1, planLengthOf(loaded))
+  const fps = loaded.fps > 0 ? loaded.fps : 6
+  const onceMs = Math.round((frames / fps) * 1000)
+  thinkTimer = setTimeout(() => {
+    thinkTimer = null
+    // 三道闸门：过期版本 / 已被别的动作顶掉 / 正在拖拽 —— 任何一条成立都不收尾。
+    if (token !== thinkSeq) return
+    if (currentActionId !== id) return
+    if (dragging) return
+    if (onFinish) onFinish()
+    else endAction()
+  }, Math.max(300, onceMs + 60))
+  return true
+}
+
+/**
+ * 进入深度思考：**先停掉当前动作**，再按「进入段 → 循环段」播放。
  *
  * 顺序很重要：用户明确要求"同时停止当前正在进行的动作"。
  * 若先播思考动作再收尾旧动作，旧动作的收尾回调会把画面拉回站立，
@@ -2749,39 +2878,89 @@ let thinkActive = false
 async function enterThink() {
   if (thinkActive) return
   thinkActive = true
+  // 新的进入序列开始：作废所有在飞的旧切换（可能是上一次的退出段）。
+  thinkSeq += 1
+  const token = thinkSeq
+  cancelThinkTimer()
 
   // 坐姿是"多阶段 + 计时器"的，必须走它自己的取消逻辑，否则计时器还在跑。
   cancelSit('宿主开始思考')
 
   /*
    * 睡眠中开始思考：与"宿主开始工作"一致，先播惊醒动画。
-   * 这里 await 是因为后面的 endAction/playAction 要作用在惊醒之后的状态上。
+   * 这里 await 是因为后面的 endAction/playThinkPhase 要作用在惊醒之后的状态上。
    */
   if (petState === 'sleeping' || petState === 'waking') {
     await wakeFromSleep()
   }
+  if (token !== thinkSeq) return
 
-  if (currentActionId !== null) endAction()
-
-  console.info('[think] DSH 开始思考 → 播「深度思考」（素材待补，当前会回落到站立）')
-  void playAction(THINK_ACTION_ID, { fromMenu: false })
+  thinkPhase = 'enter'
+  console.info('[think] DSH 开始思考 → 播「深度思考」进入段（think-enter 1→6）')
+  await playThinkPhase(THINK_ENTER_ID, {
+    token,
+    onFinish: () => {
+      // 进入段播完 → 循环段。若这期间思考已经结束，就走退出段。
+      if (token !== thinkSeq) return
+      if (!thinkActive) {
+        void playThinkExit('进入途中思考已结束')
+        return
+      }
+      thinkPhase = 'loop'
+      console.info('[think] 进入段播完 → 循环「思考中」（think-loop）')
+      void playThinkPhase(THINK_LOOP_ID, { loop: true, token })
+    },
+  })
 }
 
 /**
- * 结束深度思考，回到闲置。
+ * 播退出段（进入段的倒放），播完回站立闲置。
  *
- * @param {string} reason 日志用（"思考结束" / "用户点击"）
+ * @param {string} reason 日志用
+ */
+async function playThinkExit(reason) {
+  thinkSeq += 1
+  const token = thinkSeq
+  cancelThinkTimer()
+  thinkPhase = 'exit'
+  console.info(`[think] 播放退出段（think-exit 6→1）—— ${reason}`)
+  await playThinkPhase(THINK_EXIT_ID, {
+    token,
+    onFinish: () => {
+      if (token !== thinkSeq) return
+      thinkPhase = null
+      /*
+       * 回站立闲置。`endAction()` 已经把画面切回站立循环，
+       * 这里只需重置闲置计时：思考可能持续很久，不重置就会"刚思考完立刻弹随机动作"。
+       */
+      endAction()
+      resetIdleTimer(true)
+      console.info('[think] 退出段播完 → 回站立闲置')
+    },
+  })
+}
+
+/**
+ * 结束深度思考：切到退出段，播完回站立。
+ *
+ * ⚠️ `thinkActive` 必须**同步**置 false：
+ * 它是"宿主还在思考"的门控（点击、随机动作、闲置计时都看它），
+ * 若等动画播完再置，那么在 1 秒的退出动画里点击仍会被当成"思考中点击"。
+ *
+ * @param {string} reason 日志用（"思考结束" / "用户点击" / …）
  */
 function exitThink(reason) {
-  if (!thinkActive) return
+  if (!thinkActive && thinkPhase === null) return
   thinkActive = false
-  if (currentActionId === THINK_ACTION_ID) endAction()
   /*
-   * 回到闲置后重新起算闲置门槛：思考期间可能持续很久，
-   * 不重置的话"刚思考完"会立刻满足闲置门槛而弹动作，观感很突兀。
+   * 还没开始进入就结束（例如宿主一瞬间 thinking→working）：
+   * 直接回站立，不播退出段 —— 否则会看到"还没进入就倒放一段"。
    */
-  resetIdleTimer(true)
-  console.info(`[think] 结束深度思考（${reason}）→ 回闲置`)
+  if (thinkPhase === null) {
+    resetIdleTimer(true)
+    return
+  }
+  void playThinkExit(reason)
 }
 
 /**
@@ -2802,6 +2981,15 @@ function exitThink(reason) {
  */
 function refreshToIdle(reason = '刷新状态') {
   thinkActive = false
+  /*
+   * 思考的三段是串联的，刷新时必须连"段"一起清掉：
+   * 只清 thinkActive 是不够的 —— 进入/退出段的收尾回调仍会触发，
+   * 把画面从站立又拖去播一段思考动画（"刷新了还是动不了"的典型成因）。
+   * 版本号 +1 让所有在飞的回调作废，定时器也一并清掉。
+   */
+  thinkPhase = null
+  thinkSeq += 1
+  cancelThinkTimer()
   try {
     cancelSit(reason)
   } catch (err) {
@@ -4368,8 +4556,10 @@ window.__petTestClick = (clientX = 90, clientY = 200) => {
 window.__petTestThink = {
   state: () => ({
     active: thinkActive,
+    phase: thinkPhase,
     petState,
     currentActionId,
+    activeAnimationId,
     canTriggerRandom: canTriggerRandomAction(),
   }),
   enter: async () => {

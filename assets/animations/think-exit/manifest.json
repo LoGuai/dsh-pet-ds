@@ -1,0 +1,147 @@
+{
+  "frameCount": 6,
+  "fps": 6,
+  "loop": false,
+  "sourceCanvasHeight": 1157,
+  "drawOffsetY": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+  ],
+  "_note": "由 scripts/dev/build-action-asset.py think-exit 生成；与站立素材同一画布约定（水平居中 + 脚底基准 y=1155）。",
+  "_processing": {
+    "canvas": {
+      "w": 864,
+      "h": 1157
+    },
+    "scale": 0.9154,
+    "footBaseOutput": 1155,
+    "headWidthOut": 530.0,
+    "headMatch": {
+      "ref": "stand",
+      "refHeadWidth": 530,
+      "rawHeadWidth": 579,
+      "correction": 0.9502
+    },
+    "perFrameScale": null,
+    "perFrame": [
+      {
+        "src": "1.png",
+        "out": "frame_01.webp",
+        "srcBounds": [
+          227,
+          30,
+          1018,
+          1224
+        ],
+        "placedAt": [
+          70,
+          62
+        ],
+        "scale": 0.9154,
+        "outTop": 62,
+        "outFoot": 1155,
+        "outW": 725,
+        "outH": 1094
+      },
+      {
+        "src": "2.png",
+        "out": "frame_02.webp",
+        "srcBounds": [
+          226,
+          29,
+          1022,
+          1224
+        ],
+        "placedAt": [
+          68,
+          61
+        ],
+        "scale": 0.9154,
+        "outTop": 61,
+        "outFoot": 1155,
+        "outW": 730,
+        "outH": 1095
+      },
+      {
+        "src": "3.png",
+        "out": "frame_03.webp",
+        "srcBounds": [
+          227,
+          30,
+          1017,
+          1223
+        ],
+        "placedAt": [
+          70,
+          63
+        ],
+        "scale": 0.9154,
+        "outTop": 63,
+        "outFoot": 1155,
+        "outW": 724,
+        "outH": 1093
+      },
+      {
+        "src": "4.png",
+        "out": "frame_04.webp",
+        "srcBounds": [
+          228,
+          30,
+          1018,
+          1223
+        ],
+        "placedAt": [
+          70,
+          63
+        ],
+        "scale": 0.9154,
+        "outTop": 63,
+        "outFoot": 1155,
+        "outW": 724,
+        "outH": 1093
+      },
+      {
+        "src": "5.png",
+        "out": "frame_05.webp",
+        "srcBounds": [
+          228,
+          28,
+          1018,
+          1225
+        ],
+        "placedAt": [
+          70,
+          59
+        ],
+        "scale": 0.9154,
+        "outTop": 59,
+        "outFoot": 1155,
+        "outW": 724,
+        "outH": 1097
+      },
+      {
+        "src": "6.png",
+        "out": "frame_06.webp",
+        "srcBounds": [
+          228,
+          30,
+          1017,
+          1223
+        ],
+        "placedAt": [
+          71,
+          63
+        ],
+        "scale": 0.9154,
+        "outTop": 63,
+        "outFoot": 1155,
+        "outW": 723,
+        "outH": 1093
+      }
+    ]
+  }
+}
