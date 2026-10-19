@@ -57,6 +57,18 @@ for (const f of ['install.cmd', 'install-pet.ps1', 'register-profile.mjs']) {
 const tgzs = readdirSync(pkgDir).filter((f) => /^dsh-pet-ds-.*\.tgz$/.test(f))
 check('包里有包体 tgz（文件名能被安装脚本的 glob 找到）', tgzs.length === 1, tgzs.join(', '))
 
+/* 交付包内附本版更新日志：用户拿到 zip 后不用再去仓库翻 CHANGELOG。 */
+const logs = readdirSync(pkgDir).filter((f) => /^V.+更新日志\.md$/.test(f))
+check('包里有本版更新日志', logs.length === 1, logs.join(', '))
+if (logs.length === 1) {
+  const logText = readFileSync(join(pkgDir, logs[0]), 'utf8')
+  check(
+    '更新日志里有「新增」与「修复」两节',
+    logText.includes('## 新增') && logText.includes('## 修复'),
+    `${String(logText.split(/\r?\n/).length)} 行`,
+  )
+}
+
 /* 造一个沙箱 DSH 配置目录，让安装脚本往这里装 */
 const home = join(sandbox, 'home')
 const profileDir = join(home, 'profiles', 'desktop')

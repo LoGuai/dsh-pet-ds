@@ -23,7 +23,7 @@
  * 用法：node scripts/dev/build-oneclick-zip.mjs
  */
 
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -47,11 +47,58 @@ const pkgDir = join(DIST, TAG)
 rmSync(pkgDir, { recursive: true, force: true })
 mkdirSync(pkgDir, { recursive: true })
 
+/*
+ * 从 CHANGELOG.md 抽出**本版本**那一段，写成独立的更新日志文件。
+ *
+ * 为什么要放进交付包：用户拿到 zip 后想确认"这版改了什么"，
+ * 不该还要去仓库翻 CHANGELOG.md。而 CHANGELOG.md 本身会继续增长，
+ * 抽出来的是**这一版的定稿**，不会随后续改动变形。
+ */
+const changelogPath = join(DIST, `${TAG}-更新日志.md`)
+{
+  const text = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8')
+  const lines = text.split(/\r?\n/)
+  const re = new RegExp(`^##\\s*\\[${version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\]`)
+  const start = lines.findIndex((l) => re.test(l))
+  if (start < 0) {
+    console.log(`  ✗ CHANGELOG.md 里找不到 ## [${version}] 段落`)
+    process.exit(1)
+  }
+  let end = lines.findIndex((l, i) => i > start && /^##\s/.test(l))
+  if (end < 0) end = lines.length
+
+  const body = lines
+    .slice(start + 1, end)
+    .join('\n')
+    .replace(/\n+---\s*$/, '')
+    .trim()
+    /*
+     * 独立文件里 `#` 是标题，小节应从 `##` 起 —— 而源文件里它们挂在
+     * `## [版本]` 下面是 `###`。统一降一级，避免导出的文档层级跳号。
+     */
+    .replace(/^### /gm, '## ')
+
+  writeFileSync(
+    changelogPath,
+    [
+      `# ${TAG} 更新日志`,
+      '',
+      `> 完整历史见插件目录里的 \`CHANGELOG.md\`。`,
+      '',
+      body,
+      '',
+    ].join('\n'),
+    'utf8',
+  )
+  console.log(`  ✓ ${TAG}-更新日志.md`)
+}
+
 const files = [
   [join(ROOT, 'install.cmd'), 'install.cmd'],
   [join(ROOT, 'install-pet.ps1'), 'install-pet.ps1'],
   [join(ROOT, 'scripts', 'register-profile.mjs'), 'register-profile.mjs'],
   [tgzPath, tgzName],
+  [changelogPath, `${TAG}-更新日志.md`],
 ]
 for (const [from, to] of files) {
   if (!existsSync(from)) {
