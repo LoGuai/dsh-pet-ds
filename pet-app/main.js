@@ -3977,6 +3977,34 @@ async function verifyClickParts(check, wait) {
   const wc = win && !win.isDestroyed() ? win.webContents : null
   if (!wc) return
 
+  /*
+   * 前置：关掉随机动作，并确保**没有动作在播**。
+   *
+   * 为什么要加：这段用例假设"点一下就该播部位动画/说部位台词"，
+   * 但随机动作可能恰好插进来 —— 抽到「坐下」时 `petState='sitting'`，
+   * 而点击坐着的桌宠是"让她站起来"的语义（不说部位台词、不播部位动画），
+   * 于是整段用例集体失败，还连带后面的边界取样断言一起红。
+   * 实测就是这么偶发红的（同一份代码一轮过、一轮红）。
+   *
+   * ⚠️ 只做"最小清理"：概率设 0、门槛推远，再用 endAction() 收掉动作。
+   * **不要**无条件去动思考状态机 —— 试过调 `__petTestThink.exit()`，
+   * 结果把后面「深度思考」用例的前置搅乱了（它会留下一个退出段）。
+   * 只有真的不在 idle（坐着/睡着）时才用「刷新状态」兜底。
+   */
+  await wc.executeJavaScript(
+    'window.__petTestSetIdleClock({ probability: 0, readyAt: Date.now() + 600000 })',
+    true,
+  )
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const st = await wc.executeJavaScript(
+      '({ action: (window.__petTestState() || {}).currentActionId, petState: (window.__petTestState() || {}).petState })',
+      true,
+    )
+    if (st && !st.action && st.petState === 'idle') break
+    await wc.executeJavaScript('window.__petTestRefresh()', true)
+    await wait(200)
+  }
+
   const parts = await wc.executeJavaScript('window.__petTestState().clickParts', true)
   if (!Array.isArray(parts) || parts.length === 0) {
     check('点击部位清单已下发', false, '渲染进程里 clickParts 为空')
@@ -5598,6 +5626,12 @@ async function verifyAffectionAndFeedback(check, wait) {
 
   // ---- 6) 深度思考：随宿主状态进出，点击也能结束 ----
   {
+    /*
+     * 先把状态收干净再开始：前面几段用例可能留下动作/坐姿/退出段，
+     * 都会让"第一次读到的思考状态"不确定。这里强制回到闲置。
+     */
+    await js('window.__petTestRefresh()')
+    await wait(300)
     testPushState({ workStatus: 'thinking', workLabel: '思考中…', seq: 9601 })
     await wait(500)
     const t1 = await js('window.__petTestThink.state()')
@@ -5650,6 +5684,16 @@ async function verifyAffectionAndFeedback(check, wait) {
       '退出段播完 → 回站立闲置',
       Boolean(tAfter) && tAfter.phase === null && tAfter.activeAnimationId === 'stand',
       `phase=${String(tAfter && tAfter.phase)}，动画=${String(tAfter && tAfter.activeAnimationId)}`,
+    )
+    /*
+     * 用户反馈："进入思考 / 思考中 / 结束思考 衔接时会先跳出一帧站立"。
+     * 成因是段落切换走了 endAction()（会把画面切回站立），而下一段素材是异步加载的。
+     * 现在切换前先载好素材、不再经过站立 —— 这条断言钉住它不回退。
+     */
+    check(
+      '思考三段衔接不经过站立（不闪一帧站立）',
+      Boolean(tAfter) && tAfter.standFlashes === 0,
+      `本轮被切回站立的次数 = ${String(tAfter && tAfter.standFlashes)}（应为 0）`,
     )
 
     // 再进一次，这次让宿主自己结束思考

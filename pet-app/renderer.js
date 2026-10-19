@@ -2562,6 +2562,11 @@ function endAction() {
 
   // 回到站立。
   if (activeAnimationId !== 'stand') {
+    /*
+     * 思考段落**不该**走到这里。若走了，说明又出现了"衔接时漏一帧站立"的回归 ——
+     * 记一笔，自测会断言它是 0（见 verifyAffectionAndFeedback 里的思考用例）。
+     */
+    if (thinkPhase !== null) thinkStandFlashCount += 1
     activeAnimationId = 'stand'
     const stand = animations.get('stand')
     if (stand && stand.ready) {
@@ -2796,6 +2801,18 @@ let thinkSeq = 0
 /** 思考某一段的收尾定时器。**独立保存**，不占用 `actionStopTimer`。 */
 let thinkTimer = null
 
+/**
+ * "思考过程中被切回站立"的次数（诊断/自测用）。
+ *
+ * 用户反馈过：「进入思考、思考中、结束思考动作衔接的时候会先跳出一帧的站立动作」。
+ * 成因是段落切换时走了 `endAction()`（它会把画面切回站立第 0 帧），
+ * 而下一段素材是异步加载的，于是在中间漏出一帧站立。
+ *
+ * 现在段落切换不再经过站立；这个计数器用来保证"不回归"：
+ * 正常一轮 enter→loop→exit 之后它必须是 0。
+ */
+let thinkStandFlashCount = 0
+
 /** 清掉待执行的思考切换。 */
 function cancelThinkTimer() {
   if (thinkTimer) {
@@ -2817,21 +2834,24 @@ async function playThinkPhase(id, options) {
   const { loop = false, onFinish = null, token } = options
   if (dragging) return false
 
-  cancelThinkTimer()
-  // 先收掉上一段：它可能还挂着收尾定时器，不清会和新的一段打架。
-  endAction()
-  if (token !== thinkSeq) return false
-  currentActionId = id
-
+  /*
+   * ⚠️ 顺序是"**先载素材，再切画面**"，不是反过来。
+   *
+   * 之前写成"先 endAction() 再 await loadAnimation()"，于是：
+   *   endAction() 会立刻把画面切回**站立第 0 帧**，
+   *   而下一段素材要等异步加载完成才显示 ——
+   *   中间那一帧站立就被渲染出来了。用户看到的就是
+   *   "进入思考 / 思考中 / 结束思考 衔接时会闪一帧站立"。
+   *
+   * 现在把加载放在前面：这段等待期间**上一段还在播**（它的定时器已经停了，
+   * 所以停在最后一帧），素材就绪后一次性切换，全程不经过站立。
+   */
   const loaded = await loadAnimation(id)
   /*
    * 加载是异步的。这期间思考可能已经结束、或者用户点了/换了动作 ——
    * 那就不该再把这个动作推上前台（否则会把别人的动画顶掉）。
    */
-  if (token !== thinkSeq) {
-    if (currentActionId === id) currentActionId = null
-    return false
-  }
+  if (token !== thinkSeq) return false
   if (!loaded) {
     console.error(`[think] 素材 ${id} 加载失败`)
     currentActionId = null
@@ -2839,6 +2859,22 @@ async function playThinkPhase(id, options) {
     return false
   }
 
+  /*
+   * 就地替换上一段：清掉它的收尾/循环定时器并释放内存，
+   * 但**不走 endAction()** —— 那会把画面切回站立（就是漏帧的来源）。
+   */
+  if (actionStopTimer) {
+    clearTimeout(actionStopTimer)
+    actionStopTimer = null
+  }
+  cancelThinkTimer()
+  const previous = currentActionId
+  if (previous && previous !== id) {
+    stopLoop(previous)
+    disposeAnimation(previous)
+  }
+
+  currentActionId = id
   activeAnimationId = id
   showFrame(0)
   buildHitMasks()
@@ -2882,6 +2918,8 @@ async function enterThink() {
   thinkSeq += 1
   const token = thinkSeq
   cancelThinkTimer()
+  // 每一轮思考都从 0 开始计"漏帧"次数（只统计本轮）。
+  thinkStandFlashCount = 0
 
   // 坐姿是"多阶段 + 计时器"的，必须走它自己的取消逻辑，否则计时器还在跑。
   cancelSit('宿主开始思考')
@@ -4561,6 +4599,8 @@ window.__petTestThink = {
     currentActionId,
     activeAnimationId,
     canTriggerRandom: canTriggerRandomAction(),
+    /** 本轮思考里"被切回站立"的次数（衔接漏帧的回归指标，正常应为 0）。 */
+    standFlashes: thinkStandFlashCount,
   }),
   enter: async () => {
     await enterThink()
