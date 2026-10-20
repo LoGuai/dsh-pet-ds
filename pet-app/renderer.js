@@ -2866,6 +2866,60 @@ function cancelThinkTimer() {
   }
 }
 
+// ---------------------------------------------------------------- 思考时长上限
+/*
+ * 需求（用户指定）：
+ *   「深度思考动作开始循环后，同时从 0 开始计时，若持续达到 300 秒，则直接触发结束。
+ *     同时，在此之前 dsh 思考结束，则正常触发结束，并停止计时。」
+ *
+ * 为什么需要这条：思考动作是宿主状态的映射，而**宿主状态可能回不来**
+ * （请求挂死、插件被禁用、宿主进程卡住）。没有上限她就会一直低头站着不动，
+ * 而且点击虽然能结束，用户未必知道。300 秒是个"明显不对但又不至于误伤"的界限。
+ *
+ * 语义要点：
+ *  · 计时**从循环段开始**算，不是从按下触发器算（进入段那 1 秒不算在内）；
+ *  · 到达上限时走**与正常结束完全相同的路径**（exitThink → 退出段 → 回闲置），
+ *    不另写一套收尾逻辑；
+ *  · 正常结束（宿主说思考完了 / 用户点击 / 刷新状态）会**清掉**计时器。
+ */
+const THINK_MAX_HOLD_MS = 300_000
+
+/** 当前生效的上限（毫秒）。自测会用 `__petTestThink.setHoldLimit` 临时改小。 */
+let thinkHoldLimitMs = THINK_MAX_HOLD_MS
+
+/** 计时器本体。 */
+let thinkHoldTimer = null
+
+/** 本轮思考的到期时刻（诊断/自测用；未计时时为 null）。 */
+let thinkHoldDeadline = null
+
+/** 停止计时（正常结束时必须调用，避免"已经回闲置了又被上限踢一次"）。 */
+function clearThinkHold() {
+  if (thinkHoldTimer) {
+    clearTimeout(thinkHoldTimer)
+    thinkHoldTimer = null
+  }
+  thinkHoldDeadline = null
+}
+
+/** 开始计时：从"循环段起播"这一刻算 0。 */
+function armThinkHold() {
+  clearThinkHold()
+  thinkHoldDeadline = Date.now() + thinkHoldLimitMs
+  thinkHoldTimer = setTimeout(() => {
+    thinkHoldTimer = null
+    const expiredAt = thinkHoldDeadline
+    thinkHoldDeadline = null
+    if (expiredAt !== null) {
+      console.info(`[think] 思考已持续 ${String(Math.round(thinkHoldLimitMs / 1000))} 秒（上限）→ 自动结束`)
+    }
+    // 只有"还在思考且确实处于循环段"时才触发，否则这次上限已经过时了。
+    if (!thinkActive || thinkPhase !== 'loop') return
+    exitThink('思考时长达到上限')
+  }, thinkHoldLimitMs)
+  if (typeof thinkHoldTimer.unref === 'function') thinkHoldTimer.unref()
+}
+
 /**
  * 播放一段"思考"素材（内部用，不走动作目录、不弹台词、不动闲置计时）。
  *
@@ -2926,6 +2980,17 @@ async function playThinkPhase(id, options) {
 
   if (loop) {
     startLoop(id)
+    /*
+     * 循环段开始即**起算时长**（用户要求：「深度思考动作开始循环后，同时从 0 开始计时，
+     * 若持续达到 300 秒，则直接触发结束」）。
+     *
+     * 这是**兜底**：宿主的思考状态有时不会乖乖回到 idle（例如请求挂死、
+     * 或插件在思考中被禁用），没有上限她就会一直低头站着。
+     *
+     * 正常结束（宿主说思考完了 / 用户点击）会走 exitThink，那里会把计时器清掉 ——
+     * 也就是用户说的"在此之前 dsh 思考结束，则正常触发结束，并停止计时"。
+     */
+    armThinkHold()
     return true
   }
 
@@ -2963,6 +3028,8 @@ async function enterThink() {
   thinkSeq += 1
   const token = thinkSeq
   cancelThinkTimer()
+  /* 新一轮思考：先把上一轮可能残留的时长上限停掉（正常流程它已被清过，这里是兜底）。 */
+  clearThinkHold()
   // 每一轮思考都从 0 开始计"漏帧"次数（只统计本轮）。
   thinkStandFlashCount = 0
 
@@ -3005,6 +3072,8 @@ async function playThinkExit(reason) {
   thinkSeq += 1
   const token = thinkSeq
   cancelThinkTimer()
+  /* 退出开始就把时长上限停掉：这时已经"结束"了，不该再被它踢第二次。 */
+  clearThinkHold()
   thinkPhase = 'exit'
   console.info(`[think] 播放退出段（think-exit 6→1）—— ${reason}`)
   await playThinkPhase(THINK_EXIT_ID, {
@@ -3035,6 +3104,11 @@ async function playThinkExit(reason) {
 function exitThink(reason) {
   if (!thinkActive && thinkPhase === null) return
   thinkActive = false
+  /*
+   * 用户要求：「在此之前 dsh 思考结束，则正常触发结束，**并停止计时**」。
+   * 所以不论走哪条分支，先停表再收尾。
+   */
+  clearThinkHold()
   /*
    * 还没开始进入就结束（例如宿主一瞬间 thinking→working）：
    * 直接回站立，不播退出段 —— 否则会看到"还没进入就倒放一段"。
@@ -3073,6 +3147,8 @@ function refreshToIdle(reason = '刷新状态') {
   thinkPhase = null
   thinkSeq += 1
   cancelThinkTimer()
+  /* 刷新等于"强制结束"，时长上限也要停 —— 否则 300 秒后它还会再触发一次结束。 */
+  clearThinkHold()
   try {
     cancelSit(reason)
   } catch (err) {
@@ -4648,7 +4724,20 @@ window.__petTestThink = {
     canTriggerRandom: canTriggerRandomAction(),
     /** 本轮思考里"被切回站立"的次数（衔接漏帧的回归指标，正常应为 0）。 */
     standFlashes: thinkStandFlashCount,
+    /** 思考时长上限：到期时刻（未计时为 null）与上限毫秒数。 */
+    holdDeadline: thinkHoldDeadline,
+    holdLimitMs: thinkHoldLimitMs,
+    holdArmed: thinkHoldTimer !== null,
   }),
+  /**
+   * 测试用：改小"思考时长上限"，免得自测真等 300 秒。
+   *
+   * @param {number} ms 毫秒；传 0 表示恢复默认 300000
+   */
+  setHoldLimit: (ms) => {
+    thinkHoldLimitMs = ms > 0 ? Math.max(50, Math.round(ms)) : THINK_MAX_HOLD_MS
+    return thinkHoldLimitMs
+  },
   enter: async () => {
     await enterThink()
     return window.__petTestThink.state()

@@ -5786,6 +5786,21 @@ async function verifyAffectionAndFeedback(check, wait) {
         + ` → 循环中 hidden=${String(bubbleDuringThink && bubbleDuringThink.hidden)}/${String(bubbleDuringThink && bubbleDuringThink.text)}`,
     )
 
+    /*
+     * 用户要求：「循环开始后从 0 开始计时，持续 300 秒则直接触发结束」。
+     * 这里只验证"循环段一起播就开始计时"，以及"300 秒"这个量级。
+     */
+    const holdLeft = tLoop && Number.isFinite(tLoop.holdDeadline)
+      ? tLoop.holdDeadline - Date.now()
+      : null
+    check(
+      '循环段开始后立即起算思考时长（上限 300 秒）',
+      Boolean(tLoop) && tLoop.holdArmed === true && holdLeft !== null && holdLeft > 280_000 && holdLeft <= 305_000,
+      tLoop
+        ? `计时中=${String(tLoop.holdArmed)}，上限=${String(tLoop.holdLimitMs)}ms，剩余≈${String(holdLeft)}ms`
+        : '读不到思考状态',
+    )
+
     await js('window.__petTestClick()')
     await wait(300)
     const t2 = await js('window.__petTestThink.state()')
@@ -5818,6 +5833,17 @@ async function verifyAffectionAndFeedback(check, wait) {
       Boolean(tAfter) && tAfter.standFlashes === 0,
       `本轮被切回站立的次数 = ${String(tAfter && tAfter.standFlashes)}（应为 0）`,
     )
+    /*
+     * 用户要求：「在此之前 dsh 思考结束，则正常触发结束，**并停止计时**」。
+     * 这里点击结束了一次思考，计时必须已经停掉（holdDeadline 回到 null）。
+     */
+    check(
+      '正常结束思考后停止计时（不会被 300 秒上限再踢一次）',
+      Boolean(tAfter) && tAfter.holdDeadline === null && tAfter.holdArmed === false,
+      tAfter
+        ? `计时中=${String(tAfter.holdArmed)}，到期时刻=${String(tAfter.holdDeadline)}`
+        : '读不到思考状态',
+    )
 
     // 再进一次，这次让宿主自己结束思考
     /*
@@ -5842,6 +5868,33 @@ async function verifyAffectionAndFeedback(check, wait) {
     )
     // 等退出段播完，别把 exit 状态留给后面的用例
     await wait(1600)
+  }
+
+  /*
+   * ---- 6.5) 思考时长上限：到点自动结束 ----
+   *
+   * 用户要求「若持续达到 300 秒，则直接触发结束」。自测不能真等 5 分钟，
+   * 所以用 `setHoldLimit` 把上限临时改小（这是**测试专用**的注入点，
+   * 生产路径永远是 300 秒），验证"到点会自己走退出段并回闲置"。
+   */
+  {
+    await js('window.__petTestThink.setHoldLimit(700)')
+    testPushState({ workStatus: 'idle', workLabel: '', seq: 9610 })
+    await wait(200)
+    testPushState({ workStatus: 'thinking', workLabel: '思考中…', seq: 9611 })
+    // 等到循环段起来（进入段 6 帧 ≈ 1 秒）+ 上限 700ms
+    await wait(2600)
+    const afterLimit = await js('window.__petTestThink.state()')
+    check(
+      '思考持续到上限 → 自动触发结束（无需宿主通知）',
+      Boolean(afterLimit) && afterLimit.active === false && afterLimit.holdDeadline === null,
+      afterLimit
+        ? `active=${String(afterLimit.active)}，phase=${String(afterLimit.phase)}，计时中=${String(afterLimit.holdArmed)}`
+        : '读不到思考状态',
+    )
+    // 恢复默认上限，别影响后面的用例
+    await js('window.__petTestThink.setHoldLimit(0)')
+    await wait(1400)
   }
 
   // ---- 7) 刷新状态：无条件回闲置 ----
