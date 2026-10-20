@@ -26,6 +26,19 @@ install_bundle  target = https://github.com/liuguanyu9719-source/dsh-pet-ds/rele
 - `releases/latest/download/...` 永远指向**最新一版**：发布时把 `dist/release/dsh-pet-ds.tgz` 以**同名**上传即可；
 - 想锁死版本：`https://github.com/liuguanyu9719-source/dsh-pet-ds/archive/refs/tags/v0.2.1.tar.gz`（tag 快照，同样是单包下载）。
 
+### 关于 git 地址（能装，但最慢）
+
+`https://github.com/liuguanyu9719-source/dsh-pet-ds` 这种**仓库地址**会被当 git 依赖安装，
+它有两个额外代价：
+
+1. **多一步连通性预检**：DSH 会先跑 `git ls-remote`，默认只等 **5 秒**。
+   国内直连 GitHub 常要 20 秒以上，于是报"连接 github 超时"。两条解法：
+   `git config --global http.proxy http://127.0.0.1:7897`（换成你的代理端口），
+   或把 `githubConnectionTimeoutMs` 调大（profile 的 `cordis.patch.yml`，entry id 是 `plugin-manager`）。
+2. **要下载整份仓库**：本仓库历史已瘦身（296 MB → 37 MB），但仍是 tarball 的 5 倍左右。
+
+> 结论：能装（瘦身后实测浅克隆 7.6 秒），但对外分发仍建议用 Release 附件或 tag 快照。
+
 > npm 包名 `dsh-pet-ds` 已预留但**尚未发布**（npm 账号注册被 Cloudflare 挡），
 > 发布后这里会多一条：`dsh plugin --profile <profile> add dsh-pet-ds@0.2.1`。
 
