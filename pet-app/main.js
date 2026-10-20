@@ -5415,8 +5415,13 @@ async function verifyIdleVoice(check, wait) {
       idleGroups.map((g) => g.id).join(', '),
     )
     check(
-      '闲置每组各 3 条（共 27 条）',
-      idleGroups.every((group) => group.lines.length === 3) && voiceLineCountFor('idle') === 27,
+      '闲置语音：固定组 ≥3 条，好感/心情组各 3 条',
+      /*
+       * 用户修订版把"固定语音"加到 4 条，其余分档组仍是 3 条。
+       * 分档组必须**正好 3 条**：句数不均会让某个档位抽中概率偏高。
+       */
+      idleGroups.every((group) => (group.kind === 'fixed' ? group.lines.length >= 3 : group.lines.length === 3))
+        && voiceLineCountFor('idle') === 28,
       `闲置 ${String(voiceLineCountFor('idle'))} 条；全库 ${String(voiceLineCount())} 条`,
     )
     const triggers = [...new Set(VOICE_GROUPS.map((g) => g.trigger))]

@@ -81,7 +81,7 @@ test('八类触发条件都有分组（不会漏掉某类）', () => {
   }
 })
 
-test('闲置：1 固定 + 5 好感度 + 3 心情，每组 3 条', () => {
+test('闲置：1 固定 + 5 好感度 + 3 心情，好感/心情组各 3 条', () => {
   const idle = VOICE_GROUPS.filter((g) => g.trigger === 'idle')
   assert.equal(idle.length, 9)
   assert.equal(idle.filter((g) => g.kind === 'fixed').length, 1)
@@ -93,13 +93,33 @@ test('闲置：1 固定 + 5 好感度 + 3 心情，每组 3 条', () => {
     idle.filter((g) => g.kind === 'mood').map((g) => g.mood).sort(),
     ['high', 'low', 'mid'],
   )
-  for (const g of idle) assert.equal(g.lines.length, 3, `${g.id} 应 3 条`)
+  /*
+   * 固定语音允许 ≥3 条（用户修订版给到 4 条）；
+   * 好感度与心情组是"分档"用的，必须**每组正好 3 条** —— 否则档位之间句数不均，
+   * 抽到某一档的概率就会偏高。
+   */
+  for (const g of idle) {
+    if (g.kind === 'fixed') {
+      assert.ok(g.lines.length >= 3, `${g.id} 至少 3 条，实际 ${String(g.lines.length)}`)
+    } else {
+      assert.equal(g.lines.length, 3, `${g.id} 应 3 条`)
+    }
+  }
 })
 
-test('点击：4 个部位 × 3 档 = 12 组，每组 2 条，且不缺档', () => {
+test('点击：4 个部位 × 3 档 = 12 组，每组 2~3 条，且不缺档', () => {
   const click = VOICE_GROUPS.filter((g) => g.trigger === 'click')
   assert.equal(click.length, 12)
-  for (const g of click) assert.equal(g.lines.length, 2, `${g.id} 应 2 条`)
+  /*
+   * 高好感档位允许 3 条（用户修订版给 4~5 心加了第 3 句）；
+   * 低/中档仍是 2 条。这里只卡"2~3 条"的范围，避免以后又漂成 1 条或 6 条。
+   */
+  for (const g of click) {
+    assert.ok(
+      g.lines.length >= 2 && g.lines.length <= 3,
+      `${g.id} 应 2~3 条，实际 ${String(g.lines.length)}`,
+    )
+  }
   const parts = [...new Set(click.map((g) => g.part))]
   assert.deepEqual(parts.sort(), ['belly', 'chest', 'head', 'leg'])
   for (const part of parts) {
@@ -217,7 +237,12 @@ test('点击：按部位 + 好感度档位取台词', () => {
   assert.notDeepEqual(clickPartLines('head', 0), clickPartLines('head', 5), '高低档台词不该相同')
   for (const part of ['head', 'chest', 'belly', 'leg']) {
     for (let h = 0; h <= 5; h += 1) {
-      assert.equal(clickPartLines(part, h).length, 2, `${part}@${String(h)} 心应有 2 句`)
+      /*
+       * 2~3 句：用户修订版给 4~5 心档每个部位加了第 3 句，
+       * 低/中档仍是 2 句。这里卡范围而不是写死 2，免得下次加词又要改测试。
+       */
+      const n = clickPartLines(part, h).length
+      assert.ok(n >= 2 && n <= 3, `${part}@${String(h)} 心应有 2~3 句，实际 ${String(n)}`)
     }
   }
 })
@@ -227,14 +252,25 @@ test('点击三档整表齐全（主进程下发给渲染进程的就是它）',
   for (const part of ['head', 'chest', 'belly', 'leg']) {
     assert.ok(table[part], `表里缺部位 ${part}`)
     for (const tier of CLICK_VOICE_TIERS) {
-      assert.equal((table[part][tier] ?? []).length, 2, `${part}.${tier} 应有 2 句`)
+      // 2~3 句：用户修订版给 4~5 心档加了第 3 句，低/中档仍是 2 句。
+      const n = (table[part][tier] ?? []).length
+      assert.ok(n >= 2 && n <= 3, `${part}.${tier} 应有 2~3 句，实际 ${String(n)}`)
     }
   }
 })
 
 test('动作 / 余额 / 系统 / 拖拽 都能按条件取到且不串台', () => {
-  assert.deepEqual(actionLines('eat'), ['（占位）开饭啦'])
-  assert.deepEqual(actionLines('sleep'), ['（占位·睡）那我先睡一会儿…zzz'])
+  /*
+   * 动作台词换成了用户修订版（原先只有一句"（占位）…"）。
+   * 这里**不再写死具体句子** —— 那是内容，不是规则；写死会导致
+   * 每次用户改词都要改测试。只断言"能取到、且确实来自该组的 lines"。
+   */
+  for (const id of ['eat', 'play-mc', 'sit', 'sleep', 'awake']) {
+    const got = actionLines(id)
+    assert.ok(got.length >= 1, `动作 ${id} 取不到台词`)
+    const group = VOICE_GROUPS.find((g) => g.trigger === 'action' && g.actionId === id)
+    assert.deepEqual(got, group.lines, `动作 ${id} 取到的台词与库里不一致`)
+  }
   assert.equal(actionLines('不存在的动作').length, 0)
   // 余额档位：与 balance-announce 的分档一致
   assert.equal(balanceTierOf(5).line, balanceTierLine(1))

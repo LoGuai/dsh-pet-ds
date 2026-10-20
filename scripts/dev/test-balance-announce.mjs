@@ -17,6 +17,7 @@ import {
   shouldAnnounceBalance,
   shouldRunAnnounceWindow,
 } from '../../src/shared-core/balance-announce.js'
+import { balanceTierLine } from '../../src/shared-core/voice-library.js'
 
 let passed = 0
 let failed = 0
@@ -42,7 +43,14 @@ test('四档台词与用户给定的一致', () => {
    * 这样既守住"用户给的文字没被改"，也不再依赖台词存放在哪个模块。
    */
   const actual = [5, 15, 30, 99].map((v) => balanceTierOf(v).line)
-  assert.deepEqual(actual, ['余额告急了', '有些吃紧', '还很充裕', '主人太有钱了'])
+  /*
+   * 断言"分档取到的就是语音库里 1~4 档的那四句"，而不是把句子抄在测试里。
+   * 台词属于内容，用户随时会改（实测：3 档改过"还能买很多白饭"，
+   * 4 档改过"用户太有钱啦"）；把内容写进断言只会让改词变成改测试。
+   */
+  assert.deepEqual(actual, [1, 2, 3, 4].map((tier) => balanceTierLine(tier)))
+  assert.equal(new Set(actual).size, 4, '四档台词不能重复，否则播报分不出档位')
+  for (const line of actual) assert.ok(line.length > 0, '四档台词不能有空句')
 })
 
 test('分档边界：10 / 20 / 50 三个临界值归属正确', () => {
@@ -132,7 +140,7 @@ test('花掉余额：spent 为正，句子含花掉与剩余', () => {
   assert.equal(r.spent, 5)
   assert.equal(r.remaining, 23.45)
   assert.equal(r.tier, 3)
-  assert.equal(r.text, '刚才花掉了¥5，还有¥23.45，还很充裕。')
+  assert.equal(r.text, `刚才花掉了¥5，还有¥23.45，${balanceTierLine(3)}。`)
 })
 
 test('充值（余额变多）绝不算作消耗', () => {
@@ -147,7 +155,7 @@ test('充值（余额变多）绝不算作消耗', () => {
   assert.equal(r.remaining, 60)
   assert.equal(r.tier, 4)
   assert.ok(r.text.includes('花掉了¥0'), `句子里的消耗应为 0：${r.text}`)
-  assert.ok(r.text.includes('主人太有钱了'))
+  assert.ok(r.text.includes(balanceTierLine(4)))
 })
 
 test('余额不变：spent 为 0，档位照常算', () => {
@@ -163,16 +171,15 @@ test('首次取数（没有上一次）：spent 为 0', () => {
   assert.equal(r.spent, 0)
   assert.equal(r.remaining, 8)
   assert.equal(r.tier, 1)
-  assert.equal(r.text, '刚才花掉了¥0，还有¥8，余额告急了。')
+  assert.equal(r.text, `刚才花掉了¥0，还有¥8，${balanceTierLine(1)}。`)
 })
 
 test('四档各生成一次完整句子', () => {
-  const cases = [
-    { next: 5, tier: 1, line: '余额告急了' },
-    { next: 15, tier: 2, line: '有些吃紧' },
-    { next: 30, tier: 3, line: '还很充裕' },
-    { next: 80, tier: 4, line: '主人太有钱了' },
-  ]
+  const cases = [1, 2, 3, 4].map((tier) => ({
+    next: [5, 15, 30, 80][tier - 1],
+    tier,
+    line: balanceTierLine(tier),
+  }))
   for (const c of cases) {
     const r = buildBalanceAnnouncement({ prevTotal: c.next + 3, nextTotal: c.next })
     assert.equal(r.tier, c.tier)
@@ -184,7 +191,7 @@ test('四档各生成一次完整句子', () => {
 test('小数金额的句子读起来正常（不留 .00 尾巴）', () => {
   const r = buildBalanceAnnouncement({ prevTotal: 12.5, nextTotal: 7.25 })
   assert.equal(r.spent, 5.25)
-  assert.equal(r.text, '刚才花掉了¥5.25，还有¥7.25，余额告急了。')
+  assert.equal(r.text, `刚才花掉了¥5.25，还有¥7.25，${balanceTierLine(1)}。`)
 })
 
 test('美元账户用 $ 符号', () => {
@@ -196,7 +203,7 @@ test('消耗为 0 但余额极低时，档位仍如实反映余额', () => {
   const r = buildBalanceAnnouncement({ prevTotal: 3, nextTotal: 3 })
   assert.equal(r.spent, 0)
   assert.equal(r.tier, 1)
-  assert.ok(r.text.includes('余额告急了'))
+  assert.ok(r.text.includes(balanceTierLine(1)))
 })
 
 test('非法 nextTotal 不产生 NaN 句子', () => {
