@@ -461,6 +461,8 @@ let sourceZip = null
   console.log(`\n从 GitHub URL 安装（把其中一行交给 install_bundle）：`)
   console.log(`  锁定版本（tag 快照）  https://github.com/liuguanyu9719-source/dsh-pet-ds/archive/refs/tags/v${pkgVersion}.tar.gz`)
   console.log(`  永远最新（Release 附件） https://github.com/liuguanyu9719-source/dsh-pet-ds/releases/latest/download/dsh-pet-ds.tgz`)
+  console.log(`  ↑ 发布前：把上面那份 dsh-pet-ds.tgz 以**同名**上传到 GitHub Release`)
+  console.log(`    （releases/new → tag 选 v${pkgVersion} → 拖入附件 → Publish）`)
 }
 
 console.log(`\n结果：${failed === 0 ? '内容校验全部通过' : failed + ' 项未通过'}`)
