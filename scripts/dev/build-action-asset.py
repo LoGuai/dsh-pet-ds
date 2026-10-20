@@ -224,12 +224,14 @@ ACTIONS = {
     # 按高度硬拉会把角色放大 4%（这正是坐姿那轮踩过的坑的另一面）。
     "think-enter": {
         "raw_dir": os.path.join(ROOT, ".cache", "think-enter-raw"),
-        "match_head_to": "stand",
+        # 按**整体高度**对齐站立，而不是按头宽 —— 头宽对齐后她的头一样大，
+        # 但思考姿势是低头含胸、整个轮廓更矮，用户仍反馈"比站立小一点"。
+        # 这和坐姿那轮是同一个判据问题（用户看的是体量，不是头）。
+        "height_ramp": ("stand", "stand"),
         "note": "深度思考（进入：抬头→低头沉思）",
     },
     "think-loop": {
         "raw_dir": os.path.join(ROOT, ".cache", "think-loop-raw"),
-        "match_head_to": "stand",
         # 循环段头顶有"深度求索中…"气泡 —— 它是**素材的一部分，要保留**
         # （用户明确："气泡就是素材本身应该有的"）。
         #
@@ -241,17 +243,24 @@ ACTIONS = {
         # 加高到 1210 后：角色按头宽对齐站立（缩放约 0.974），气泡完整保留；
         # 多出来的透明区域都在顶部 —— 渲染进程按素材自身比例设置帧高，
         # 这部分向上溢出到气泡区（那里有 50+px 富余）。
-        "canvas_height": 1210,
+        "canvas_height": 1250,
         # 量尺寸时剔除顶部气泡（占内容高度约 9.5%，取 0.10）。
-        # 不剔的话"内容顶部"变成气泡顶，band 会落在气泡上，量出来的不是头宽。
+        # 不剔的话"内容高度"会把气泡算进去 —— 既会把角色算矮，
+        # 也会让 fit 上限被气泡顶高而收紧。
         "bubble_ignore_top_ratio": 0.10,
+        # ⚠️ 不按站立高度对齐，而是按**第一段（think-enter）的头宽**反推目标高度。
+        #
+        # 原因：循环段姿势含胸、轮廓更窄，按站立高度对齐会把**头放大 5%**
+        # （实测头宽 570，而第一/三段是 555），用户反馈"第二段还略大一些"。
+        # 1119 是让头宽落回 555 左右的目标高度（由实测的 头宽/高度 比反算）。
+        "height_target": 1119,
         # 声明式：渲染进程用 startLoop 无限循环这一段。
         "loop": True,
         "note": "深度思考（循环：思考中）",
     },
     "think-exit": {
         "raw_dir": os.path.join(ROOT, ".cache", "think-exit-raw"),
-        "match_head_to": "stand",
+        "height_ramp": ("stand", "stand"),
         "note": "深度思考（退出：倒放进入段，回站立）",
     },
 }
@@ -656,20 +665,64 @@ def build_one(action_id):
     #
     # 这样既把 circle/stop 放大到与 sit/stand 同量级，又不会在某段末尾
     # 突然比下一段高（那会变成另一种"跳"）。
+    # ---------------------------------------------------------------- 按固定高度对齐（可选）
+    #
+    # 与 height_ramp 的区别：这里直接给一个**数值**目标高度，不从别的动作取。
+    #
+    # 用途：深度思考循环段。它按"站立高度"对齐后，因为姿势含胸、轮廓更窄，
+    # **头会被放大 5%**（头宽 570 vs 第一段 555），用户反馈"第二段还略大一些"。
+    # 所以给它一个略低于站立的高度目标，让它与第一段的**头宽**对齐。
+    if cfg.get("height_target") and scale:
+        target_h = float(cfg["height_target"])
+        max_w = max(b[2] - b[0] + 1 for b in body_bounds_list)
+        max_h = max(b[3] - b[1] + 1 for b in body_bounds_list)
+        fit_scale = min((CANVAS_W - 2) / max_w, (foot_out + 1 - 2) / max_h)
+        per_frame_scales = []
+        raw_heights = []
+        for idx in src_index_of:
+            img = Image.open(os.path.join(raw_dir, names[idx])).convert("RGBA")
+            b = body_bounds(img, exclude_left, ignore_top) or content_bounds(img)
+            rh = (b[3] - b[1] + 1) if b else 1
+            raw_heights.append(rh)
+            fs = target_h / max(1, rh)
+            per_frame_scales.append(max(0.05, round(min(fs, fit_scale), 4)))
+        proj = [round(rh * fs, 1) for rh, fs in zip(raw_heights, per_frame_scales)]
+        print(f"  高度目标 {target_h}px：逐帧缩放 {min(per_frame_scales)}~{max(per_frame_scales)}；"
+              f"成品高度 {min(proj)}~{max(proj)}px")
+        head_match = {"mode": "height-target", "targetHeight": target_h,
+                      "perFrame": True, "perFrameScale": per_frame_scales}
+        head_width_out = None
+
     if cfg.get("height_ramp") and scale:
         start_id, end_id = cfg["height_ramp"]
         start_h = output_last_frame_height(start_id)
         # 起止是同一个动作时表示"恒定为它的末帧高度"（不要用均值，
         # 否则会在这段内部缓慢变大，反而制造新的跳）。
         end_h = start_h if end_id == start_id else output_mean_height(end_id)
-        fit_scale = compute_scale(body_bounds_list, foot_out)[0]
+        # ⚠️ 这里**不能用 `compute_scale`**：它内部有 `min(..., 1.0)`，即"只缩不放"。
+        # 而按高度对齐时目标高度可能比原始素材更大 —— 深度思考循环段就需要 1.045×
+        # （角色原图偏矮），被 1.0 卡住后成品只有 1099px（目标 1149），
+        # 用户看到的就是"还是比站立小一点"。
+        # 所以这里自己算**允许放大**的适配上限，只受画布宽高约束。
+        max_w = max(b[2] - b[0] + 1 for b in body_bounds_list)
+        max_h = max(b[3] - b[1] + 1 for b in body_bounds_list)
+        avail_w = CANVAS_W - 2
+        avail_h = foot_out + 1 - 2
+        fit_scale = min(avail_w / max_w, avail_h / max_h)
         n = len(src_index_of)
         raw_heights = []
         per_frame_scales = []
         targets = []
         for i, idx in enumerate(src_index_of):
             img = Image.open(os.path.join(raw_dir, names[idx])).convert("RGBA")
-            b = content_bounds(img)
+            # 用**角色本体**的高度做目标，而不是整幅内容高度。
+            #
+            # 为什么：深度思考循环段头顶有气泡（素材自带），`content_bounds` 会把气泡
+            # 算进高度 —— 于是"对齐到站立高度"变成"角色 + 气泡 一起对齐"，
+            # 角色实际仍偏小；同时 fit 上限也会被气泡顶高而收紧。
+            # 这里统一用 body_bounds（尊重 bubble_ignore_top_ratio / bubble_exclude_left_ratio），
+            # 于是这三段与坐姿三段用的是同一套"按整体高度对齐"的语义。
+            b = body_bounds(img, exclude_left, ignore_top) or content_bounds(img)
             rh = (b[3] - b[1] + 1) if b else 1
             raw_heights.append(rh)
             t = start_h if n <= 1 else start_h + (end_h - start_h) * (i / (n - 1))

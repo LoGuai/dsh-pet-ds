@@ -3995,6 +3995,15 @@ async function verifyClickParts(check, wait) {
     'window.__petTestSetIdleClock({ probability: 0, readyAt: Date.now() + 600000 })',
     true,
   )
+  /*
+   * 再把随机动作**彻底**关掉（`__petTestDisableIdle`）。
+   *
+   * 为什么上面的概率注入不够：宿主每次推送状态都会重置闲置计时，
+   * 跑了 1 分钟以上注入就失效了，随机动作会重新插进来 ——
+   * 实测这段用例因此间歇性失败（气泡里冒出「（占位）开饭啦」）。
+   * 这个开关不会被状态推送清掉，用例结束时会恢复。
+   */
+  await wc.executeJavaScript('window.__petTestDisableIdle(true)', true)
   for (let attempt = 0; attempt < 8; attempt += 1) {
     const st = await wc.executeJavaScript(
       '({ action: (window.__petTestState() || {}).currentActionId, petState: (window.__petTestState() || {}).petState })',
@@ -4187,6 +4196,9 @@ async function verifyClickParts(check, wait) {
     (partPlans ?? []).length === 4 && badPartAssets.length === 0,
     (partPlans ?? []).map((p) => `${p.id}=${String(p.frames)}帧@${String(p.fps)}fps`).join('，'),
   )
+
+  /* 恢复随机动作，别影响后面的用例。 */
+  await wc.executeJavaScript('window.__petTestDisableIdle(false)', true)
 }
 
 /**
@@ -5004,7 +5016,16 @@ async function verifySleepState(check, wait) {
       await wait(600)
     }
     // 先进入"忙碌"基线（这一步应当唤醒，但它是真的开始工作）。
-    testPushState({ workStatus: 'thinking', workLabel: '思考中…', seq: 9260 })
+    /*
+     * ⚠️ 这里用 `working` 而不是 `thinking`。
+     *
+     * 自从「深度思考」补上素材后，推 `thinking` 会**真的开始播思考动作**
+     * （进入段 → 循环段），与这条用例要验证的"睡眠状态机"直接打架：
+     * 实测表现为 `动画=think-enter`、尾帧循环判定失效、状态日志被思考打断。
+     * 而这条用例的意图只是"忙碌态基线 + 忙碌态之间抖动"，
+     * 用 `working` 完全等价，且不牵扯思考。
+     */
+    testPushState({ workStatus: 'working', workLabel: '干活中…', seq: 9260 })
     await wait(500)
     // 等它惊醒完回到闲置，再睡一次 —— 这次基线已经是忙碌态。
     for (let attempt = 0; attempt < 20; attempt += 1) {
@@ -5033,7 +5054,8 @@ async function verifySleepState(check, wait) {
     // 收尾：回闲置，并**确认渲染进程的拖拽态已释放** ——
     // 拖拽守卫会挡住"进入睡眠"，带着 dragging=true 进本用例会被静默挡掉，
     // 表现为"点了却播了 chest 动画"。实测就是这么失败的。
-    testPushState({ workStatus: 'thinking', workLabel: '思考中…', seq: 9263 })
+    // （同样用 `working`：`thinking` 会真的播思考动作，见上面 9260 处的说明。）
+    testPushState({ workStatus: 'working', workLabel: '干活中…', seq: 9263 })
     await wait(600)
     testPushState({ workStatus: 'idle', workLabel: '', seq: 9264 })
     for (let attempt = 0; attempt < 20; attempt += 1) {

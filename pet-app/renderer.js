@@ -1810,17 +1810,6 @@ function finishDrag(e) {
       return
     }
     /*
-     * 正在播**退出段**（6→1）时忽略点击。
-     *
-     * 用户要求"被打断时按 6→1 播放完再回站立"，所以这一秒不能又被新动作顶掉；
-     * 否则点击会让她从退出动画的一半直接跳到部位动画，看起来像抽搐。
-     */
-    if (thinkPhase === 'exit') {
-      dragStart = null
-      console.info('[think] 退出段播放中，忽略这次点击')
-      return
-    }
-    /*
      * 睡眠期间点击 = **叫醒**（用户要求）。
      *
      * 这条语义与普通点击不同：不说部位台词、不加心情，只播惊醒动画。
@@ -1850,6 +1839,22 @@ function finishDrag(e) {
       dragStart = null
       if (sitPhase === 'up') return
       jumpToSitStop('用户点击')
+      return
+    }
+
+    /*
+     * 正在播**退出段**（6→1）时忽略点击。
+     *
+     * 用户要求"被打断时按 6→1 播放完再回站立"，所以这一秒不能又被新动作顶掉；
+     * 否则点击会让她从退出动画的一半直接跳到部位动画，看起来像抽搐。
+     *
+     * ⚠️ 必须放在**睡眠/惊醒/坐姿之后**：
+     * 放在最前面时，睡着的她会被这条挡住叫不醒（思考退出段恰好还在播），
+     * 表现为 petState 一直停在 sleeping。状态转换的优先级更高。
+     */
+    if (thinkPhase === 'exit') {
+      dragStart = null
+      console.info('[think] 退出段播放中，忽略这次点击')
       return
     }
 
@@ -2767,6 +2772,17 @@ function clearWakingWatchdog() {
 /** 是否打印状态变迁（跟随主进程的 --trace-geometry 之类开关）。 */
 const TRACE_STATE = new URLSearchParams(location.search).has('trace-state')
 
+/**
+ * 测试专用：彻底关掉闲置随机动作。
+ *
+ * 为什么需要独立的开关：测试里用 `__petTestSetIdleClock({probability:0})` 注入过概率，
+ * 但**宿主每次推送状态都会重置闲置计时**（idleReadyAtMs 重新起算），
+ * 那个注入并不持久。于是"点击部位"这类要求"确认闲置"的用例，
+ * 跑到后段就会被随机动作插进来（实测：气泡里冒出「（占位）开饭啦」）。
+ * 这个标志不会被状态推送清掉。
+ */
+let idleDisabledForTest = false
+
 /** 现在是否处于"真正的闲置"：宿主不忙、没有动作在播、没有在拖拽。 */
 function isTrulyIdle() {
   return currentWorkStatus === 'idle' && currentActionId === null && !dragging
@@ -3316,6 +3332,8 @@ function syncIdleVoiceScheduling() {
  * @returns {boolean}
  */
 function shouldFireIdleAction(now) {
+  // 测试里可能显式关掉（见 idleDisabledForTest 的说明）。
+  if (idleDisabledForTest) return false
   // 睡眠/惊醒期间不触发随机动作（用户要求）。
   if (!canTriggerRandomAction()) {
     // 不闲置了就把"闲置模式"的门槛清掉，等下次真正闲置时重新起算。
@@ -4641,6 +4659,12 @@ window.__petTestThink = {
 }
 
 /** 测试用：走一遍「刷新状态」。 */
+/** 测试用：开关"闲置随机动作"（true = 关闭）。 */
+window.__petTestDisableIdle = (on) => {
+  idleDisabledForTest = Boolean(on)
+  return idleDisabledForTest
+}
+
 window.__petTestRefresh = () => {
   refreshToIdle('测试')
   return {
