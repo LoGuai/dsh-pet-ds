@@ -18,11 +18,15 @@
 
 三种方式任选其一，详细步骤见 [INSTALL.md](INSTALL.md)。
 
-**从 npm 装（推荐）** —— 不用下载任何文件：
+**从 GitHub 装（推荐）** —— 下载的是**一个安装包**，不会克隆仓库：
 
-```bash
-dsh plugin --profile <profile> add dsh-pet-ds@0.2.1
 ```
+install_bundle  target = https://github.com/liuguanyu9719-source/dsh-pet-ds/releases/latest/download/dsh-pet-ds.tgz
+```
+
+这个地址永远指向**最新一版**（发布时上传同名附件 `dsh-pet-ds.tgz` 即可）。
+想锁死某个版本就用 tag 快照：
+`https://github.com/liuguanyu9719-source/dsh-pet-ds/archive/refs/tags/v0.2.1.tar.gz`
 
 **一键安装包** —— 解压发布包，双击 `install.cmd`。
 

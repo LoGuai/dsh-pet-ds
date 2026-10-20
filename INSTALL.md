@@ -14,17 +14,20 @@
 > 本文件讲"用现成工具装"。**纯手工**那套（改哪两个字段、每步怎么验证、
 > 故障出在加载链的哪一段）单独写在 [INSTALL-MANUAL.md](./INSTALL-MANUAL.md)。
 
-## 0-a. 从 npm 安装（最省事）
+## 0-a. 从 GitHub 安装（推荐：只下一个包，不克隆仓库）
 
-已发布到 npm，**不需要下载任何文件**：
+把下面这条 URL 交给 `install_bundle`：
 
-```bash
-dsh plugin --profile <profile> add dsh-pet-ds@0.2.1
+```
+install_bundle  target = https://github.com/liuguanyu9719-source/dsh-pet-ds/releases/latest/download/dsh-pet-ds.tgz
 ```
 
-显式写版本号，避免本地缓存命中旧版。之后升级只要改版本号。
+- 它下的是**一个 tarball**（约 33 MB），不是 git clone —— 本仓库历史约 300 MB，用 git 地址会全拉下来；
+- `releases/latest/download/...` 永远指向**最新一版**：发布时把 `dist/release/dsh-pet-ds.tgz` 以**同名**上传即可；
+- 想锁死版本：`https://github.com/liuguanyu9719-source/dsh-pet-ds/archive/refs/tags/v0.2.1.tar.gz`（tag 快照，同样是单包下载）。
 
-> 也可以把包名交给 `install_bundle`：`target = dsh-pet-ds@0.2.1`。
+> npm 包名 `dsh-pet-ds` 已预留但**尚未发布**（npm 账号注册被 Cloudflare 挡），
+> 发布后这里会多一条：`dsh plugin --profile <profile> add dsh-pet-ds@0.2.1`。
 
 ## 0-b. 用 DSH 官方的 `plugin_manager install_bundle`
 
