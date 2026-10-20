@@ -178,7 +178,13 @@ export const THINK_ACTION_ID = 'think'
 export const THINK_ACTION = {
   id: THINK_ACTION_ID,
   label: '深度思考',
-  lines: actionLines('think'),
+  /*
+   * **没有台词**（用户要求："深度思考动作不再需要任何语音"）。
+   *
+   * 显式写成空数组而不是留空：渲染进程与自测都按 `lines` 取值，
+   * 缺字段会走到 `undefined` 分支，排查时容易误以为"漏配了语音"。
+   */
+  lines: [],
 }
 
 /** 深度思考的三段素材 id（菜单/随机池仍只认 {@link THINK_ACTION_ID}）。 */

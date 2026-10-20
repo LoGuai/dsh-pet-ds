@@ -4004,6 +4004,23 @@ async function verifyClickParts(check, wait) {
    * 这个开关不会被状态推送清掉，用例结束时会恢复。
    */
   await wc.executeJavaScript('window.__petTestDisableIdle(true)', true)
+  /*
+   * 还要把"深度思考"及其**退出段**清干净。
+   *
+   * 退出段播放中点击会被守卫吞掉（那是刻意的：避免把退出动画切成两半），
+   * 但这段用例要的是"点一下就该有反应" —— 带着退出段进来必然失败。
+   * 注意：清完之后**必须等 phase 回到 null**，不能只发一次 exit 就走。
+   */
+  await wc.executeJavaScript('window.__petTestThink && window.__petTestThink.exit("点击用例前置")', true)
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const st = await wc.executeJavaScript(
+      '({ phase: (window.__petTestThink.state() || {}).phase, action: (window.__petTestState() || {}).currentActionId, petState: (window.__petTestState() || {}).petState })',
+      true,
+    )
+    if (st && st.phase === null && !st.action && st.petState === 'idle') break
+    await wc.executeJavaScript('window.__petTestRefresh()', true)
+    await wait(200)
+  }
   for (let attempt = 0; attempt < 8; attempt += 1) {
     const st = await wc.executeJavaScript(
       '({ action: (window.__petTestState() || {}).currentActionId, petState: (window.__petTestState() || {}).petState })',
@@ -5661,6 +5678,10 @@ async function verifyAffectionAndFeedback(check, wait) {
     const rectStand = await js(
       '(() => { const r = document.getElementById("frame").getBoundingClientRect(); return { w: r.width, h: r.height, bottom: r.bottom } })()',
     )
+    /* 进入前的气泡状态（用于断言"思考期间不弹气泡"）。 */
+    const bubbleBeforeThink = await js(
+      '(() => { const b = document.getElementById("bubble"); const t = document.getElementById("bubble-text"); return { hidden: b ? b.hidden : null, text: t ? t.textContent : "" } })()',
+    )
     testPushState({ workStatus: 'thinking', workLabel: '思考中…', seq: 9601 })
     await wait(500)
     const t1 = await js('window.__petTestThink.state()')
@@ -5693,7 +5714,7 @@ async function verifyAffectionAndFeedback(check, wait) {
     )
 
     /*
-     * 循环段画布比其他动作高（864x1210，多出来的是头顶气泡所需的空间）。
+     * 循环段画布比其他动作高（864x1250，多出来的是头顶气泡所需的空间）。
      * 帧高要按素材自身比例走（否则会被压扁），而脚底必须与站立一致。
      */
     const rectLoop = await js(
@@ -5703,12 +5724,31 @@ async function verifyAffectionAndFeedback(check, wait) {
       '思考循环段的帧按自身比例变高（不被压扁）',
       Boolean(rectStand) && Boolean(rectLoop) && rectLoop.h > rectStand.h + 4,
       `站立高 ${String(rectStand && rectStand.h)} → 循环高 ${String(rectLoop && rectLoop.h)}`
-        + `（宽度 ${String(rectLoop && rectLoop.w)}，期望高 ≈ 宽 × 1210/864）`,
+        + `（宽度 ${String(rectLoop && rectLoop.w)}，期望高 ≈ 宽 × 1250/864）`,
     )
     check(
       '思考循环段的脚底位置与站立一致（角色没被抬起）',
       Boolean(rectStand) && Boolean(rectLoop) && Math.abs(rectLoop.bottom - rectStand.bottom) <= 1.5,
       `站立底 ${String(rectStand && rectStand.bottom)} → 循环底 ${String(rectLoop && rectLoop.bottom)}`,
+    )
+
+    /*
+     * 用户要求：「深度思考动作不再需要任何语音」。
+     * 素材自带"深度求索中…"气泡，应用层若再弹一句就是两个气泡叠着。
+     *
+     * 断言方式：**比较进入前后的气泡是否发生变化**，而不是要求屏幕上没有气泡 ——
+     * 前面用例可能还挂着一条 5 秒的台词气泡，那与思考无关。
+     */
+    const bubbleDuringThink = await js(
+      '(() => { const b = document.getElementById("bubble"); const t = document.getElementById("bubble-text"); return { hidden: b ? b.hidden : null, text: t ? t.textContent : "" } })()',
+    )
+    check(
+      '深度思考期间不弹任何气泡（该动作不发声）',
+      Boolean(bubbleDuringThink) && Boolean(bubbleBeforeThink)
+        && bubbleDuringThink.hidden === bubbleBeforeThink.hidden
+        && bubbleDuringThink.text === bubbleBeforeThink.text,
+      `进入前 hidden=${String(bubbleBeforeThink && bubbleBeforeThink.hidden)}/${String(bubbleBeforeThink && bubbleBeforeThink.text)}`
+        + ` → 循环中 hidden=${String(bubbleDuringThink && bubbleDuringThink.hidden)}/${String(bubbleDuringThink && bubbleDuringThink.text)}`,
     )
 
     await js('window.__petTestClick()')

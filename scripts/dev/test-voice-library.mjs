@@ -108,12 +108,23 @@ test('点击：4 个部位 × 3 档 = 12 组，每组 2 条，且不缺档', () 
   }
 })
 
-test('动作：6 个动作各一组，且能按动作 id 取到台词', () => {
-  const expect = ['awake', 'eat', 'play-mc', 'sit', 'sleep', 'think']
+test('动作：5 个动作各一组，且能按动作 id 取到台词', () => {
+  /*
+   * ⚠️ 这里刻意**不含 think**：用户要求「深度思考动作不再需要任何语音」。
+   * 素材自身带"深度求索中…"气泡，应用层再弹一句就是两个气泡叠着。
+   * 见下一条断言 —— 它把"think 必须没有台词"钉住，防止以后又加回来。
+   */
+  const expect = ['awake', 'eat', 'play-mc', 'sit', 'sleep']
   for (const id of expect) {
     const lines = actionLines(id)
     assert.ok(lines.length > 0, `动作 ${id} 没有台词`)
   }
+})
+
+test('「深度思考」没有台词（用户要求：这个动作不发声）', () => {
+  const groups = VOICE_GROUPS.filter((g) => g.trigger === 'action' && g.actionId === 'think')
+  assert.equal(groups.length, 0, `think 不应有语音组，实际有 ${String(groups.length)} 个`)
+  assert.equal(actionLines('think').length, 0, 'think 不应取到任何台词')
 })
 
 test('信赖 3 条、拖拽 ≥2 条、余额 4 档、系统 ≥3 场景、自由对话 ≥10 条', () => {

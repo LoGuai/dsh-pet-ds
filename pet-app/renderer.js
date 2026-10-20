@@ -2452,10 +2452,11 @@ async function playAction(id, options = {}) {
   // 从菜单手动触发「深度思考」：走 enterThink（进入段 → 循环段）。
   if (id === THINK_ACTION_ID) {
     /*
-     * 菜单触发时给一句台词：这是用户主动点的，弹一句话反馈更好。
-     * 宿主状态驱动的思考**不弹**（长时间思考一直挂气泡会很吵）。
+     * **不弹任何气泡**（用户要求："深度思考动作不再需要任何语音"）。
+     *
+     * 素材本身在头顶画了"深度求索中…"的气泡，应用层再弹一句就是两个气泡叠着；
+     * 而且思考是宿主状态的映射，说话出戏。所以这里直接进状态机，不再取台词。
      */
-    if (entry && entry.lines && entry.lines[0]) showBubble(entry.lines[0], 'say', 5000)
     void enterThink()
     return
   }
