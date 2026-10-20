@@ -1,0 +1,102 @@
+{
+  "frameCount": 4,
+  "fps": 6,
+  "loop": false,
+  "sourceCanvasHeight": 1210,
+  "drawOffsetY": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "_note": "由 scripts/dev/build-action-asset.py game-stop 生成；与站立素材同一画布约定（水平居中 + 脚底基准 y=1208）。",
+  "_processing": {
+    "canvas": {
+      "w": 864,
+      "h": 1210
+    },
+    "scale": 1.0,
+    "footBaseOutput": 1208,
+    "headWidthOut": null,
+    "headMatch": null,
+    "perFrameScale": null,
+    "perFrame": [
+      {
+        "src": "7.png",
+        "out": "frame_01.webp",
+        "srcBounds": [
+          228,
+          24,
+          1018,
+          1223
+        ],
+        "placedAt": [
+          37,
+          9
+        ],
+        "scale": 1.0,
+        "outTop": 9,
+        "outFoot": 1208,
+        "outW": 791,
+        "outH": 1200
+      },
+      {
+        "src": "8.png",
+        "out": "frame_02.webp",
+        "srcBounds": [
+          231,
+          26,
+          1017,
+          1222
+        ],
+        "placedAt": [
+          39,
+          12
+        ],
+        "scale": 1.0,
+        "outTop": 12,
+        "outFoot": 1208,
+        "outW": 787,
+        "outH": 1197
+      },
+      {
+        "src": "9.png",
+        "out": "frame_03.webp",
+        "srcBounds": [
+          226,
+          28,
+          1023,
+          1223
+        ],
+        "placedAt": [
+          34,
+          13
+        ],
+        "scale": 1.0,
+        "outTop": 13,
+        "outFoot": 1208,
+        "outW": 798,
+        "outH": 1196
+      },
+      {
+        "src": "10.png",
+        "out": "frame_04.webp",
+        "srcBounds": [
+          227,
+          29,
+          1018,
+          1222
+        ],
+        "placedAt": [
+          36,
+          15
+        ],
+        "scale": 1.0,
+        "outTop": 15,
+        "outFoot": 1208,
+        "outW": 792,
+        "outH": 1194
+      }
+    ]
+  }
+}

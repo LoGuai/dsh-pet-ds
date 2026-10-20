@@ -186,8 +186,10 @@ if (!existsSync(target)) {
    */
   const requiredAnims = [
     'stand', 'hang', 'eat', 'sleep', 'awake',
-    'head', 'chest', 'stomach', 'leg', 'play-mc',
+    'head', 'chest', 'stomach', 'leg',
+    'game-begin', 'game-loop', 'game-stop',
     'sit', 'sit-circle', 'sit-stop',
+    'think-enter', 'think-loop', 'think-exit',
   ]
   const missingAnims = requiredAnims.filter((d) => !animDirs.includes(d))
   check(

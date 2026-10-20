@@ -1,0 +1,102 @@
+{
+  "frameCount": 4,
+  "fps": 6,
+  "loop": false,
+  "sourceCanvasHeight": 1210,
+  "drawOffsetY": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "_note": "由 scripts/dev/build-action-asset.py game-begin 生成；与站立素材同一画布约定（水平居中 + 脚底基准 y=1208）。",
+  "_processing": {
+    "canvas": {
+      "w": 864,
+      "h": 1210
+    },
+    "scale": 1.0,
+    "footBaseOutput": 1208,
+    "headWidthOut": null,
+    "headMatch": null,
+    "perFrameScale": null,
+    "perFrame": [
+      {
+        "src": "1.png",
+        "out": "frame_01.webp",
+        "srcBounds": [
+          241,
+          44,
+          987,
+          1192
+        ],
+        "placedAt": [
+          59,
+          60
+        ],
+        "scale": 1.0,
+        "outTop": 60,
+        "outFoot": 1208,
+        "outW": 747,
+        "outH": 1149
+      },
+      {
+        "src": "2.png",
+        "out": "frame_02.webp",
+        "srcBounds": [
+          245,
+          43,
+          987,
+          1191
+        ],
+        "placedAt": [
+          61,
+          60
+        ],
+        "scale": 1.0,
+        "outTop": 60,
+        "outFoot": 1208,
+        "outW": 743,
+        "outH": 1149
+      },
+      {
+        "src": "3.png",
+        "out": "frame_03.webp",
+        "srcBounds": [
+          243,
+          43,
+          985,
+          1191
+        ],
+        "placedAt": [
+          61,
+          60
+        ],
+        "scale": 1.0,
+        "outTop": 60,
+        "outFoot": 1208,
+        "outW": 743,
+        "outH": 1149
+      },
+      {
+        "src": "4.png",
+        "out": "frame_04.webp",
+        "srcBounds": [
+          244,
+          42,
+          986,
+          1191
+        ],
+        "placedAt": [
+          61,
+          59
+        ],
+        "scale": 1.0,
+        "outTop": 59,
+        "outFoot": 1208,
+        "outW": 743,
+        "outH": 1150
+      }
+    ]
+  }
+}

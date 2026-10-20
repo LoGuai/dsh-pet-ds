@@ -1,0 +1,62 @@
+{
+  "frameCount": 2,
+  "fps": 1,
+  "loop": true,
+  "sourceCanvasHeight": 1210,
+  "drawOffsetY": [
+    0,
+    0
+  ],
+  "_note": "由 scripts/dev/build-action-asset.py game-loop 生成；与站立素材同一画布约定（水平居中 + 脚底基准 y=1208）。",
+  "_processing": {
+    "canvas": {
+      "w": 864,
+      "h": 1210
+    },
+    "scale": 1.0,
+    "footBaseOutput": 1208,
+    "headWidthOut": null,
+    "headMatch": null,
+    "perFrameScale": null,
+    "perFrame": [
+      {
+        "src": "1.png",
+        "out": "frame_01.webp",
+        "srcBounds": [
+          239,
+          48,
+          990,
+          1192
+        ],
+        "placedAt": [
+          56,
+          64
+        ],
+        "scale": 1.0,
+        "outTop": 64,
+        "outFoot": 1208,
+        "outW": 752,
+        "outH": 1145
+      },
+      {
+        "src": "2.png",
+        "out": "frame_02.webp",
+        "srcBounds": [
+          218,
+          33,
+          1021,
+          1206
+        ],
+        "placedAt": [
+          30,
+          35
+        ],
+        "scale": 1.0,
+        "outTop": 35,
+        "outFoot": 1208,
+        "outW": 804,
+        "outH": 1174
+      }
+    ]
+  }
+}

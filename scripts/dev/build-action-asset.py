@@ -146,22 +146,29 @@ ACTIONS = {
         "raw_dir": os.path.join(ROOT, ".cache", "stomach-raw"),
         "note": "点击腹部互动",
     },
-    "play-mc": {
-        # 玩mc（闲置动作）。10 帧。
-        # 用户要求分段换帧率：
-        #   第 1~3 帧 6fps → 第 4~5 帧**以 1fps 循环随机 20~40 次** → 第 6~10 帧回到 6fps。
-        # `loop_range.fps` 指定循环段自己的帧率；
-        # `times_range` 让渲染进程**每次播放随机取**一个轮数（写死 times 就每次一样了）。
-        "raw_dir": os.path.join(ROOT, ".cache", "play-mc-raw"),
-        "loop_range": {"from": 4, "to": 5, "times": 20, "fps": 1},
-        "times_range": (20, 40),
-        # ⚠️ 第 4~6 帧左上方有一个"想法气泡"（Minecraft 场景），它属于动画内容、
-        # 应当保留，但**不参与缩放计算** —— 否则角色会被缩到 0.87（比其他动画小 13%）。
-        # 排除最左侧 15% 的像素来求"角色本体"包围盒：实测角色左边界约在 0.21，
-        # 气泡在 0.02 附近，0.15 能排除气泡又包住角色。
-        "bubble_exclude_left_ratio": 0.15,
-        "note": "玩mc（闲置动作）",
+    "game-begin": {
+        "raw_dir": os.path.join(ROOT, ".cache", "game-raw", "begin"),
+        # 画布加高到 1210：最高的收尾帧内容高 1200，1157 放不下（会触发"垂直越界"）。
+        # 渲染进程按素材自身比例设帧高，多出来的高度向上溢出到气泡区。
+        "canvas_height": 1210,
+        "fps": 6,
+        "note": "玩游戏（第一段：开始，播一遍）",
     },
+    "game-loop": {
+        "raw_dir": os.path.join(ROOT, ".cache", "game-raw", "loop"),
+        "canvas_height": 1210,
+        # ⚠️ 用户指定第二段 **每秒 1 帧**。2 帧 → 每帧停在屏幕上 1 秒，一圈 2 秒。
+        "fps": 1,
+        "loop": True,
+        "note": "玩游戏（第二段：循环，1fps）",
+    },
+    "game-stop": {
+        "raw_dir": os.path.join(ROOT, ".cache", "game-raw", "stop"),
+        "canvas_height": 1210,
+        "fps": 6,
+        "note": "玩游戏（第三段：收尾，播一遍回闲置）",
+    },
+
     "sit": {
         # 坐下（随机动作的**第一阶段**：坐下的过程，只播一次）。
         #

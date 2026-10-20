@@ -177,7 +177,7 @@ assets/animations/
   sleep/      ...
   awake/      ...
   head/  chest/  stomach/  leg/
-  play-mc/
+  game-begin/  game-loop/  game-stop/
 ```
 
 没有素材时**插件能装、能加载，但桌宠起不来**。安装器会在第 1 步就检查并告诉你。

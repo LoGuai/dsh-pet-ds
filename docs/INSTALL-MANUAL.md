@@ -81,7 +81,7 @@ node scripts/dev/install-electron.mjs --version 38.2.0
 
 ```
 assets/animations/
-  stand/  hang/  eat/  sleep/  awake/  head/  chest/  stomach/  leg/  play-mc/
+  stand/  hang/  eat/  sleep/  awake/  head/  chest/  stomach/  leg/  game-begin/  game-loop/  game-stop/
   每个目录：manifest.json + frame_*.png
 ```
 

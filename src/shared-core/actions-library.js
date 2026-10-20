@@ -207,9 +207,9 @@ export const RANDOM_ACTIONS = [
     weight: 1,
   },
   {
-    id: 'play-mc',
-    label: '玩mc',
-    lines: actionLines('play-mc'),
+    id: 'play-game',
+    label: '玩游戏',
+    lines: actionLines('play-game'),
     weight: 1,
   },
   SIT_ACTION,

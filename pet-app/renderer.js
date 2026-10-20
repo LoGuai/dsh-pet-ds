@@ -159,6 +159,34 @@ const SIT_STOP_ACTION_ID = 'sit-stop'
 const SIT_HOLD_MS = 180 * 1000
 
 /**
+ * 「玩游戏」动作（镜像常量，源头是 `src/shared-core/actions-library.js`）。
+ *
+ * 用户要求（原文）：
+ * 「更改随机动作"玩游戏"动作为"玩游戏"，素材替换为给你的三段。
+ *   第一段：动作触发时，播放"game_begin"，每秒 6 帧
+ *   第二段：第一段结束后，立即播放"gaming"并循环播放，每秒 1 帧。
+ *   触发以下条件之一，触发第三段：1. 第二段开始时从 0 开始启动计时器，
+ *   达到 120 秒后进入第三段；2. 用户点击时，立即进入第三段（同时关闭计时）
+ *   第三段：播放"game_stop"，结束后回到闲置状态。
+ *   注：若由于触发其他动作（如进入"深度思考"）而中断，则不触发第三段，
+ *   直接播放新触发的动作，同时关闭已存在的计时」
+ *
+ * 所以它和「坐下」一样是**三段状态机**，但语义完全不同：
+ *  · 坐下：进入 → 循环（180s）→ 站起；被点击时**跳到最后一段**（有收尾）。
+ *  · 玩游戏：进入 → 循环（120s）→ 收尾；被点击时**跳到最后一段**（有收尾），
+ *    但被别的动作打断时**没有收尾**（直接切走，见 cancelGame 的 reason）。
+ */
+const GAME_ACTION_ID = 'play-game'
+
+/** 玩游戏三段素材 id（目录名，`assets/animations/<id>/`）。 */
+const GAME_BEGIN_ID = 'game-begin'
+const GAME_LOOP_ID = 'game-loop'
+const GAME_STOP_ID = 'game-stop'
+
+/** 「玩游戏中」阶段持续多久后自动收尾（用户指定 120 秒）。 */
+const GAME_HOLD_MS = 120 * 1000
+
+/**
  * 睡眠尾帧循环的轮数范围（用户指定：随机 20~40 轮后结束并播惊醒动画）。
  *
  * 一轮 = 把"最后两帧"走一遍。尾帧循环是 1fps、2 帧，所以一轮约 2 秒，
@@ -386,7 +414,7 @@ const FALLBACK_FRAME_COUNT = 12
 /**
  * 已加载动画的注册表：id → 动画状态。
  *
- * 通用化的理由：现在有多个动作（站立 + 吃白饭/睡觉/玩mc），
+ * 通用化的理由：现在有多个动作（站立 + 吃白饭/睡觉/玩游戏），
  * 它们共用同一套素材约定（`assets/animations/<id>/frame_NN.webp` + `manifest.json`），
  * 因此加载、播放、命中掩膜三件事都可以共用一份实现。
  *
@@ -539,7 +567,7 @@ async function loadManifestFor(id) {
             to: Number(lr.to),
             times: Number(lr.times),
             /**
-             * 循环段**自己的帧率**（可选）。玩mc 要求第 4~5 帧用 1fps 循环，
+             * 循环段**自己的帧率**（可选）。玩游戏 要求第 4~5 帧用 1fps 循环，
              * 而首尾段仍是 6fps —— 所以帧率必须随段走，不能整套一个值。
              * ⚠️ 这里曾经漏掉这个字段（只取了 from/to/times），
              * 结果循环段仍按 6fps 播，断言报"循环段帧率=[6]"。
@@ -848,7 +876,7 @@ function startPlanPlayback(id) {
   // 清掉可能残留的定时器，避免两个播放循环同时改帧。
   stopLoop(id)
   /*
-   * 重建播放计划：若清单给了 `loopRangeCyclesRange`（玩mc 的随机 20~40 轮），
+   * 重建播放计划：若清单给了 `loopRangeCyclesRange`（玩游戏 的随机 20~40 轮），
    * 这里会**重新抽一次轮数** —— 保证每次播放的长度都不一样。
    */
   rebuildPlaybackPlan(state)
@@ -860,7 +888,7 @@ function startPlanPlayback(id) {
    * 播放下一帧；到末尾时做收尾。
    *
    * ⚠️ 用**链式 setTimeout** 而不是固定 setInterval：同一套动画里可能
-   * 逐段用不同帧率（玩mc 前 3 帧 6fps → 4~5 帧 1fps 循环 → 6~10 帧 6fps），
+   * 逐段用不同帧率（玩游戏 前 3 帧 6fps → 4~5 帧 1fps 循环 → 6~10 帧 6fps），
    * 固定间隔没法表达"这一帧停 167ms、那一帧停 1000ms"。
    */
   const advance = () => {
@@ -1091,7 +1119,7 @@ function buildPlaybackPlan(state) {
   /*
    * 循环段**自己的帧率**（可选）。
    *
-   * 这是为"玩mc"加的：用户要求"第 4~5 帧以每秒 1 帧循环 20~40 次，
+   * 这是为"玩游戏"加的：用户要求"第 4~5 帧以每秒 1 帧循环 20~40 次，
    * 结束后继续以每秒 6 帧播放 6~10 帧"。所以同一套动画里必须能**逐段换帧率**，
    * 播放项带上 fps 之后，播放器照着走就行，不必再关心分段。
    */
@@ -1102,7 +1130,7 @@ function buildPlaybackPlan(state) {
   for (let i = 0; i < from; i += 1) plan.push(item(i, baseFps))
   /*
    * 第二段：loopRange **先正常播 1 次，再额外循环 `times` 次**，共 times+1 次。
-   * 这一段用 loopFps（玩mc 的 4~5 帧用 1fps）。
+   * 这一段用 loopFps（玩游戏 的 4~5 帧用 1fps）。
    *
    * ⚠️ 这里差 1 过：一开始只循环 `times` 次，于是用户要的"循环 4 次后再播后面"
    * 实际只出现了 4 次（含正常那一次）。语义上"循环 N 次"指的是**额外重复 N 次**，
@@ -1125,7 +1153,7 @@ function clampIndex(i, n) {
 /**
  * 重建播放计划。
  *
- * ⚠️ 与"只建一次"的区别：若清单给了 `loopRangeCyclesRange`（玩mc 的"随机 20~40 次"），
+ * ⚠️ 与"只建一次"的区别：若清单给了 `loopRangeCyclesRange`（玩游戏 的"随机 20~40 次"），
  * **每次播放前都要重取一个随机轮数** —— 否则一次抽中的轮数会被永久固化，
  * 每次都播同样的长度，"随机"就名存实亡。
  *
@@ -1843,6 +1871,20 @@ function finishDrag(e) {
     }
 
     /*
+     * 「玩游戏」期间点击（用户要求）：
+     * 「触发以下条件之一，触发第三段：… 2. 用户点击时，立即进入第三段（同时关闭计时）」
+     *
+     * 所以前两段点击 = 立刻进收尾段，**不说部位台词、不加心情**（与坐姿同一套约定）。
+     * 第三段（收尾）已经不受理：让它播完，否则会停在半截姿势。
+     */
+    if (gamePhase !== null) {
+      dragStart = null
+      if (gamePhase === 'stop') return
+      jumpToGameStop('用户点击')
+      return
+    }
+
+    /*
      * 正在播**退出段**（6→1）时忽略点击。
      *
      * 用户要求"被打断时按 6→1 播放完再回站立"，所以这一秒不能又被新动作顶掉；
@@ -2321,7 +2363,7 @@ window.pet.on('pet:layout', (payload) => {
 /*
  * 动作分两类：
  *  · 站立（standing）：常驻循环，不做事时的默认状态
- *  · 一次性动作：吃白饭 / 睡觉zzz / 玩mc，播完**自动回到站立**继续循环
+ *  · 一次性动作：吃白饭 / 睡觉zzz / 玩游戏，播完**自动回到站立**继续循环
  *
  * 播放状态（currentActionId / actionStopTimer）只有这一处，随机调度与右键菜单
  * 都走同一个入口 playAction()，因此不会出现"菜单点了动作但随机调度又插进来"的冲突。
@@ -2369,7 +2411,7 @@ let lastPlayedActionId = null
  * 排除方式是**按 id 黑名单**，而不是靠清单里的字段 —— 因为清单由主进程下发，
  * 渲染进程改动字段的可见性容易两边不一致。
  * 这里踩过两次：先漏了 awake，又漏了点击互动动画。
- * 所以自测的断言写成"随机池**恰好等于** eat, play-mc, sleep"，而不是"不含某个 id"。
+ * 所以自测的断言写成"随机池**恰好等于** eat, play-game, sleep"，而不是"不含某个 id"。
  */
 function oneShotActions() {
   /*
@@ -2457,6 +2499,14 @@ async function playAction(id, options = {}) {
   }
   if (id === SIT_ACTION_ID) {
     void enterSit('菜单手动触发')
+    return
+  }
+  /*
+   * 「玩游戏」是**三段状态机**（begin → loop 1fps + 120s → stop），
+   * 不能走下面的通用一次性动作路径 —— 那条路会在播完第一段后就回站立。
+   */
+  if (id === GAME_ACTION_ID) {
+    void enterGame(options.fromMenu ? '菜单手动触发' : '随机触发', { fromMenu: options.fromMenu })
     return
   }
 
@@ -2568,6 +2618,16 @@ let lastClickDecision = null
 
 /** 结束当前一次性动作，回到站立循环。 */
 function endAction() {
+  /*
+   * ⚠️ 「玩游戏」被**其它动作**抢占时：不播第三段，直接放弃，计时一并关掉
+   * （用户原话："若由于触发其他动作（如进入深度思考）而中断，则不触发第三段，
+   *   直接播放新触发的动作，同时关闭已存在的计时"）。
+   *
+   * 放在最前面：所有"切换动作"都要经过 endAction()，拦一次就全覆盖。
+   * 注意 `finishGame()` **不会**调到这里 —— 正常收尾是它自己回站立，
+   * 所以不会出现"刚播完收尾又被取消"的循环。
+   */
+  if (gamePhase !== null) cancelGame('被新动作打断')
   if (actionStopTimer) {
     clearTimeout(actionStopTimer)
     actionStopTimer = null
@@ -2634,7 +2694,7 @@ function endAction() {
  * 也就是说：
  *  · 连续闲置满 1 分钟才进入「闲置模式」；
  *  · 之后每分钟掷一次骰子（命中概率 1/5），命中就随机做一个动作
- *    （吃白饭 / 玩mc / 坐下 / 睡觉）；
+ *    （吃白饭 / 玩游戏 / 坐下 / 睡觉）；
  *  · 播完一个动作后**退出闲置模式**，要再连续闲置 1 分钟才能继续触发；
  *  · 期望等待 ≈ 5 分钟一次（几何分布），不会"到点必做"。
  *
@@ -3899,6 +3959,285 @@ window.__petTestSit = {
   },
 }
 
+// ---------------------------------------------------------------- 玩游戏状态机
+/*
+ * 需求（用户指定，原文见 GAME_ACTION_ID 的注释）：
+ *
+ *  第一段 game-begin → 6fps 播一遍
+ *  第二段 game-loop  → 1fps 无限循环，同时从 0 起 120 秒计时
+ *  第三段 game-stop  → 6fps 播一遍，播完回闲置
+ *
+ * 进入第三段的两条路径：
+ *  · 第二段的 120 秒计时到点；
+ *  · 前两段被点击 —— **立即**进入第三段，并关掉计时。
+ *
+ * 与坐姿的关键差异（用户特别注明）：
+ *  **若被其他动作（如深度思考）打断，则不播第三段**，直接让新动作接管，
+ *  同时把计时清掉。所以"取消"和"收尾"必须是两条不同的路径：
+ *  · enterGameStop()  → 有收尾（计时到点 / 用户点击）
+ *  · cancelGame()     → 无收尾（被抢占）
+ */
+
+/**
+ * 当前游戏阶段：`null`（不在玩游戏）| `'begin'` | `'loop'` | `'stop'`。
+ *
+ * 和 `sitPhase` 一样单独暴露给自测 —— 光看 `activeAnimationId` 分不清
+ * "刚开始播"和"循环里"，而这两者的收尾规则不一样。
+ */
+let gamePhase = null
+
+/** 第二段的 120 秒计时器。与 `actionStopTimer` 分开，避免互相清掉。 */
+let gameHoldTimer = null
+
+/** 测试用：覆盖 120 秒（默认 `GAME_HOLD_MS`），生产环境永远是 null。 */
+let gameHoldMsOverride = null
+
+/** 最近一次退出游戏动作的上下文（诊断用；被打断时也记一笔）。 */
+let gameLastExit = null
+
+/** 兜底看门狗（理由同 sitWatchdog：卡在某个阶段会让随机动作全失效）。 */
+let gameWatchdog = null
+
+function clearGameWatchdog() {
+  if (gameWatchdog) {
+    clearTimeout(gameWatchdog)
+    gameWatchdog = null
+  }
+}
+
+function armGameWatchdog(ms, what) {
+  clearGameWatchdog()
+  gameWatchdog = setTimeout(() => {
+    gameWatchdog = null
+    if (gamePhase === null) return
+    console.warn(`[game] 看门狗触发（${what}）：卡在 ${String(gamePhase)}，强制回站立`)
+    cancelGame('看门狗兜底')
+    finishGame('看门狗兜底')
+  }, Math.max(1000, Math.round(ms)))
+}
+
+/** 当前生效的"玩游戏中"时长。 */
+function currentGameHoldMs() {
+  return Number.isFinite(gameHoldMsOverride) && gameHoldMsOverride > 0
+    ? Math.round(gameHoldMsOverride)
+    : GAME_HOLD_MS
+}
+
+/**
+ * 进入「玩游戏」动作（第一段）。
+ *
+ * 三段素材一次性预载：否则阶段切换时才解码会在换段瞬间闪一下白。
+ * 任一段缺失就整体放弃（不留半截状态），并退回站立。
+ *
+ * @param {string} reason 日志用
+ * @param {{ fromMenu?: boolean }} [options]
+ */
+async function enterGame(reason, options = {}) {
+  if (dragging) {
+    console.warn('拖拽进行中，忽略「玩游戏」')
+    return false
+  }
+  if (gamePhase !== null) return false
+
+  const [beginState, loopState, stopState] = await Promise.all([
+    loadAnimation(GAME_BEGIN_ID),
+    loadAnimation(GAME_LOOP_ID),
+    loadAnimation(GAME_STOP_ID),
+  ])
+  if (!beginState || !loopState || !stopState) {
+    const missing = [
+      !beginState ? GAME_BEGIN_ID : null,
+      !loopState ? GAME_LOOP_ID : null,
+      !stopState ? GAME_STOP_ID : null,
+    ].filter(Boolean)
+    console.warn(`「玩游戏」素材缺失（${missing.join(', ')}），放弃本次动作`)
+    return false
+  }
+
+  cancelSit(`切换到「玩游戏」（${reason}）`)
+  endAction()
+  hideBubble()
+
+  gamePhase = 'begin'
+  currentActionId = GAME_ACTION_ID
+  lastPlayedActionId = GAME_ACTION_ID
+  activeAnimationId = GAME_BEGIN_ID
+  showFrame(0)
+  buildHitMasks()
+  startPlanPlayback(GAME_BEGIN_ID)
+
+  const entry = findCatalogAction(GAME_ACTION_ID)
+  if (entry && entry.lines && entry.lines[0]) showBubble(entry.lines[0], 'say', 4000)
+
+  gameLastExit = null
+  const beginMs = planDurationMs(beginState)
+  actionStopTimer = setTimeout(() => {
+    actionStopTimer = null
+    if (gamePhase !== 'begin') return
+    enterGameLoop()
+  }, beginMs)
+  armGameWatchdog(beginMs + 4000, '第一段没有推进')
+  console.info(`[game] 开始（${reason}）：第一段 ${String(beginState.frameCount)} 帧 @6fps，约 ${String(beginMs)}ms`)
+  return true
+}
+
+/** 第二段：1fps 循环 + 起 120 秒计时。 */
+function enterGameLoop() {
+  if (gamePhase !== 'begin') return
+  const state = animations.get(GAME_LOOP_ID)
+  if (!state || !state.ready) {
+    console.warn('「玩游戏」循环素材未就绪，直接进收尾')
+    void enterGameStop('循环素材不可用')
+    return
+  }
+
+  gamePhase = 'loop'
+  stopLoop(GAME_BEGIN_ID)
+  currentActionId = GAME_ACTION_ID
+  activeAnimationId = GAME_LOOP_ID
+  showFrame(0)
+  buildHitMasks()
+  startLoop(GAME_LOOP_ID)
+
+  if (gameHoldTimer) {
+    clearTimeout(gameHoldTimer)
+    gameHoldTimer = null
+  }
+  const holdMs = currentGameHoldMs()
+  gameHoldTimer = setTimeout(() => {
+    gameHoldTimer = null
+    void enterGameStop('玩满 120 秒')
+  }, holdMs)
+  armGameWatchdog(holdMs + 4000, '第二段没有推进')
+  console.info(`[game] 第二段开始循环（1fps，${String(state.frameCount)} 帧），计时 ${String(holdMs)}ms`)
+}
+
+/**
+ * 第三段：收尾，播完回闲置。
+ *
+ * 只有两条路径进来：计时到点、用户点击。**被打断不走这里**（见 cancelGame）。
+ */
+async function enterGameStop(reason) {
+  if (gamePhase === 'stop') return
+  if (gamePhase === null) return
+  gamePhase = 'stop'
+  if (gameHoldTimer) {
+    clearTimeout(gameHoldTimer)
+    gameHoldTimer = null
+  }
+  if (actionStopTimer) {
+    clearTimeout(actionStopTimer)
+    actionStopTimer = null
+  }
+  stopLoop(GAME_LOOP_ID)
+  stopLoop(GAME_BEGIN_ID)
+
+  const state = await loadAnimation(GAME_STOP_ID)
+  if (!state) {
+    console.warn('「玩游戏」收尾素材缺失，直接回站立')
+    finishGame(reason)
+    return
+  }
+
+  currentActionId = GAME_ACTION_ID
+  activeAnimationId = GAME_STOP_ID
+  showFrame(0)
+  buildHitMasks()
+  startPlanPlayback(GAME_STOP_ID)
+
+  const ms = planDurationMs(state)
+  actionStopTimer = setTimeout(() => {
+    actionStopTimer = null
+    finishGame(reason)
+  }, ms)
+  armGameWatchdog(ms + 4000, '第三段没有推进')
+  console.info(`[game] 进入第三段（${reason}）`)
+}
+
+/** 收尾播完：回站立闲置。 */
+function finishGame(reason) {
+  clearGameWatchdog()
+  if (gameHoldTimer) {
+    clearTimeout(gameHoldTimer)
+    gameHoldTimer = null
+  }
+  gamePhase = null
+  stopLoop(GAME_LOOP_ID)
+  stopLoop(GAME_STOP_ID)
+  currentActionId = null
+
+  const standState = animations.get('stand')
+  if (standState && standState.ready) {
+    activeAnimationId = 'stand'
+    showFrame(0)
+    buildHitMasks()
+    startLoop('stand')
+  }
+  console.info(`[game] 结束（${reason}）`)
+  /*
+   * 与其它随机动作播完一致：退出闲置模式，要再连续闲置 1 分钟才可能再触发。
+   */
+  resetIdleTimer(true)
+}
+
+/**
+ * 被抢占：不播第三段，直接放弃（计时一并关闭）。
+ *
+ * @returns {boolean} 是否确实取消了
+ */
+function cancelGame(reason) {
+  if (gamePhase === null) return false
+  const wasPhase = gamePhase
+  clearGameWatchdog()
+  if (gameHoldTimer) {
+    clearTimeout(gameHoldTimer)
+    gameHoldTimer = null
+  }
+  gamePhase = null
+  stopLoop(GAME_BEGIN_ID)
+  stopLoop(GAME_LOOP_ID)
+  stopLoop(GAME_STOP_ID)
+  if (currentActionId === GAME_ACTION_ID) currentActionId = null
+  gameLastExit = { phase: wasPhase, reason, at: Date.now() }
+  console.info(`[game] 被打断：${wasPhase} → ${reason}（不播收尾）`)
+  return true
+}
+
+/** 前两段点击 → 立即进第三段并关计时；第三段点击忽略。 */
+function jumpToGameStop(reason) {
+  if (gamePhase !== 'begin' && gamePhase !== 'loop') return false
+  void enterGameStop(reason)
+  return true
+}
+
+/** 测试钩子：驱动游戏状态机（与 __petTestSit 同样的思路）。 */
+window.__petTestGame = {
+  enter: (reason) => enterGame(reason || '测试触发'),
+  phase: () => gamePhase,
+  holdMs: () => currentGameHoldMs(),
+  setHoldMs: (ms) => {
+    gameHoldMsOverride = Number.isFinite(ms) && ms > 0 ? Math.round(ms) : null
+    return currentGameHoldMs()
+  },
+  click: () => jumpToGameStop('测试点击'),
+  cancel: (reason) => cancelGame(reason || '测试取消'),
+  lastExit: () => gameLastExit,
+  plan: () => {
+    const b = animations.get(GAME_BEGIN_ID)
+    const l = animations.get(GAME_LOOP_ID)
+    const s = animations.get(GAME_STOP_ID)
+    return {
+      beginMs: b ? planDurationMs(b) : null,
+      holdMs: currentGameHoldMs(),
+      stopMs: s ? planDurationMs(s) : null,
+      beginFrames: b ? planLengthOf(b) : null,
+      loopFrames: l ? l.frameCount : null,
+      loopFps: l ? l.fps : null,
+      stopFrames: s ? planLengthOf(s) : null,
+    }
+  },
+}
+
 // ---------------------------------------------------------------- 睡眠状态机
 /*
  * 需求（用户指定）：
@@ -4456,6 +4795,17 @@ window.__petTestState = () => {
     hasSitHoldTimer: sitHoldTimer !== null,
     /** 当前生效的「坐着」时长（毫秒）。测试会压短它，生产是 180000。 */
     sitHoldMs: currentSitHoldMs(),
+    /**
+     * 「玩游戏」当前阶段：`null` | `'begin'` | `'loop'` | `'stop'`。
+     * 收尾规则按阶段区分（前两段点击→收尾；被打断→不播收尾），所以要单独报。
+     */
+    gamePhase,
+    /** 「玩游戏中」的计时器是否在跑（= 120 秒计时已开始）。 */
+    hasGameHoldTimer: gameHoldTimer !== null,
+    /** 当前生效的「玩游戏中」时长（毫秒），生产是 120000。 */
+    gameHoldMs: currentGameHoldMs(),
+    /** 最近一次退出游戏动作的上下文（被打断时也有记录）。 */
+    gameLastExit,
     /** 状态变迁日志（最近若干条），用于排查"睡眠自己中断"。 */
     stateLog: stateLog.slice(-12),
     /** 当前有没有在跑的闲置调度定时器（睡眠期间应为 false）。 */

@@ -134,7 +134,7 @@ test('动作：5 个动作各一组，且能按动作 id 取到台词', () => {
    * 素材自身带"深度求索中…"气泡，应用层再弹一句就是两个气泡叠着。
    * 见下一条断言 —— 它把"think 必须没有台词"钉住，防止以后又加回来。
    */
-  const expect = ['awake', 'eat', 'play-mc', 'sit', 'sleep']
+  const expect = ['awake', 'eat', 'play-game', 'sit', 'sleep']
   for (const id of expect) {
     const lines = actionLines(id)
     assert.ok(lines.length > 0, `动作 ${id} 没有台词`)
@@ -301,7 +301,7 @@ test('动作 / 余额 / 系统 / 拖拽 都能按条件取到且不串台', () =
    * 这里**不再写死具体句子** —— 那是内容，不是规则；写死会导致
    * 每次用户改词都要改测试。只断言"能取到、且确实来自该组的 lines"。
    */
-  for (const id of ['eat', 'play-mc', 'sit', 'sleep', 'awake']) {
+  for (const id of ['eat', 'play-game', 'sit', 'sleep', 'awake']) {
     const got = actionLines(id)
     assert.ok(got.length >= 1, `动作 ${id} 取不到台词`)
     const group = VOICE_GROUPS.find((g) => g.trigger === 'action' && g.actionId === id)

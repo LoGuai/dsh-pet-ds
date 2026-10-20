@@ -348,10 +348,10 @@ export const VOICE_GROUPS = [
     ],
   },
   {
-    id: 'action-play-mc',
+    id: 'action-play-game',
     trigger: 'action',
-    actionId: 'play-mc',
-    label: '动作·玩mc',
+    actionId: 'play-game',
+    label: '动作·玩游戏',
     lines: [
       '趁主人没发现，打会游戏。',
       '爱慕西，启动！',

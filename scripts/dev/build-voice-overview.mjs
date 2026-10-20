@@ -156,8 +156,8 @@ L.push('「（占位·信赖）……哼，我才没有高兴。」—— 主进
 L.push('既不在库里、也改不到。现在改成"没给就不说话"，并加了测试')
 L.push('`scripts/dev/test-voice-sources.mjs`：只要有人再往 `showBubble(\'中文…\')` 里写死台词，测试立刻红。')
 L.push('')
-L.push('> 你问的「吃白饭、玩mc、坐下、睡觉」四个动作：它们**一直在库里**，')
-L.push('> 就是第一节「播放动作」里的 `action-eat` / `action-play-mc` / `action-sit` / `action-sleep`，')
+L.push('> 你问的「吃白饭、玩游戏、坐下、睡觉」四个动作：它们**一直在库里**，')
+L.push('> 就是第一节「播放动作」里的 `action-eat` / `action-play-game` / `action-sit` / `action-sleep`，')
 L.push('> 只是每组只有 1 句占位台词，所以看起来像"没配"。想加词直接在那组里加行号即可。')
 L.push('')
 

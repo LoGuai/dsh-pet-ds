@@ -3388,6 +3388,9 @@ async function verifyLayoutAndResize(check, wait) {
   // 坐姿动作（坐下 → 坐着循环 + 180 秒计时 → 站起；前两阶段点击立即站起）。
   await verifySitAction(check, wait)
 
+  // 玩游戏（begin 6fps → loop 1fps + 120 秒计时 → stop；点击立即收尾，被打断不收尾）。
+  await verifyGameAction(check, wait)
+
   /*
    * 闲置主动对话（语音库：固定 / 好感度 ×5 / 心情 ×3）。
    *
@@ -4710,53 +4713,75 @@ async function verifyActionAssets(check) {
     hangOk ? `帧数 ${String(hangOk.frames)}，fps ${String(hangOk.fps)}` : '加载失败（素材缺失）',
   )
 
-  // ---- 3b2) 玩mc：逐段换帧率 + 随机循环轮数 ----
+  // ---- 3b2) 玩游戏：三段素材的帧数与帧率 ----
   //
-  // 用户要求："以 6fps 播第 3 帧结束后，将 4、5 帧以 1fps 循环随机 20~40 次，
-  // 结束后继续以 6fps 播 6~10 帧"。
-  // 播放计划是**展开后的纯数据**（含每项帧率），所以能直接逐项断言。
+  // 用户要求（原文）：
+  //   "第一段：动作触发时，播放 game_begin，每秒 6 帧；
+  //    第二段：第一段结束后，立即播放 gaming 并循环播放，每秒 1 帧；
+  //    第三段：播放 game_stop，结束后回到闲置状态。"
+  //
+  // 所以三段的 fps 是**刻意不同**的（6 / 1 / 6）：
+  // 第二段 1fps 意味着每帧停在屏幕上 1 秒 —— 这是"慢慢循环"的观感来源。
+  // 状态机本身的推进（begin→loop→stop、点击/打断）由 verifyGameAction 负责。
   {
-    const mc = await wc.executeJavaScript(`window.__petTestPlaybackPlan('play-mc')`, true)
-    if (!mc) {
-      check('「玩mc」素材可加载', false, '加载失败（素材缺失）')
-    } else {
-      check(
-        '「玩mc」素材可加载（10 帧 @6fps）',
-        mc.frameCount === 10 && mc.fps === 6,
-        `帧数 ${String(mc.frameCount)}，fps ${String(mc.fps)}`,
-      )
-      // 帧号是 1 基：1,2,3 → 4,5 ×N → 6..10
-      const head = mc.plan.slice(0, 3)
-      const loopItems = mc.planFps.filter((f, i) => mc.plan[i] === 4 || mc.plan[i] === 5)
-      const loopFpsSet = [...new Set(mc.planFps.filter((f, i) => mc.plan[i] === 4 || mc.plan[i] === 5))]
-      const tailStart = 3 + loopItems.length
-      const tail = mc.plan.slice(tailStart)
-      const tailFpsSet = [...new Set(mc.planFps.slice(tailStart))]
-      const loopCycles = mc.frameRepetitions[3] // 第 4 帧出现几次
-
-      check(
-        '「玩mc」前 3 帧以 6fps 播放',
-        JSON.stringify(head) === JSON.stringify([1, 2, 3]) &&
-          mc.planFps.slice(0, 3).every((f) => f === 6),
-        `前 3 项=${JSON.stringify(head)}，帧率=${JSON.stringify(mc.planFps.slice(0, 3))}`,
-      )
-      check(
-        '「玩mc」第 4~5 帧以 1fps 循环（随机 20~40 次）',
-        loopFpsSet.length === 1 && loopFpsSet[0] === 1 && loopCycles >= 21 && loopCycles <= 41,
-        `循环段帧率=${JSON.stringify(loopFpsSet)}，第 4 帧出现 ${String(loopCycles)} 次` +
-          `（应为 21~41 次 = 随机 20~40 额外循环 + 1）`,
-      )
-      check(
-        '「玩mc」第 6~10 帧回到 6fps 收尾',
-        JSON.stringify(tail) === JSON.stringify([6, 7, 8, 9, 10]) && tailFpsSet.every((f) => f === 6),
-        `尾段=${JSON.stringify(tail)}，帧率=${JSON.stringify(tailFpsSet)}`,
-      )
-      log(
-        `参考-玩mc播放：1,2,3(6fps) → 4,5 ×${String(loopCycles)}(1fps) → ` +
-          `${tail.join(',')}(6fps)；共 ${String(mc.planLength)} 项`,
-      )
-    }
+    const segs = await wc.executeJavaScript(
+      `(async () => {
+        const ids = ['game-begin', 'game-loop', 'game-stop']
+        const out = {}
+        for (const id of ids) {
+          const s = await loadAnimation(id)
+          out[id] = s ? { frames: s.frameCount, fps: s.fps, loop: s.loop === true } : null
+        }
+        return out
+      })()`,
+      true,
+    )
+    const ids = ['game-begin', 'game-loop', 'game-stop']
+    const missing = ids.filter((id) => !segs || !segs[id])
+    check(
+      '「玩游戏」三段素材都能加载',
+      missing.length === 0,
+      missing.length === 0
+        ? ids.map((id) => `${id}=${String(segs[id].frames)}帧@${String(segs[id].fps)}fps`).join('，')
+        : `缺：${missing.join(', ')}`,
+    )
+    check(
+      '「玩游戏」第一段 6fps、第二段 1fps、第三段 6fps',
+      missing.length === 0 &&
+        segs['game-begin'].fps === 6 &&
+        segs['game-loop'].fps === 1 &&
+        segs['game-stop'].fps === 6,
+      missing.length === 0
+        ? `begin=${String(segs['game-begin'].fps)}/loop=${String(segs['game-loop'].fps)}/stop=${String(segs['game-stop'].fps)}`
+        : '素材缺失，无法判断帧率',
+    )
+    check(
+      '「玩游戏」第二段声明为循环（loop:true）',
+      missing.length === 0 && segs['game-loop'].loop === true,
+      missing.length === 0 ? `loop=${String(segs['game-loop'].loop)}` : '素材缺失',
+    )
   }
+
+  // ---- 帧率约定：所有素材都是 6fps ----
+  //
+  // 用户约定"所有动画一律按每秒 6 帧输入，除非特别说明"。
+  // 这条断言把约定钉住：以后加新素材若忘了按 6fps 导出，会立刻报出来，
+  // 而不是等到观感不对才发现（帧率错了表现为整体偏快/偏慢，很难判断）。
+  //
+  // ⚠️ game-loop 是**特别说明**的例外（用户要求 1fps），所以不放进这个列表；
+  // 它的帧率由上面那条「6/1/6」的断言专门守着。
+  const fpsReport = await wc.executeJavaScript(
+    `(async () => {
+      const ids = ['stand', 'hang', 'eat', 'sleep', 'awake', 'head', 'chest', 'stomach', 'leg', 'game-begin', 'game-stop']
+      const out = []
+      for (const id of ids) {
+        const st = await loadAnimation(id)
+        out.push({ id, fps: st ? st.fps : null, frames: st ? st.frameCount : null })
+      }
+      return out
+    })()`,
+    true,
+  )
 
   // ---- 3c) 局部循环：吃白饭的"咀嚼段"重复播放 ----
   //
@@ -4874,7 +4899,7 @@ async function verifySleepState(check, wait) {
   // 而不是等到观感不对才发现（帧率错了表现为整体偏快/偏慢，很难判断）。
   const fpsReport = await wc.executeJavaScript(
     `(async () => {
-      const ids = ['stand', 'hang', 'eat', 'sleep', 'awake', 'head', 'chest', 'stomach', 'leg', 'play-mc']
+      const ids = ['stand', 'hang', 'eat', 'sleep', 'awake', 'head', 'chest', 'stomach', 'leg', 'game-begin', 'game-stop']
       const out = []
       for (const id of ids) {
         const st = await loadAnimation(id)
@@ -6528,6 +6553,183 @@ async function verifySitAction(check, wait) {
 }
 
 /**
+ * 验证「玩游戏」三段状态机。
+ *
+ * 用户要求（原文见 renderer.js 的 GAME_ACTION_ID 注释）：
+ *  · 第一段 game-begin 6fps 播一遍；
+ *  · 第二段 game-loop 1fps 循环，同时起 120 秒计时；
+ *  · 第三段 game-stop 播完回闲置；
+ *  · 进第三段有两条路：计时到点 / 前两段点击；
+ *  · **被别的动作打断时没有第三段**，直接切走并关掉计时。
+ *
+ * 120 秒真等不了，所以用 `__petTestGame.setHoldMs()` 压短（测的是同一套代码）。
+ *
+ * @param {(name: string, ok: boolean, detail?: string) => void} check
+ * @param {(ms: number) => Promise<void>} wait
+ */
+async function verifyGameAction(check, wait) {
+  const wc = win && !win.isDestroyed() ? win.webContents : null
+  if (!wc) return
+  const readState = () => wc.executeJavaScript('window.__petTestState ? window.__petTestState() : null', true)
+  const js = (code) => wc.executeJavaScript(code, true)
+
+  await js('window.__petTestSetIdleClock({ probability: 0 })')
+
+  const plan = await js('window.__petTestGame.plan()')
+  check(
+    '「玩游戏中」阶段默认时长 = 120 秒（用户指定）',
+    (await js('window.__petTestGame.setHoldMs(null)')) === 120 * 1000,
+    `holdMs=${String(await js('window.__petTestGame.holdMs()'))}（应为 120000）`,
+  )
+
+  const beginMs = plan && plan.beginMs ? plan.beginMs : 1200
+  const stopMs = plan && plan.stopMs ? plan.stopMs : 1200
+
+  // ---- 1) 触发 → 第一段 ----
+  const entered = await js(`window.__petTestGame.enter('自测')`)
+  const st1 = await readState()
+  check(
+    '触发「玩游戏」后进入 begin 阶段',
+    entered === true && st1 && st1.gamePhase === 'begin' && st1.currentActionId === 'play-game',
+    `enter=${String(entered)} gamePhase=${String(st1 && st1.gamePhase)} 动作=${String(st1 && st1.currentActionId)}`,
+  )
+  check(
+    '第一段播放 game-begin',
+    st1 && st1.activeAnimationId === 'game-begin',
+    `activeAnimationId=${String(st1 && st1.activeAnimationId)}（期望 game-begin）`,
+  )
+
+  // ---- 2) 第一段播完 → 第二段循环 + 起计时 ----
+  await wait(beginMs + 500)
+  const st2 = await readState()
+  check(
+    '第一段播完自动进入 loop 阶段',
+    st2 && st2.gamePhase === 'loop',
+    `gamePhase=${String(st2 && st2.gamePhase)}（期望 loop）`,
+  )
+  check(
+    '第二段循环播放 game-loop',
+    st2 && st2.activeAnimationId === 'game-loop',
+    `activeAnimationId=${String(st2 && st2.activeAnimationId)}（期望 game-loop）`,
+  )
+  check(
+    '第二段已开始计时（120 秒计时器在跑）',
+    st2 && st2.hasGameHoldTimer === true,
+    `hasGameHoldTimer=${String(st2 && st2.hasGameHoldTimer)} holdMs=${String(st2 && st2.gameHoldMs)}`,
+  )
+  {
+    /* 第二段是 1fps、2 帧：1.2 秒内应当换过帧（否则说明没在循环）。 */
+    const frames = []
+    for (let i = 0; i < 4; i += 1) {
+      const st = await readState()
+      frames.push(st ? st.currentFrame : null)
+      await wait(400)
+    }
+    check(
+      '第二段的帧在推进（1fps 循环，不是静止）',
+      new Set(frames).size > 1,
+      `四次采样帧号：${frames.join(' → ')}`,
+    )
+  }
+
+  // ---- 3) 点击 → 立即进第三段并关计时 ----
+  const clicked = await js('window.__petTestGame.click()')
+  const st3 = await readState()
+  check(
+    '第二段点击立即进入 stop 阶段',
+    clicked === true && st3 && st3.gamePhase === 'stop',
+    `click=${String(clicked)} gamePhase=${String(st3 && st3.gamePhase)}（期望 stop）`,
+  )
+  check(
+    '第三段播放 game-stop',
+    st3 && st3.activeAnimationId === 'game-stop',
+    `activeAnimationId=${String(st3 && st3.activeAnimationId)}（期望 game-stop）`,
+  )
+  check(
+    '点击后计时已关闭',
+    st3 && st3.hasGameHoldTimer === false,
+    `hasGameHoldTimer=${String(st3 && st3.hasGameHoldTimer)}（应为 false）`,
+  )
+
+  // ---- 4) 收尾播完 → 回站立闲置 ----
+  await wait(stopMs + 800)
+  const done = await readState()
+  check(
+    '收尾播完回到站立闲置',
+    done &&
+      done.gamePhase === null &&
+      done.petState === 'idle' &&
+      done.activeAnimationId === 'stand' &&
+      done.currentActionId === null,
+    `gamePhase=${String(done && done.gamePhase)} petState=${String(done && done.petState)}` +
+      ` 动画=${String(done && done.activeAnimationId)}`,
+  )
+
+  // ---- 5) 计时到点自动进第三段（把 120 秒压到 700ms）----
+  {
+    await js('window.__petTestGame.setHoldMs(700)')
+    await js(`window.__petTestGame.enter('自测-到点收尾')`)
+    await wait(beginMs + 400)
+    const atLoop = await readState()
+    await wait(1400)
+    const afterHold = await readState()
+    check(
+      '玩到计时到点会自动进入第三段',
+      atLoop && atLoop.gamePhase === 'loop' && afterHold && afterHold.gamePhase !== 'loop',
+      `到点前=${String(atLoop && atLoop.gamePhase)}，到点后=${String(afterHold && afterHold.gamePhase)}`,
+    )
+    await wait(stopMs + 800)
+    const settled = await readState()
+    check(
+      '计时到点收尾后同样回到站立闲置',
+      settled && settled.gamePhase === null && settled.activeAnimationId === 'stand',
+      `gamePhase=${String(settled && settled.gamePhase)} 动画=${String(settled && settled.activeAnimationId)}`,
+    )
+    await js('window.__petTestGame.setHoldMs(null)')
+  }
+
+  // ---- 6) 被别的动作打断：不播第三段，直接切走并关计时 ----
+  {
+    await js('window.__petTestGame.setHoldMs(600000)')
+    await js(`window.__petTestGame.enter('自测-被打断')`)
+    await wait(beginMs + 400)
+    const before = await readState()
+    /* 用真实入口触发别的动作（与用户点菜单/宿主状态同一条路径）。 */
+    await js(`window.pet.triggerAction('head')`)
+    await wait(350)
+    const after = await readState()
+    const exit = await js('window.__petTestGame.lastExit()')
+    check(
+      '被打断时直接切到新动作（不播 game-stop）',
+      before &&
+        before.gamePhase === 'loop' &&
+        after &&
+        after.gamePhase === null &&
+        after.activeAnimationId !== 'game-stop',
+      `打断前=${String(before && before.gamePhase)}，打断后 gamePhase=${String(after && after.gamePhase)}` +
+        ` 动画=${String(after && after.activeAnimationId)}`,
+    )
+    check(
+      '被打断时记下原因，且计时已关闭',
+      after && after.hasGameHoldTimer === false && exit && /打断/.test(String(exit.reason)),
+      `hasGameHoldTimer=${String(after && after.hasGameHoldTimer)} 退出原因=${String(exit && exit.reason)}`,
+    )
+    await js(`window.__petTestGame.cancel('自测收尾')`)
+    await js('window.__petTestGame.setHoldMs(null)')
+    await wait(400)
+  }
+
+  const finalState = await readState()
+  check(
+    '玩游戏用例结束后回到闲置（不留残余状态）',
+    finalState && finalState.gamePhase === null && finalState.petState === 'idle',
+    `gamePhase=${String(finalState && finalState.gamePhase)} petState=${String(finalState && finalState.petState)}`,
+  )
+
+  await js('window.__petTestSetIdleClock(null)')
+}
+
+/**
  * 验证闲置语音的门控、随机动作、心情值与属性面板。
  *
  * 这几项的共同点是"由事件驱动、肉眼才能看到"，所以这里直接把状态注入渲染进程
@@ -6719,28 +6921,28 @@ async function verifyIdleAndMood(check, wait, readLayout) {
   const catalog = st2 && Array.isArray(st2.actionCatalog) ? st2.actionCatalog : []
   const catalogIds = catalog.map((a) => a.id)
   // 菜单要能触达全部有素材的动作（站立 + 三个随机动作 + 睡觉 + 惊醒）。
-  const expectAll = ['stand', 'eat', 'play-mc', 'sit', 'sleep', 'awake']
+  const expectAll = ['stand', 'eat', 'play-game', 'sit', 'sleep', 'awake']
   const missing = expectAll.filter((id) => !catalogIds.includes(id))
   check(
-    '动作清单包含全部动作（站立/吃白饭/玩mc/坐下/睡觉/惊醒）',
+    '动作清单包含全部动作（站立/吃白饭/玩游戏/坐下/睡觉/惊醒）',
     missing.length === 0,
     missing.length === 0 ? `清单=[${catalogIds.join(', ')}]` : `缺少 ${missing.join(', ')}；清单=[${catalogIds.join(', ')}]`,
   )
   /*
-   * 随机池 = 吃白饭 + 玩mc + **坐下** + **睡觉**。
+   * 随机池 = 吃白饭 + 玩游戏 + **坐下** + **睡觉**。
    * 惊醒与点击互动动画不在池里。
    *
    * 断言写成"恰好等于这四个"而不是"不含某个 id" —— 后者太弱，
    * 之前就因此漏掉过 awake 被抽进随机池。
    */
   const randomPool = await wc.executeJavaScript('oneShotActions().map((a) => a.id)', true)
-  const expectedPool = ['eat', 'play-mc', 'sit', 'sleep']
+  const expectedPool = ['eat', 'play-game', 'sit', 'sleep']
   const poolOk =
     Array.isArray(randomPool) &&
     randomPool.length === expectedPool.length &&
     expectedPool.every((id) => randomPool.includes(id))
   check(
-    '随机池恰好是 吃白饭 / 玩mc / 坐下 / 睡觉',
+    '随机池恰好是 吃白饭 / 玩游戏 / 坐下 / 睡觉',
     poolOk,
     `随机池=[${Array.isArray(randomPool) ? randomPool.join(', ') : String(randomPool)}]（应为 ${expectedPool.join(', ')}）`,
   )
@@ -6913,9 +7115,16 @@ async function verifyIdleAndMood(check, wait, readLayout) {
     )
 
     // 每个随机动作都要有素材，否则抽到就是空白窗口。
+    //
+    // ⚠️ 「玩游戏」是个例外：它的**逻辑 id 没有同名素材目录**，
+    // 而是三段（game-begin / game-loop / game-stop）。所以这里按"首段"检查。
+    const primaryAsset = (id) => (id === 'play-game' ? 'game-begin' : id)
     const missingAssets = []
     for (const id of libIds) {
-      const plan = await wc.executeJavaScript(`window.__petTestPlaybackPlan(${JSON.stringify(id)})`, true)
+      const plan = await wc.executeJavaScript(
+        `window.__petTestPlaybackPlan(${JSON.stringify(primaryAsset(id))})`,
+        true,
+      )
       if (!plan || !(plan.frameCount > 0)) missingAssets.push(id)
     }
     check(

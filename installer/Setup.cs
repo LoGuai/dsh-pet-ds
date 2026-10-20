@@ -1298,8 +1298,10 @@ namespace DshPetSetup
             var requiredAnims = new[]
             {
                 "stand", "hang", "eat", "sleep", "awake",
-                "head", "chest", "stomach", "leg", "play-mc",
+                "head", "chest", "stomach", "leg",
+                "game-begin", "game-loop", "game-stop",
                 "sit", "sit-circle", "sit-stop",
+                "think-enter", "think-loop", "think-exit",
             };
             var missingAnims = "";
             foreach (var a in requiredAnims)
