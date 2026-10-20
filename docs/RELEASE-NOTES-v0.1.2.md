@@ -20,7 +20,7 @@
 
 **安装包 + 两条安装路径。** `node install.mjs` 一条命令装好并自验，
 用**退出码**表达结论（`--json` 可拿一行机器可读摘要）。给人看的详细指引见
-[INSTALL.md](./INSTALL.md)，给 agent 看的见 [INSTALL-AGENT.md](./INSTALL-AGENT.md)。
+[INSTALL.md](../INSTALL.md)，给 agent 看的见 [INSTALL-AGENT.md](./INSTALL-AGENT.md)。
 
 **右键菜单重构。** 「说句话」改为「对话」，并新建**专门的对话台词库**
 （`src/shared-core/dialogue.js`，15 句，傲娇鲸鱼娘人设）。原来那栏没用的
@@ -87,5 +87,5 @@ node scripts/dev/install-electron.mjs --version 38.2.0
 
 自测 10 组 **157 条断言**全过；语法 50 个文件；安装包内容校验 21 项。
 
-改动史与踩坑记录见 [README.md](./README.md)（搜索 `failed to import`、
+改动史与踩坑记录见 [README.md](../README.md)（搜索 `failed to import`、
 `schemastery`、`再导出`）。

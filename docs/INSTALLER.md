@@ -323,7 +323,7 @@ node scripts/dev/test-setup-install.mjs   # 完整安装流程（18 项）
 
 | 文档 | 内容 |
 |---|---|
-| [INSTALL.md](./INSTALL.md) | 安装指引（四种方式：官方命令 / 安装器 / `.tgz` / 手动） |
+| [INSTALL.md](../INSTALL.md) | 安装指引（四种方式：官方命令 / 安装器 / `.tgz` / 手动） |
 | [INSTALL-MANUAL.md](./INSTALL-MANUAL.md) | 完全手动安装（不用任何脚本） |
 | [INSTALL-AGENT.md](./INSTALL-AGENT.md) | 给 agent 用的一条命令版 |
 | [RELEASE.md](./RELEASE.md) | 发布流程 |

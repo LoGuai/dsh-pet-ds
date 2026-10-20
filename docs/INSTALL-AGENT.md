@@ -1,7 +1,7 @@
 # 安装（agent 版）
 
 > 这份是**给自动化 / agent 读**的：只要一条命令 + 退出码，不需要理解 DSH 内部概念。
-> 给人看的详细版见 [INSTALL.md](./INSTALL.md)。
+> 给人看的详细版见 [INSTALL.md](../INSTALL.md)。
 
 ## 先看手里是什么
 

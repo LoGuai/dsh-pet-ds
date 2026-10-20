@@ -61,7 +61,7 @@
 
 ## 安装 / 升级
 
-三种方式任选，详见 [INSTALL.md](./INSTALL.md)：
+三种方式任选，详见 [INSTALL.md](../INSTALL.md)：
 
 ```bash
 # 官方命令（推荐，热生效）

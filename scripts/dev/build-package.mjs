@@ -273,7 +273,7 @@ check('含 cordis.patch.yml（DSH 靠它识别为 bundle 插件）', has('cordis
 check('含宿主入口 src/host/index.js', has('src/host/index.js'))
 check('含配置 schema src/host/config-schema.js', has('src/host/config-schema.js'))
 check('含客户端 client/client.js（设置页那一栏靠它）', has('client/client.js'))
-check('含手动安装指引 INSTALL-MANUAL.md', has('INSTALL-MANUAL.md'))
+check('含手动安装指引 docs/INSTALL-MANUAL.md', has('docs/INSTALL-MANUAL.md'))
 check('含桌宠应用 pet-app/', countUnder('pet-app') > 0, `${countUnder('pet-app')} 个文件`)
 check('含安装指引 INSTALL.md', has('INSTALL.md'))
 /*
@@ -281,7 +281,7 @@ check('含安装指引 INSTALL.md', has('INSTALL.md'))
  * "由 agent 自行安装"，缺了它们 agent 就没有可直接执行的入口。
  */
 check('含 agent 安装入口 install.mjs', has('install.mjs'))
-check('含 agent 安装说明 INSTALL-AGENT.md', has('INSTALL-AGENT.md'))
+check('含 agent 安装说明 docs/INSTALL-AGENT.md', has('docs/INSTALL-AGENT.md'))
 check('含解析链验证脚本 probe-import-resolution.mjs', has('scripts/dev/probe-import-resolution.mjs'))
 /*
  * `install_bundle` 契约的两个脚本也要进包：
@@ -293,8 +293,8 @@ check('含 spec 契约测试 test-install-bundle-spec.mjs', has('scripts/dev/tes
 check('含 README.md', has('README.md'))
 check('含 LICENSE', has('LICENSE'))
 check('含 LICENSE-ART.md（美术素材单独授权）', has('LICENSE-ART.md'))
-check('含 RELEASE.md（发布流程）', has('RELEASE.md'))
-check('含本版本发布说明 RELEASE-NOTES-*.md', entries.some((e) => /^RELEASE-NOTES-v.*\.md$/.test(e)))
+check('含 docs/RELEASE.md（发布流程）', has('docs/RELEASE.md'))
+check('含历史发布说明 docs/RELEASE-NOTES-*.md', entries.some((e) => /^docs\/RELEASE-NOTES-v.*\.md$/.test(e)))
 check('含安装器 scripts/install.mjs', has('scripts/install.mjs'))
 
 // 产物文件名里带版本号 —— 与 package.json 对不上会让人拿错包。
@@ -417,9 +417,9 @@ let sourceZip = null
       check('源码 zip 含 package.json', zHas('package.json'))
       check('源码 zip 含 cordis.patch.yml', zHas('cordis.patch.yml'))
       check('源码 zip 含 install.mjs（agent 安装入口）', zHas('install.mjs'))
-      check('源码 zip 含 INSTALL-AGENT.md', zHas('INSTALL-AGENT.md'))
+      check('源码 zip 含 docs/INSTALL-AGENT.md', zHas('docs/INSTALL-AGENT.md'))
       check('源码 zip 含 LICENSE-ART.md', zHas('LICENSE-ART.md'))
-      check('源码 zip 含 RELEASE-NOTES-*.md', zipEntries.some((e) => /^RELEASE-NOTES-v.*\.md$/.test(e)))
+      check('源码 zip 含 docs/RELEASE-NOTES-*.md', zipEntries.some((e) => /^docs\/RELEASE-NOTES-v.*\.md$/.test(e)))
       check('源码 zip 含宿主与客户端', zHas('src/host/index.js') && zHas('client/client.js'))
       check('源码 zip 含桌宠应用', zCount('pet-app') > 0, `${zCount('pet-app')} 个文件`)
 

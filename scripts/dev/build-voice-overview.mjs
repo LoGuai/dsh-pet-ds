@@ -14,7 +14,7 @@
  * 用法：node scripts/dev/build-voice-overview.mjs
  */
 import { execFileSync } from 'node:child_process'
-import { writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { VOICE_GROUPS, voiceLineCountFor } from '../../src/shared-core/voice-library.js'
@@ -162,8 +162,9 @@ L.push('> 只是每组只有 1 句占位台词，所以看起来像"没配"。�
 L.push('')
 
 const md = L.join('\n')
-writeFileSync(join(ROOT, 'VOICE-OVERVIEW.md'), md, 'utf8')
-writeFileSync(join(ROOT, 'VOICE-OVERVIEW.txt'), md.replace(/^#+\s*/gm, '').replace(/\*\*/g, '').replace(/`/g, ''), 'utf8')
+mkdirSync(join(ROOT, 'docs'), { recursive: true })
+writeFileSync(join(ROOT, 'docs/VOICE-OVERVIEW.md'), md, 'utf8')
+writeFileSync(join(ROOT, 'docs/VOICE-OVERVIEW.txt'), md.replace(/^#+\s*/gm, '').replace(/\*\*/g, '').replace(/`/g, ''), 'utf8')
 console.log(`  已生成 VOICE-OVERVIEW.md / .txt（${String(VOICE_GROUPS.length)} 组）`)
 
 /* docx：复用更新日志的 md→docx 导出脚本（纯 markdown 到 Word）。 */
@@ -171,8 +172,8 @@ try {
   const py = process.env.DSH_PYTHON || 'python'
   execFileSync(py, [
     join(ROOT, 'scripts/dev/export-changelog-docx.py'),
-    join(ROOT, 'VOICE-OVERVIEW.md'),
-    join(ROOT, 'VOICE-OVERVIEW.docx'),
+    join(ROOT, 'docs/VOICE-OVERVIEW.md'),
+    join(ROOT, 'docs/VOICE-OVERVIEW.docx'),
   ], { stdio: 'ignore' })
   console.log('  已生成 VOICE-OVERVIEW.docx')
 } catch (err) {

@@ -1,6 +1,6 @@
 # v0.1.5
 
-> 更新日志（一次看遍所有版本）见 [CHANGELOG.md](./CHANGELOG.md)。
+> 更新日志（一次看遍所有版本）见 [CHANGELOG.md](../CHANGELOG.md)。
 > 本文是该版本的详细叙述。
 
 本版有四件事：

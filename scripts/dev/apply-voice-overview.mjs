@@ -17,7 +17,7 @@ import { VOICE_GROUPS, VOICE_LINE_MAX_CHARS } from '../../src/shared-core/voice-
 
 const ROOT = 'D:/dsh/pet'
 const SRC = `${ROOT}/src/shared-core/voice-library.js`
-const input = process.argv[2] ?? 'C:/Users/29845/Desktop/VOICE-OVERVIEW-updated.md'
+const input = process.argv[2] ?? 'D:/dsh/pet/docs/VOICE-OVERVIEW.md'
 
 /* ---------- 1) 解析 ---------- */
 const text = readFileSync(input, 'utf8')

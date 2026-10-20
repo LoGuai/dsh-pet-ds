@@ -373,7 +373,7 @@ Get-CimInstance Win32_Process -Filter "Name='electron.exe'" |
 
 | 文档 | 内容 |
 |---|---|
-| [INSTALL.md](./INSTALL.md) | 完整安装指引（**推荐先看这个**，含官方命令与安装器） |
+| [INSTALL.md](../INSTALL.md) | 完整安装指引（**推荐先看这个**，含官方命令与安装器） |
 | [INSTALL-AGENT.md](./INSTALL-AGENT.md) | 给自动化 / agent 用的一条命令版 |
-| [README.md](./README.md) | 设计、架构与踩坑记录 |
+| [README.md](../README.md) | 设计、架构与踩坑记录 |
 | [RELEASE.md](./RELEASE.md) | 发布流程 |
