@@ -2501,28 +2501,48 @@ ipcMain.on('info:open-external', (_event, url) => {
   void shell.openExternal(text)
 })
 
+/**
+ * 随机说一句：从"当前可用的闲置语音 + 自由对话库"里等概率抽一条。
+ *
+ * 两处共用（所以抽一套逻辑，不写两遍）：
+ *  · 右键菜单**第一项**「对话」（用户要求加回来，且**不改变心情与好感**）；
+ *  · 语音库窗口里的「随机说一句」按钮（`info:say-random`）。
+ *
+ * ⚠️ 刻意**不调用** `grantAffection()` / 心情函数：
+ * 那属于"闲置主动对话"（每 60 秒自动一次，+1 好感），
+ * 而这里是用户主动点一下，用户明确要求"这次对话不会引起心情和好感值变化"。
+ *
+ * @param {string} source 日志用的来源标签
+ * @returns {{ ok: boolean, text?: string, reason?: string }}
+ */
+function sayRandomIdleLine(source) {
+  if (!win || win.isDestroyed()) return { ok: false, reason: '窗口不可用' }
+  const hearts = affection.hearts
+  const moodValue = Math.round(mood.value)
+  /*
+   * 池子 = 当前可用的闲置分档语音 + 自由对话库。
+   *
+   * `dialogue.js` 里那些"傲娇日常"台词（17 句）没有状态条件，
+   * 正好和最基础的固定语音一起当"随便说一句"的素材。
+   */
+  const pool = [...availableVoiceLines({ hearts, moodValue }), ...voiceLinesFor('free')]
+  if (pool.length === 0) return { ok: false, reason: '没有可用台词' }
+  // 尽量避开上一句，别连着说同一句。
+  const candidates = pool.length > 1 && lastIdleVoiceLine
+    ? pool.filter((line) => line !== lastIdleVoiceLine)
+    : pool
+  const list = candidates.length > 0 ? candidates : pool
+  const text = list[Math.floor(Math.random() * list.length)]
+  if (!text) return { ok: false, reason: '抽到空台词' }
+  lastIdleVoiceLine = text
+  win.webContents.send('pet:say', { text, bubbleMs: 6000 })
+  log(`随机说一句（${source}）：${text}（不加心情/好感）`)
+  return { ok: true, text }
+}
+
 ipcMain.on('info:say-random', () => {
   try {
-    if (!win || win.isDestroyed()) return
-    const hearts = affection.hearts
-    const moodValue = Math.round(mood.value)
-    /*
-     * 池子 = 当前可用的分组语音 + 自由对话库。
-     *
-     * 为什么把 `dialogue.js` 也并进来：重做菜单后「对话」项没了，
-     * 那些"傲娇日常"台词（17 句）如果只留在库里就成了死代码。
-     * 它们没有状态条件，正好可以和无条件的固定语音一起当"随便说一句"的素材。
-     */
-    const pool = [...availableVoiceLines({ hearts, moodValue }), ...voiceLinesFor('free')]
-    if (pool.length === 0) return
-    const candidates = pool.length > 1 && lastIdleVoiceLine
-      ? pool.filter((line) => line !== lastIdleVoiceLine)
-      : pool
-    const list = candidates.length > 0 ? candidates : pool
-    const text = list[Math.floor(Math.random() * list.length)]
-    if (!text) return
-    lastIdleVoiceLine = text
-    win.webContents.send('pet:say', { text, bubbleMs: 6000 })
+    sayRandomIdleLine('语音库窗口')
   } catch (err) {
     log(`语音库「随机说一句」失败：${err instanceof Error ? err.message : String(err)}`)
   }
@@ -2613,14 +2633,31 @@ function buildMenuTemplate() {
    * 它从**语音库的可用台词 + 自由对话库**里一起抽。
    */
 
+  /*
+   * 用户要求（最新）：菜单**第一项**放「对话」——
+   * 点一下随机触发一句可触发的闲置语音，且**不改变心情与好感**。
+   *
+   * 历史：早先有「对话」项，重做菜单时并进了语音库窗口（"随机说一句"）；
+   * 现在又要求放回首页第一项，所以两处共用同一个实现 `sayRandomIdleLine()`。
+   */
   const template = [
     {
+      label: '对话',
+      click: () => {
+        try {
+          const result = sayRandomIdleLine('右键对话')
+          if (!result.ok) log(`右键「对话」未说话：${String(result.reason)}`)
+        } catch (err) {
+          log(`右键「对话」失败：${err instanceof Error ? err.message : String(err)}`)
+        }
+      },
+    },
+    {
       /*
-       * 语音库入口（用户要求的第 1 项）。
+       * 语音库入口。
        *
-       * 打开的是一个**独立只读窗口**，列出当前可用的语音组。
-       * 原来的「对话」项已并进去（窗口里有个"随机说一句"）——
-       * 用户重做菜单时列的清单里没有「对话」。
+       * 打开的是一个**独立只读窗口**，列出当前可用的语音组，
+       * 窗口里也有"随机说一句"（与上面的「对话」同一套抽取逻辑）。
        */
       label: '语音库…',
       click: () => {
@@ -3370,8 +3407,8 @@ async function verifyLayoutAndResize(check, wait) {
   /* 信息窗口（语音库 / 关于）—— 再加最后：它会真的开一个窗口。 */
   await verifyInfoWindows(check, wait)
 
-  /* 右键菜单的 8 个入口（纯构建，不弹窗）。 */
-  verifyContextMenu(check)
+  /* 右键菜单的入口（纯构建，不弹窗）；「对话」还会真说一句。 */
+  await verifyContextMenu(check, wait)
 
   /* 好感存档：路径与安装目录分离 + 落盘往返。 */
   await verifyAffectionPersistence(check, wait)
@@ -5982,8 +6019,9 @@ async function verifyAffectionAndFeedback(check, wait) {
  * "菜单项少了/写错了"是用户一眼就能看到的故障，值得钉住。
  *
  * @param {(name: string, ok: boolean, detail?: string) => void} check
+ * @param {(ms: number) => Promise<void>} wait
  */
-function verifyContextMenu(check) {
+async function verifyContextMenu(check, wait) {
   let template = null
   try {
     template = buildMenuTemplate()
@@ -5993,6 +6031,7 @@ function verifyContextMenu(check) {
   }
   const labels = template.filter((item) => item && item.label).map((item) => item.label)
   const expect = [
+    '对话',
     '语音库…',
     '动作',
     '尺寸',
@@ -6004,7 +6043,7 @@ function verifyContextMenu(check) {
   ]
   const missing = expect.filter((want) => !labels.includes(want))
   check(
-    '右键菜单包含全部 8 个入口',
+    '右键菜单包含全部 9 个入口',
     missing.length === 0,
     missing.length === 0 ? `实际=[${labels.join(' / ')}]` : `缺少 ${missing.join('、')}；实际=[${labels.join(' / ')}]`,
   )
@@ -6029,6 +6068,56 @@ function verifyContextMenu(check) {
     Boolean(sizeItem) && Array.isArray(sizeItem.submenu) && sizeItem.submenu.length === SIZE_PRESETS.length,
     sizeItem ? `${String((sizeItem.submenu || []).length)} 档（期望 ${String(SIZE_PRESETS.length)}）` : '找不到该项',
   )
+
+  /*
+   * ---- 「对话」：必须排在**第一项**，说一句可用台词，且**不改心情与好感** ----
+   *
+   * 用户要求：「右键菜单加入新功能，放在第一项，为"对话"，点击后随机触发一句
+   * 可触发的闲置随机对话，这次对话不会引起心情和好感值变化」。
+   */
+  const first = template[0]
+  check(
+    '「对话」是右键菜单的第一项',
+    Boolean(first) && first.label === '对话' && typeof first.click === 'function',
+    first ? `第一项=${String(first.label)}，有 click=${String(typeof first.click === 'function')}` : '菜单为空',
+  )
+
+  if (first && typeof first.click === 'function') {
+    const hearts = affection.hearts
+    const moodValue = Math.round(mood.value)
+    const pool = [...availableVoiceLines({ hearts, moodValue }), ...voiceLinesFor('free')]
+    const affBefore = affection.value
+    const heartsBefore = affection.hearts
+    const moodBefore = mood.value
+
+    first.click()
+    await wait(400)
+
+    const bubbleText = await (win && !win.isDestroyed()
+      ? win.webContents.executeJavaScript('document.getElementById("bubble-text").textContent', true)
+      : Promise.resolve(''))
+
+    check(
+      '「对话」会说出一句台词',
+      typeof bubbleText === 'string' && bubbleText.length > 0,
+      `气泡=${JSON.stringify(String(bubbleText))}`,
+    )
+    check(
+      '「对话」的台词来自当前可用池',
+      pool.includes(String(bubbleText)),
+      `在池中=${String(pool.includes(String(bubbleText)))}（池 ${String(pool.length)} 句）`,
+    )
+    check(
+      '「对话」不改变好感值',
+      affection.value === affBefore && affection.hearts === heartsBefore,
+      `阶段值 ${String(affBefore)} → ${String(affection.value)}，爱心 ${String(heartsBefore)} → ${String(affection.hearts)}`,
+    )
+    check(
+      '「对话」不改变心情值',
+      Math.abs(mood.value - moodBefore) < 1e-6,
+      `心情 ${String(moodBefore)} → ${String(mood.value)}`,
+    )
+  }
 }
 
 /**
