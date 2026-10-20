@@ -1894,8 +1894,13 @@ function finishDrag(e) {
         /*
          * 低心情：主进程已经把心情 +50 了，这里只负责说话。
          * 台词由主进程给（信赖语音在语音库里），渲染进程不重复实现。
+         *
+         * ⚠️ 原先这里有一句**硬编码兜底**「（占位·信赖）……哼，我才没有高兴。」
+         * —— 那样就出现了"一条台词不归语音库管"的例外：用户改库时改不到它，
+         * 它也不会出现在文档里。现在改成"主进程没给就不说话"，
+         * 保证**所有能显示的台词都来自语音库**（另见 scripts/dev/test-voice-sources.mjs）。
          */
-        showBubble(result.trustLine || '（占位·信赖）……哼，我才没有高兴。', 'say', 4500)
+        if (result.trustLine) showBubble(result.trustLine, 'say', 4500)
         return
       }
 
