@@ -5705,7 +5705,14 @@ async function verifyAffectionAndFeedback(check, wait) {
      * 都会让"第一次读到的思考状态"不确定。这里强制回到闲置。
      */
     await js('window.__petTestRefresh()')
-    await wait(300)
+    /*
+     * 等久一点（800ms）再推 thinking。
+     *
+     * 前面用例的 `testPushState` 是异步下发的，可能有**排队中的 idle 推送**
+     * 晚一步才到渲染进程 —— 那会被正确地当成"宿主不在思考"结束掉刚进入的思考，
+     * 表现为这条用例偶发红（实测遇到过一轮）。留出排空时间即可。
+     */
+    await wait(800)
     /*
      * 记下"站立时"的角色矩形：思考循环段的画布更高（864x1210，为了放头顶气泡），
      * 帧会向上溢出 —— 但**脚底必须纹丝不动**，否则角色会像被抬起来。
@@ -5745,7 +5752,8 @@ async function verifyAffectionAndFeedback(check, wait) {
     check(
       '进入段播完 → 自动循环 think-loop',
       Boolean(tLoop) && tLoop.phase === 'loop' && tLoop.activeAnimationId === 'think-loop',
-      `phase=${String(tLoop && tLoop.phase)}，动画=${String(tLoop && tLoop.activeAnimationId)}`,
+      `phase=${String(tLoop && tLoop.phase)}，动画=${String(tLoop && tLoop.activeAnimationId)}`
+        + `，最后一次结束=${JSON.stringify(tLoop && tLoop.lastExit)}`,
     )
 
     /*
@@ -5868,6 +5876,42 @@ async function verifyAffectionAndFeedback(check, wait) {
     )
     // 等退出段播完，别把 exit 状态留给后面的用例
     await wait(1600)
+  }
+
+  /*
+   * ---- 6.4) 手动触发的思考，不被宿主状态推送打断 ----
+   *
+   * 用户反馈：「深度思考动作手动触发后，不到 300 秒就会自发停止」。
+   * 成因：手动思考没有宿主状态支撑，而宿主每次推 idle/working 都会走到
+   * "宿主不在思考 → 结束思考"的分支，于是下一次状态推送就把它踢掉了。
+   * 现在 `enterThink('manual')` 会记下来源，宿主推送不再影响它。
+   */
+  {
+    await js('window.__petTestRefresh()')
+    await wait(300)
+    await js('window.__petTestThink.enterManual()')
+    await wait(1600)
+    const manualStarted = await js('window.__petTestThink.state()')
+    // 模拟宿主在思考期间推几种"非思考"状态
+    testPushState({ workStatus: 'idle', workLabel: '', seq: 9700 })
+    await wait(300)
+    testPushState({ workStatus: 'working', workLabel: '干活中…', seq: 9701 })
+    await wait(300)
+    testPushState({ workStatus: 'idle', workLabel: '', seq: 9702 })
+    await wait(500)
+    const manualAfter = await js('window.__petTestThink.state()')
+    check(
+      '手动触发的深度思考不会被宿主状态推送打断',
+      Boolean(manualStarted) && manualStarted.active === true && manualStarted.manual === true
+        && Boolean(manualAfter) && manualAfter.active === true && manualAfter.phase === 'loop',
+      manualAfter
+        ? `进入=${String(manualStarted && manualStarted.active)}/手动=${String(manualStarted && manualStarted.manual)}`
+          + ` → 三次宿主推送后 active=${String(manualAfter.active)}，phase=${String(manualAfter.phase)}`
+        : '读不到思考状态',
+    )
+    // 手动思考仍然受 300 秒上限约束（这一点由 6.5 覆盖），这里用点击收起
+    await js('window.__petTestRefresh()')
+    await wait(400)
   }
 
   /*

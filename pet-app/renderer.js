@@ -2197,14 +2197,20 @@ function applyState(state) {
   if (wasIdle === isIdle) {
     if (isThinking && !thinkActive) {
       void enterThink()
-    } else if (!isThinking && thinkActive) {
+    } else if (!isThinking && thinkActive && !thinkManual) {
       exitThink(`宿主状态变为 ${nextStatus}`)
     }
     return
   }
 
   if (isIdle) {
-    if (thinkActive) exitThink('宿主回到闲置')
+    /*
+     * ⚠️ `!thinkManual`：**手动触发**的思考（右键菜单「深度思考」）没有宿主状态支撑，
+     * 宿主每推一次 idle 都会走到这里。若不排除，它会在下一次状态推送时被静默踢掉 ——
+     * 用户看到的就是"手动触发后不到 300 秒就自己停了"。
+     * 手动思考只由这三种情况结束：用户点击 / 300 秒上限 / 刷新状态。
+     */
+    if (thinkActive && !thinkManual) exitThink('宿主回到闲置')
     // 刚回到闲置：重新起算闲置计时。
     //
     // ⚠️ 但**正在惊醒时不要重置** —— 惊醒是"被叫醒"的收尾，重置会
@@ -2226,7 +2232,7 @@ function applyState(state) {
     return
   }
 
-  if (thinkActive) exitThink(`宿主状态变为 ${nextStatus}`)
+  if (thinkActive && !thinkManual) exitThink(`宿主状态变为 ${nextStatus}`)
   /*
    * 睡眠中开始工作 = 与"用户点击"同一种唤醒（用户要求）：
    * **播放惊醒动画**，而不是被硬生生切断。
@@ -2456,8 +2462,11 @@ async function playAction(id, options = {}) {
      *
      * 素材本身在头顶画了"深度求索中…"的气泡，应用层再弹一句就是两个气泡叠着；
      * 而且思考是宿主状态的映射，说话出戏。所以这里直接进状态机，不再取台词。
+     *
+     * ⚠️ 必须标 `'manual'`：手动思考没有宿主状态支撑，若按宿主驱动处理，
+     * 下一次状态推送（idle/working）就会把它结束掉 —— 表现为"不到 300 秒自己停了"。
      */
-    void enterThink()
+    void enterThink('manual')
     return
   }
 
@@ -2847,6 +2856,23 @@ let thinkSeq = 0
 let thinkTimer = null
 
 /**
+ * 这次思考是**手动**触发的吗（右键菜单「深度思考」）。
+ *
+ * `false` = 由宿主状态驱动（DSH 开始/结束思考）。
+ * 两者收尾条件不同：宿主驱动的看宿主状态，手动的**忽略**宿主状态推送，
+ * 只由"用户点击 / 300 秒上限 / 刷新状态"结束。
+ */
+let thinkManual = false
+
+/**
+ * 最后一次"结束思考"的触发原因与时刻（诊断用）。
+ *
+ * 为什么留这个：思考可能被**多条**路径结束（宿主状态、点击、300 秒上限、刷新…），
+ * 外部只能看到"它自己停了"，无从判断是谁干的。自测把它打进失败详情里，一眼定位。
+ */
+let thinkLastExit = null
+
+/**
  * "思考过程中被切回站立"的次数（诊断/自测用）。
  *
  * 用户反馈过：「进入思考、思考中、结束思考动作衔接的时候会先跳出一帧的站立动作」。
@@ -3021,9 +3047,19 @@ async function playThinkPhase(id, options) {
  * 若先播思考动作再收尾旧动作，旧动作的收尾回调会把画面拉回站立，
  * 思考动作就白播了（这是本项目里反复出现过的一类时序问题）。
  */
-async function enterThink() {
+async function enterThink(source = 'host') {
   if (thinkActive) return
   thinkActive = true
+  /*
+   * 记录来源。`manual` = 用户从右键菜单点的「深度思考」。
+   *
+   * 为什么要分：手动触发的思考**没有宿主状态支撑**，宿主随后的每一次
+   * idle/working 推送都会走到"宿主不在思考 → 结束思考"那条分支，
+   * 于是手动触发的思考会在下一次状态推送时被静默踢掉
+   * （用户反馈："手动触发后不到 300 秒就自发停止"）。
+   * 手动思考只由三种情况结束：用户点击 / 300 秒上限 / 刷新状态。
+   */
+  thinkManual = source === 'manual'
   // 新的进入序列开始：作废所有在飞的旧切换（可能是上一次的退出段）。
   thinkSeq += 1
   const token = thinkSeq
@@ -3032,6 +3068,7 @@ async function enterThink() {
   clearThinkHold()
   // 每一轮思考都从 0 开始计"漏帧"次数（只统计本轮）。
   thinkStandFlashCount = 0
+  if (thinkManual) console.info('[think] 手动触发深度思考（宿主状态不影响它，直到点击/上限/刷新）')
 
   // 坐姿是"多阶段 + 计时器"的，必须走它自己的取消逻辑，否则计时器还在跑。
   cancelSit('宿主开始思考')
@@ -3104,6 +3141,9 @@ async function playThinkExit(reason) {
 function exitThink(reason) {
   if (!thinkActive && thinkPhase === null) return
   thinkActive = false
+  thinkLastExit = { reason: String(reason), at: Date.now(), manual: thinkManual }
+  /* 结束即清来源标记，避免下一次宿主驱动时沿用"手动"而忽略状态变化。 */
+  thinkManual = false
   /*
    * 用户要求：「在此之前 dsh 思考结束，则正常触发结束，**并停止计时**」。
    * 所以不论走哪条分支，先停表再收尾。
@@ -3138,6 +3178,8 @@ function exitThink(reason) {
  */
 function refreshToIdle(reason = '刷新状态') {
   thinkActive = false
+  /* 刷新是"强制结束"，来源标记也要清（否则下一轮思考会被当成手动而忽略宿主状态）。 */
+  thinkManual = false
   /*
    * 思考的三段是串联的，刷新时必须连"段"一起清掉：
    * 只清 thinkActive 是不够的 —— 进入/退出段的收尾回调仍会触发，
@@ -4728,6 +4770,10 @@ window.__petTestThink = {
     holdDeadline: thinkHoldDeadline,
     holdLimitMs: thinkHoldLimitMs,
     holdArmed: thinkHoldTimer !== null,
+    /** 这次思考是不是手动触发的（手动的不受宿主状态推送影响）。 */
+    manual: thinkManual,
+    /** 最后一次结束思考的原因（诊断：看到"自己停了"时用它定位是谁结束的）。 */
+    lastExit: thinkLastExit,
   }),
   /**
    * 测试用：改小"思考时长上限"，免得自测真等 300 秒。
@@ -4737,6 +4783,11 @@ window.__petTestThink = {
   setHoldLimit: (ms) => {
     thinkHoldLimitMs = ms > 0 ? Math.max(50, Math.round(ms)) : THINK_MAX_HOLD_MS
     return thinkHoldLimitMs
+  },
+  /** 测试用：模拟"右键菜单点深度思考"（手动来源）。 */
+  enterManual: async () => {
+    await enterThink('manual')
+    return window.__petTestThink.state()
   },
   enter: async () => {
     await enterThink()
