@@ -14,7 +14,19 @@
 > 本文件讲"用现成工具装"。**纯手工**那套（改哪两个字段、每步怎么验证、
 > 故障出在加载链的哪一段）单独写在 [INSTALL-MANUAL.md](./INSTALL-MANUAL.md)。
 
-## 0. 用 DSH 官方的 `plugin_manager install_bundle`（推荐）
+## 0-a. 从 npm 安装（最省事）
+
+已发布到 npm，**不需要下载任何文件**：
+
+```bash
+dsh plugin --profile <profile> add dsh-pet-ds@0.2.1
+```
+
+显式写版本号，避免本地缓存命中旧版。之后升级只要改版本号。
+
+> 也可以把包名交给 `install_bundle`：`target = dsh-pet-ds@0.2.1`。
+
+## 0-b. 用 DSH 官方的 `plugin_manager install_bundle`
 
 **直接把这个 `.tgz` 的绝对路径交给它**就行，不用解包：
 

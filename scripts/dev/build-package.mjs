@@ -36,7 +36,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -440,6 +440,27 @@ let sourceZip = null
       check('源码 zip 不含 .cache/', !zHas('.cache'))
     }
   }
+}
+
+/*
+ * 额外产出固定文件名的安装包，专门当 **GitHub Release 附件**。
+ *
+ * 为什么固定名：安装 URL 想写死成
+ *   https://github.com/liuguanyu9719-source/dsh-pet-ds/releases/latest/download/dsh-pet-ds.tgz
+ * 就必须每次都上传同名附件；带版本号的文件名做不到"永远指向最新"。
+ *
+ * 为什么需要附件而不是 git 地址：git 地址会被 pnpm 当 git 依赖，克隆整份仓库
+ * （本仓库历史约 300MB）；附件是单个 tarball，只下一次（约 33MB）。
+ */
+{
+  const releaseDir = join(OUT_DIR, 'release')
+  mkdirSync(releaseDir, { recursive: true })
+  copyFileSync(tarball, join(releaseDir, 'dsh-pet-ds.tgz'))
+  console.log(`  ${join(releaseDir, 'dsh-pet-ds.tgz')}   ← Release 附件（固定名）`)
+  const pkgVersion = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version
+  console.log(`\n从 GitHub URL 安装（把其中一行交给 install_bundle）：`)
+  console.log(`  锁定版本（tag 快照）  https://github.com/liuguanyu9719-source/dsh-pet-ds/archive/refs/tags/v${pkgVersion}.tar.gz`)
+  console.log(`  永远最新（Release 附件） https://github.com/liuguanyu9719-source/dsh-pet-ds/releases/latest/download/dsh-pet-ds.tgz`)
 }
 
 console.log(`\n结果：${failed === 0 ? '内容校验全部通过' : failed + ' 项未通过'}`)

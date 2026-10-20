@@ -18,13 +18,13 @@
 
 三种方式任选其一，详细步骤见 [INSTALL.md](INSTALL.md)。
 
-**一键安装（推荐）** —— 解压发布包，双击 `install.cmd`。
+**从 npm 装（推荐）** —— 不用下载任何文件：
 
-**用 DSH 官方命令** —— 把 tgz 交给 `plugin_manager`：
+```bash
+dsh plugin --profile <profile> add dsh-pet-ds@0.2.1
+```
 
-```
-install_bundle  target = dist/dsh-pet-ds-0.2.1.tgz
-```
+**一键安装包** —— 解压发布包，双击 `install.cmd`。
 
 **从源码目录**：
 
