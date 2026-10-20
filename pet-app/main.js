@@ -2434,6 +2434,12 @@ function openInfoWindow(mode) {
     infoWin.setTitle(mode === 'voice' ? '语音库' : '关于桌宠')
     infoWin.show()
     infoWin.focus()
+    /*
+     * `moveTop()`：桌宠窗口是**始终置顶**的，而这个信息窗口是普通层级 ——
+     * 只 show/focus 的话它可能被桌宠压住（或者被别的置顶窗口挡住），
+     * 用户就会觉得"点了没反应"。移一下顶层顺序最省事。
+     */
+    infoWin.moveTop()
     return
   }
 
@@ -2444,6 +2450,15 @@ function openInfoWindow(mode) {
     minHeight: 320,
     title: mode === 'voice' ? '语音库' : '关于桌宠',
     backgroundColor: '#12151c',
+    /*
+     * ⚠️ `show: false` + `ready-to-show` 才显示。
+     *
+     * 用户反馈：「第一次点菜单里的语音库/关于桌宠没反应，要点第二次才弹出」。
+     * 原因是直接在菜单回调里建窗并立刻显示：菜单还在收尾、窗口没有拿到焦点，
+     * 有时会被桌宠（始终置顶）挡住或干脆停在未激活状态。
+     * 改成"内容就绪后再 show + focus + moveTop"，第一次点就能稳定弹出来。
+     */
+    show: false,
     /* 与桌宠窗口一样的隔离策略：只给它一个极小的 preload，不开放 Node。 */
     webPreferences: {
       preload: path.join(__dirname, 'info-preload.js'),
@@ -2453,11 +2468,24 @@ function openInfoWindow(mode) {
     },
   })
   infoWin.setMenuBarVisibility(false)
+  infoWin.once('ready-to-show', () => {
+    if (!infoWin || infoWin.isDestroyed()) return
+    infoWin.show()
+    infoWin.focus()
+    infoWin.moveTop()
+  })
   infoWin.on('closed', () => {
     infoWin = null
   })
   void infoWin.loadFile(path.join(__dirname, 'info.html')).then(() => {
-    if (infoWin && !infoWin.isDestroyed()) infoWin.webContents.send('info:data', payload)
+    if (!infoWin || infoWin.isDestroyed()) return
+    infoWin.webContents.send('info:data', payload)
+    /* 兜底：某些环境里 ready-to-show 可能不触发（页面极快完成时），这里再显示一次。 */
+    if (!infoWin.isVisible()) {
+      infoWin.show()
+      infoWin.focus()
+      infoWin.moveTop()
+    }
   })
 }
 
@@ -2596,7 +2624,13 @@ function buildMenuTemplate() {
        */
       label: '语音库…',
       click: () => {
-        openInfoWindow('voice')
+        /*
+         * 用 `setImmediate` 把开窗推迟到"菜单回调返回之后"。
+         *
+         * 在菜单的 click 回调里同步创建窗口，Windows 上偶发拿不到激活
+         * （用户反馈"第一次点没反应"）。推迟一拍再建，就避开了菜单收尾与前台切换的竞争。
+         */
+        setImmediate(() => openInfoWindow('voice'))
       },
     },
     {
@@ -2654,7 +2688,8 @@ function buildMenuTemplate() {
     {
       label: '关于桌宠…',
       click: () => {
-        openInfoWindow('about')
+        /* 同「语音库…」：推迟一拍再开窗，避开菜单收尾与前台切换的竞争。 */
+        setImmediate(() => openInfoWindow('about'))
       },
     },
     { type: 'separator' },
@@ -5785,6 +5820,15 @@ async function verifyAffectionAndFeedback(check, wait) {
     )
 
     // 再进一次，这次让宿主自己结束思考
+    /*
+     * ⚠️ 先推一次 idle 再推 thinking。
+     *
+     * 渲染进程对"状态没变"的推送会去重（同一个 workStatus 不会重复触发），
+     * 而上一轮结束时留下的当前状态可能还是 thinking —— 直接再推 thinking
+     * 会被当成"没变化"静默丢掉，表现为"第二次思考根本没进入"。
+     */
+    testPushState({ workStatus: 'idle', workLabel: '', seq: 9601.5 })
+    await wait(200)
     testPushState({ workStatus: 'thinking', workLabel: '思考中…', seq: 9602 })
     await wait(400)
     const t3 = await js('window.__petTestThink.state()')
@@ -5905,6 +5949,15 @@ async function verifyInfoWindows(check, wait) {
   {
     const ok = Boolean(infoWin && !infoWin.isDestroyed())
     check('语音库窗口能打开', ok, ok ? '窗口已创建' : '窗口创建失败')
+    /*
+     * 可见性单独断言：窗口"创建成功"但没显示出来，正是用户反馈的那个症状
+     * （"第一次点没反应，要点第二次"）。只检查 `infoWin` 是否存在是不够的。
+     */
+    check(
+      '语音库窗口创建后立刻可见',
+      ok && infoWin.isVisible() && !infoWin.isMinimized(),
+      ok ? `可见=${String(infoWin.isVisible())}，最小化=${String(infoWin.isMinimized())}` : '窗口未创建',
+    )
     if (ok) {
       let diag = null
       try {
@@ -5980,6 +6033,30 @@ async function verifyInfoWindows(check, wait) {
     await wait(300)
   }
   check('信息窗口能正常关闭', !infoWin || infoWin.isDestroyed(), `infoWin=${infoWin ? '仍在' : '已关'}`)
+
+  /*
+   * ---- 关掉后再点一次（模拟"关掉窗口 → 再点菜单"）----
+   *
+   * 用户反馈的是「第一次点没反应，要点第二次才弹出」。两处都要能一次就出来：
+   *  · 进程里**没有**窗口时（第一次点）→ 新建后必须可见；
+   *  · 进程里**已有**窗口时（窗口开着再点）→ show+focus+moveTop 也必须可见。
+   * 上面已经覆盖了"新建"这一路（语音库那次），这里补"重新新建"与可见性断言。
+   */
+  openInfoWindow('voice')
+  await wait(900)
+  {
+    const alive = Boolean(infoWin && !infoWin.isDestroyed())
+    const visible = alive && infoWin.isVisible()
+    check(
+      '信息窗口第一次点开就可见（不需要点第二次）',
+      alive && visible,
+      alive ? `可见=${String(visible)}，最小化=${String(infoWin.isMinimized())}` : '窗口未创建',
+    )
+  }
+  if (infoWin && !infoWin.isDestroyed()) {
+    infoWin.close()
+    await wait(300)
+  }
 }
 
 /**
