@@ -216,17 +216,53 @@ test('clickVoiceTier：0,1 → low；2,3 → mid；4,5 → high', () => {
 })
 
 // ---------------------------------------------------------------- 可用性过滤
-test('闲置：可用组 = 固定 + 当前好感度组 + 当前心情组', () => {
+test('闲置：可用组 = 固定 + 累计解锁的好感度组 + 当前心情组', () => {
+  /*
+   * 好感度语音是**累计解锁**，不是按等级替换（用户要求：
+   * 「低于当前好感值等级组的语音也可以触发，改为随等级解锁新增语音，而不是替换」）。
+   * 所以 3 心时 Lv1/Lv2/Lv3 三组都在池里。
+   */
   const cases = [
     { hearts: 0, moodValue: 10, expect: ['idle-fixed', 'idle-mood-low'] },
     { hearts: 0, moodValue: 60, expect: ['idle-fixed', 'idle-mood-mid'] },
     { hearts: 1, moodValue: 90, expect: ['idle-fixed', 'idle-affection-1', 'idle-mood-high'] },
-    { hearts: 3, moodValue: 30, expect: ['idle-fixed', 'idle-affection-3', 'idle-mood-low'] },
-    { hearts: 5, moodValue: 100, expect: ['idle-fixed', 'idle-affection-5', 'idle-mood-high'] },
+    {
+      hearts: 3,
+      moodValue: 30,
+      expect: ['idle-fixed', 'idle-affection-1', 'idle-affection-2', 'idle-affection-3', 'idle-mood-low'],
+    },
+    {
+      hearts: 5,
+      moodValue: 100,
+      expect: [
+        'idle-fixed',
+        'idle-affection-1',
+        'idle-affection-2',
+        'idle-affection-3',
+        'idle-affection-4',
+        'idle-affection-5',
+        'idle-mood-high',
+      ],
+    },
   ]
   for (const c of cases) {
     const ids = voiceGroupsFor('idle', { hearts: c.hearts, moodValue: c.moodValue }).map((g) => g.id)
     assert.deepEqual(ids, c.expect, `hearts=${String(c.hearts)} mood=${String(c.moodValue)}`)
+  }
+})
+
+test('好感度语音累计解锁：等级越高可选句数只增不减', () => {
+  let previous = -1
+  for (let h = 0; h <= 5; h += 1) {
+    const n = voiceLinesFor('idle', { hearts: h, moodValue: 60 }).length
+    assert.ok(n >= previous, `${String(h)} 心的可选句数 ${String(n)} 比上一档 ${String(previous)} 还少`)
+    previous = n
+  }
+  // 5 心时应当包含所有 5 组好感度台词，而不只是 Lv5
+  const lv5 = VOICE_GROUPS.filter((g) => g.kind === 'affection')
+  const pool = new Set(voiceLinesFor('idle', { hearts: 5, moodValue: 60 }))
+  for (const g of lv5) {
+    for (const line of g.lines) assert.ok(pool.has(line), `5 心时缺了 ${g.id} 的台词：${line}`)
   }
 })
 

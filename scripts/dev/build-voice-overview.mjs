@@ -44,7 +44,7 @@ const EXTRA = {
   'click-mid': '好感 2~3 心',
   'click-high': '好感 4~5 心',
   'idle-fixed': '不依赖好感/心情',
-  'idle-affection': '按好感等级解锁，越高等级越多句',
+  'idle-affection': '累计解锁：当前等级及以下的组全部参与抽取（等级越高可选越多，早期台词不消失）',
   'idle-mood': '按心情值分低/中/高三档',
   'balance-tier': '按余额区间分 4 档（见每组标题）',
   'system-size-failed': '尺寸写进配置失败时',

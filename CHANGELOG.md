@@ -46,6 +46,7 @@
 - 新增 `scripts/dev/apply-voice-overview.mjs`：把回传的总览文件按分组 id 直接写回语音库，并按实际台词行重算条数。
 - 宿主侧补上「思考」档位：按 `agent/assistant-stream` 的 `reasoning-delta` / `text-delta` 帧判定思考与写正文，真实 DSH 里深度思考动作终于会触发。
 - 新增 `src/shared-core/work-status.js`：把"流帧→档位"的判定抽成纯函数，免测试地跟着宿主跑。
+- 闲置·好感度语音改为**累计解锁**：当前等级及以下的好感度台词都能触发，不再只播当前等级那一组。
 
 ### 修复
 

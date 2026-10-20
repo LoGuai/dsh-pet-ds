@@ -568,7 +568,20 @@ function groupAvailable(group, ctx = {}) {
   switch (group.trigger) {
     case 'idle': {
       if (group.kind === 'fixed') return true
-      if (group.kind === 'affection') return group.level === affectionVoiceLevel(ctx.hearts)
+      /*
+       * 好感度语音：**累计解锁**，不是按等级替换（用户要求）。
+       *
+       * 「闲置·好感度 语音，现改为低于当前好感值等级组的语音也可以触发，
+       *   也就是改为随等级解锁新增语音，而不是替换」
+       *
+       * 所以 3 心时可用的是 Lv1 + Lv2 + Lv3 三组共 9 句，
+       * 而不是只有 Lv3 那 3 句 —— 等级越高可说的话越多，早期台词不会消失。
+       */
+      if (group.kind === 'affection') {
+        const level = affectionVoiceLevel(ctx.hearts)
+        if (level === null) return false
+        return group.level <= level
+      }
       if (group.kind === 'mood') return group.mood === moodVoiceGroup(ctx.moodValue)
       return false
     }
