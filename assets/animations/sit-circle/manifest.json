@@ -23,7 +23,7 @@
       "w": 864,
       "h": 1157
     },
-    "scale": 0.937,
+    "scale": 0.9493,
     "footBaseOutput": 1155,
     "headWidthOut": null,
     "headMatch": {
@@ -34,261 +34,261 @@
       "endHeight": 1086,
       "perFrame": true,
       "perFrameScale": [
-        0.9118,
-        0.9118,
-        0.9118,
-        0.9118,
-        0.9111,
-        0.9088,
-        0.9111,
-        0.9118,
-        0.9118,
-        0.9118,
-        0.9118,
-        0.9118
+        0.9149,
+        0.9149,
+        0.9149,
+        0.9149,
+        0.9149,
+        0.9141,
+        0.9149,
+        0.9149,
+        0.9149,
+        0.9149,
+        0.9149,
+        0.9149
       ]
     },
     "perFrameScale": [
-      0.9118,
-      0.9118,
-      0.9118,
-      0.9118,
-      0.9111,
-      0.9088,
-      0.9111,
-      0.9118,
-      0.9118,
-      0.9118,
-      0.9118,
-      0.9118
+      0.9149,
+      0.9149,
+      0.9149,
+      0.9149,
+      0.9149,
+      0.9141,
+      0.9149,
+      0.9149,
+      0.9149,
+      0.9149,
+      0.9149,
+      0.9149
     ],
     "perFrame": [
       {
         "src": "1.png",
         "out": "frame_01.webp",
         "srcBounds": [
-          177,
-          22,
-          1095,
-          1212
+          179,
+          27,
+          1086,
+          1213
         ],
         "placedAt": [
-          13,
+          17,
           70
         ],
-        "scale": 0.9118,
+        "scale": 0.9149,
         "outTop": 70,
         "outFoot": 1155,
-        "outW": 838,
+        "outW": 831,
         "outH": 1086
       },
       {
         "src": "2.png",
         "out": "frame_02.webp",
         "srcBounds": [
-          177,
-          22,
-          1095,
-          1212
+          179,
+          27,
+          1086,
+          1213
         ],
         "placedAt": [
-          13,
+          17,
           70
         ],
-        "scale": 0.9118,
+        "scale": 0.9149,
         "outTop": 70,
         "outFoot": 1155,
-        "outW": 838,
+        "outW": 831,
         "outH": 1086
       },
       {
         "src": "3.png",
         "out": "frame_03.webp",
         "srcBounds": [
-          177,
-          22,
-          1095,
-          1212
+          179,
+          27,
+          1086,
+          1213
         ],
         "placedAt": [
-          13,
+          17,
           70
         ],
-        "scale": 0.9118,
+        "scale": 0.9149,
         "outTop": 70,
         "outFoot": 1155,
-        "outW": 838,
+        "outW": 831,
         "outH": 1086
       },
       {
         "src": "4.png",
         "out": "frame_04.webp",
         "srcBounds": [
-          177,
-          22,
-          1095,
-          1212
+          179,
+          27,
+          1086,
+          1213
         ],
         "placedAt": [
-          13,
+          17,
           70
         ],
-        "scale": 0.9118,
+        "scale": 0.9149,
         "outTop": 70,
         "outFoot": 1155,
-        "outW": 838,
+        "outW": 831,
         "outH": 1086
       },
       {
         "src": "5.png",
         "out": "frame_05.webp",
         "srcBounds": [
-          178,
-          22,
-          1095,
+          180,
+          27,
+          1086,
           1213
         ],
         "placedAt": [
-          14,
+          18,
           70
         ],
-        "scale": 0.9111,
+        "scale": 0.9149,
         "outTop": 70,
         "outFoot": 1155,
-        "outW": 836,
+        "outW": 830,
         "outH": 1086
       },
       {
         "src": "6.png",
         "out": "frame_06.webp",
         "srcBounds": [
-          177,
-          21,
-          1096,
-          1215
+          179,
+          27,
+          1086,
+          1214
         ],
         "placedAt": [
-          14,
+          17,
           70
         ],
-        "scale": 0.9088,
+        "scale": 0.9141,
         "outTop": 70,
         "outFoot": 1155,
-        "outW": 836,
+        "outW": 830,
         "outH": 1086
       },
       {
         "src": "7.png",
         "out": "frame_07.webp",
         "srcBounds": [
-          178,
-          22,
-          1095,
+          180,
+          27,
+          1086,
           1213
         ],
         "placedAt": [
-          14,
+          18,
           70
         ],
-        "scale": 0.9111,
+        "scale": 0.9149,
         "outTop": 70,
         "outFoot": 1155,
-        "outW": 836,
+        "outW": 830,
         "outH": 1086
       },
       {
         "src": "8.png",
         "out": "frame_08.webp",
         "srcBounds": [
-          177,
-          22,
-          1095,
-          1212
+          179,
+          27,
+          1086,
+          1213
         ],
         "placedAt": [
-          13,
+          17,
           70
         ],
-        "scale": 0.9118,
+        "scale": 0.9149,
         "outTop": 70,
         "outFoot": 1155,
-        "outW": 838,
+        "outW": 831,
         "outH": 1086
       },
       {
         "src": "9.png",
         "out": "frame_09.webp",
         "srcBounds": [
-          177,
-          22,
-          1095,
-          1212
+          179,
+          27,
+          1086,
+          1213
         ],
         "placedAt": [
-          13,
+          17,
           70
         ],
-        "scale": 0.9118,
+        "scale": 0.9149,
         "outTop": 70,
         "outFoot": 1155,
-        "outW": 838,
+        "outW": 831,
         "outH": 1086
       },
       {
         "src": "10.png",
         "out": "frame_10.webp",
         "srcBounds": [
-          177,
-          22,
-          1095,
-          1212
+          179,
+          27,
+          1086,
+          1213
         ],
         "placedAt": [
-          13,
+          17,
           70
         ],
-        "scale": 0.9118,
+        "scale": 0.9149,
         "outTop": 70,
         "outFoot": 1155,
-        "outW": 838,
+        "outW": 831,
         "outH": 1086
       },
       {
         "src": "11.png",
         "out": "frame_11.webp",
         "srcBounds": [
-          177,
-          22,
-          1095,
-          1212
+          179,
+          27,
+          1086,
+          1213
         ],
         "placedAt": [
-          13,
+          17,
           70
         ],
-        "scale": 0.9118,
+        "scale": 0.9149,
         "outTop": 70,
         "outFoot": 1155,
-        "outW": 838,
+        "outW": 831,
         "outH": 1086
       },
       {
         "src": "12.png",
         "out": "frame_12.webp",
         "srcBounds": [
-          177,
-          22,
-          1095,
-          1212
+          179,
+          27,
+          1086,
+          1213
         ],
         "placedAt": [
-          13,
+          17,
           70
         ],
-        "scale": 0.9118,
+        "scale": 0.9149,
         "outTop": 70,
         "outFoot": 1155,
-        "outW": 838,
+        "outW": 831,
         "outH": 1086
       }
     ]
