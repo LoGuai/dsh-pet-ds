@@ -34,6 +34,12 @@ import { Supervisor } from './supervisor.js'
 import { electronHelpText, resolveElectron } from './electron-locate.js'
 import { createBalanceFetcher } from './balance.js'
 import { PROTOCOL_VERSION } from '../shared-core/protocol.js'
+import {
+  LABEL_THINKING,
+  STATUS_IDLE,
+  STATUS_THINKING,
+  createWorkStatusTracker,
+} from '../shared-core/work-status.js'
 
 /**
  * 插件配置的 **schema**（schemastery）—— 定义在 `./config-schema.js`。
@@ -336,11 +342,22 @@ export function apply(ctx, config) {
     return undefined
   })
 
-  // ------------------------------------------------- 工作状态的粗粒度联动
-  // 本阶段只做"有事在跑 / 空闲"两档，用来验证事件通路是通的。
-  // 细粒度档位（思考/工作/整理/等待/成功/失败）需要 agent/assistant-stream，
-  // 放到后续阶段接入，且会先做运行时探针确认。
+  // ------------------------------------------------- 工作状态联动（含"深度思考"）
+  /*
+   * 三档：`thinking`（深度求索中）/ `working`（干活中）/ `idle`。
+   *
+   * ⚠️ 历史：这里原先只发 working / idle，注释写着"细粒度档位放后续阶段" ——
+   * 那个后续阶段一直没做，于是**真实 DSH 里永远不会触发深度思考动作**
+   * （用户反馈"我开始思考之后，桌宠并没有同步播放深度思考动作"）。
+   * 桌宠那边的状态机、素材、自测都齐了，唯独"没人告诉它该思考"，白做。
+   *
+   * 现在按 DSH 的模型流帧判定（见 shared-core/work-status.js）：
+   *  · `reasoning-delta` → thinking（GUI 的"深度求索中…"就是它）；
+   *  · `text-delta`      → working（开始写正文）；
+   *  · 一轮里一旦开始写正文就不再回到 thinking，避免动作反复抽搐。
+   */
   let userMsgAt = 0
+  const workStatus = createWorkStatusTracker()
   try {
     ctx.on('agent/inbox/inserted', (payload) => {
       try {
@@ -356,10 +373,35 @@ export function apply(ctx, config) {
         // 只有"用户消息进入 inbox 后 10 秒内变为 running"才算用户主动发起，
         // 避免自动续跑 / 子代理 / 定时任务误触发。
         const byUser = running && Date.now() - userMsgAt < 10_000
-        if (byUser) bridge.setWorkStatus('working', '干活中')
-        else if (!running) bridge.setWorkStatus('idle', '')
+        if (running) {
+          /*
+           * 新一轮开始：先把档位切到"思考"。
+           *
+           * 为什么不是"等第一帧 reasoning 再说"：模型开口前有几百毫秒的静默，
+           * 若这段不切，桌宠会先站一会儿再低头 —— 用户看起来就是"没同步"。
+           * 真到了写正文的时候，`text-delta` 会把它切回 working。
+           */
+          workStatus.beginTurn()
+          if (byUser) bridge.setWorkStatus(STATUS_THINKING, LABEL_THINKING)
+        } else {
+          bridge.setWorkStatus(STATUS_IDLE, '')
+        }
       } catch (err) {
         say(`处理 agent/status 出错：${errText(err)}`)
+      }
+    })
+    /*
+     * 模型流帧：区分"思考"与"写正文"。
+     *
+     * 这里**不加 byUser 限制** —— 帧只在真的跑模型时才有，
+     * 而且自动续跑时她也确实在思考，映射上去是对的。
+     */
+    ctx.on('agent/assistant-stream', (payload) => {
+      try {
+        const next = workStatus.acceptChunk(payload?.frame?.chunk)
+        if (next) bridge.setWorkStatus(next.status, next.label)
+      } catch (err) {
+        say(`处理 agent/assistant-stream 出错：${errText(err)}`)
       }
     })
   } catch (err) {
