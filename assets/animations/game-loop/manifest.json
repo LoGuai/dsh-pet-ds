@@ -13,25 +13,24 @@
       "w": 864,
       "h": 1210
     },
-    "scale": 0.9347,
+    "scale": 1.0,
     "footBaseOutput": 1208,
-    "headWidthOut": 530.0,
+    "headWidthOut": null,
     "headMatch": {
-      "ref": "stand",
-      "refHeadWidth": 530,
+      "mode": "height-ramp",
+      "startAction": "stand",
+      "endAction": "stand",
+      "startHeight": 1149,
+      "endHeight": 1149,
       "perFrame": true,
-      "rawHeadWidths": [
-        539,
-        567
-      ],
       "perFrameScale": [
-        0.9833,
-        0.9347
+        1.0035,
+        0.9787
       ]
     },
     "perFrameScale": [
-      0.9833,
-      0.9347
+      1.0035,
+      0.9787
     ],
     "perFrame": [
       {
@@ -44,14 +43,14 @@
           1192
         ],
         "placedAt": [
-          63,
-          83
+          55,
+          60
         ],
-        "scale": 0.9833,
-        "outTop": 83,
+        "scale": 1.0035,
+        "outTop": 60,
         "outFoot": 1208,
-        "outW": 739,
-        "outH": 1126
+        "outW": 755,
+        "outH": 1149
       },
       {
         "src": "2.png",
@@ -63,14 +62,14 @@
           1206
         ],
         "placedAt": [
-          57,
-          112
+          39,
+          60
         ],
-        "scale": 0.9347,
-        "outTop": 112,
+        "scale": 0.9787,
+        "outTop": 60,
         "outFoot": 1208,
-        "outW": 751,
-        "outH": 1097
+        "outW": 787,
+        "outH": 1149
       }
     ]
   }
