@@ -16,17 +16,22 @@
 
 ## 安装
 
-三种方式任选其一，详细步骤见 [INSTALL.md](INSTALL.md)。
+当前版本 **0.2.2**。三种方式任选其一，详细步骤见 [INSTALL.md](INSTALL.md)。
 
-**从 GitHub 装（推荐）** —— 下载的是**一个安装包**，不会克隆仓库：
+**从 GitHub 装（推荐）** —— 下载的是**一个安装包**（约 33 MB），不会克隆仓库：
 
 ```
 install_bundle  target = https://github.com/liuguanyu9719-source/dsh-pet-ds/releases/latest/download/dsh-pet-ds.tgz
 ```
 
-这个地址永远指向**最新一版**（发布时上传同名附件 `dsh-pet-ds.tgz` 即可）。
-想锁死某个版本就用 tag 快照：
-`https://github.com/liuguanyu9719-source/dsh-pet-ds/archive/refs/tags/v0.2.1.tar.gz`
+这个地址永远指向**最新一版**。想锁死在某一版，用该版本的 tag 快照（当前 0.2.2）：
+
+```
+install_bundle  target = https://github.com/liuguanyu9719-source/dsh-pet-ds/archive/refs/tags/v0.2.2.tar.gz
+```
+
+> ⚠️ **不要用仓库主页地址**（`…/dsh-pet-ds.git`）：那种形式会走 git 依赖，
+> 需要先过一道 5 秒的连接预检、还会克隆整个仓库，国内网络下经常超时。
 
 **一键安装包** —— 解压发布包，双击 `install.cmd`。
 

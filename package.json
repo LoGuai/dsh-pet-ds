@@ -1,6 +1,6 @@
 {
   "name": "dsh-pet-ds",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "DSH 桌面宠物：透明置顶的 DeepSeek 娘，随 DSH 工作状态动起来（深度思考 / 坐下睡觉），显示余额、能对话、有好感度。",
   "type": "module",
   "license": "MIT",

@@ -24,7 +24,7 @@ install_bundle  target = https://github.com/liuguanyu9719-source/dsh-pet-ds/rele
 
 - 它下的是**一个 tarball**（约 33 MB），不是 git clone —— 本仓库历史约 300 MB，用 git 地址会全拉下来；
 - `releases/latest/download/...` 永远指向**最新一版**：发布时把 `dist/release/dsh-pet-ds.tgz` 以**同名**上传即可；
-- 想锁死版本：`https://github.com/liuguanyu9719-source/dsh-pet-ds/archive/refs/tags/v0.2.1.tar.gz`（tag 快照，同样是单包下载）。
+- 想锁死版本：`https://github.com/liuguanyu9719-source/dsh-pet-ds/archive/refs/tags/v0.2.2.tar.gz`（tag 快照，同样是单包下载）。
 
 ### 关于 git 地址（能装，但最慢）
 

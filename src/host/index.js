@@ -93,7 +93,7 @@ export const inject = ['tools', 'credentials']
  * 漂移了会出现"界面显示 0.1.0、包却是 0.1.2"这种对不上号的怪事，
  * 而排查时第一眼就会看这个号。
  */
-const VERSION = '0.2.1'
+const VERSION = '0.2.2'
 
 /**
  * 插件入口。
