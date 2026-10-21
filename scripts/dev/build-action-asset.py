@@ -152,6 +152,13 @@ ACTIONS = {
         # 渲染进程按素材自身比例设帧高，多出来的高度向上溢出到气泡区。
         "canvas_height": 1210,
         "fps": 6,
+        # 用户反馈"第二段第 2 帧和第三段偏大"，实测头宽确认了：
+        #   stand 525~530 ／ begin 525~533 ／ loop 539,567 ／ stop 572~579
+        # 也就是美术在循环后半段和收尾段**把角色画大了 7~9%**。
+        # 用逐帧头宽归一化（与 sit-stop 同一套机制）把每帧头宽统一到站立的 530，
+        # 而不是按整体高度缩放 —— 举手/抬手会改变包围盒，按高度对齐会把"姿势"错当"大小"。
+        "match_head_to": "stand",
+        "match_head_per_frame": True,
         "note": "玩游戏（第一段：开始，播一遍）",
     },
     "game-loop": {
@@ -160,12 +167,16 @@ ACTIONS = {
         # ⚠️ 用户指定第二段 **每秒 1 帧**。2 帧 → 每帧停在屏幕上 1 秒，一圈 2 秒。
         "fps": 1,
         "loop": True,
+        "match_head_to": "stand",
+        "match_head_per_frame": True,
         "note": "玩游戏（第二段：循环，1fps）",
     },
     "game-stop": {
         "raw_dir": os.path.join(ROOT, ".cache", "game-raw", "stop"),
         "canvas_height": 1210,
         "fps": 6,
+        "match_head_to": "stand",
+        "match_head_per_frame": True,
         "note": "玩游戏（第三段：收尾，播一遍回闲置）",
     },
 
