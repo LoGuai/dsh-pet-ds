@@ -135,11 +135,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+ssh://git@github.com/liuguanyu9719-source/dsh-pet-ds.git"
+    "url": "git+ssh://git@github.com/LoGuai/dsh-pet-ds.git"
   },
-  "homepage": "https://github.com/liuguanyu9719-source/dsh-pet-ds",
+  "homepage": "https://github.com/LoGuai/dsh-pet-ds",
   "bugs": {
-    "url": "https://github.com/liuguanyu9719-source/dsh-pet-ds/issues"
+    "url": "https://github.com/LoGuai/dsh-pet-ds/issues"
   },
   "keywords": [
     "dsh",

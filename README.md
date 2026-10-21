@@ -1,9 +1,14 @@
-# DSH 桌宠 · 深鲸娘
+# DSH 桌宠 · 大肥鱼
 
 > 一个挂在桌面上的 DeepSeek 娘。会站着发呆、坐下偷懒、睡着被叫醒，也会陪你一起「深度思考」。
 
-<img src="assets/animations/stand/frame_01.webp" width="220" alt="站立">
-<img src="assets/animations/think-loop/frame_02.webp" width="240" alt="深度思考">
+<p align="center">
+  <img src="docs/images/demo-1-idle.png" width="230" alt="待机">
+  <img src="docs/images/demo-2-think.png" width="230" alt="深度思考">
+  <img src="docs/images/demo-3-game.png" width="230" alt="玩游戏">
+</p>
+
+<p align="center"><sub>待机　·　深度思考（DSH 一开始思考她就低头）　·　玩游戏（三段动作）</sub></p>
 
 ## 功能
 
@@ -21,13 +26,13 @@
 **从 GitHub 装（推荐）** —— 下载的是**一个安装包**（约 33 MB），不会克隆仓库：
 
 ```
-install_bundle  target = https://github.com/liuguanyu9719-source/dsh-pet-ds/releases/latest/download/dsh-pet-ds.tgz
+install_bundle  target = https://github.com/LoGuai/dsh-pet-ds/releases/latest/download/dsh-pet-ds.tgz
 ```
 
 这个地址永远指向**最新一版**。想锁死在某一版，用该版本的 tag 快照（当前 0.2.2）：
 
 ```
-install_bundle  target = https://github.com/liuguanyu9719-source/dsh-pet-ds/archive/refs/tags/v0.2.2.tar.gz
+install_bundle  target = https://github.com/LoGuai/dsh-pet-ds/archive/refs/tags/v0.2.2.tar.gz
 ```
 
 > ⚠️ **不要用仓库主页地址**（`…/dsh-pet-ds.git`）：那种形式会走 git 依赖，
@@ -68,6 +73,25 @@ node install.mjs
 | 睡着时点击 | 叫醒（播惊醒动画） |
 | 坐着时点击 | 立刻站起 |
 | 思考中点击 | 结束深度思考 |
+
+**桌宠设置栏**
+
+装好之后，**DSH 设置页里会单开一栏「桌宠」**（命名空间就是插件 id `dsh-pet-ds`），
+不用改配置文件就能调：
+
+| 设置项 | 作用 |
+|---|---|
+| `autoStart` | DSH 启动时自动拉起桌宠 |
+| `startDelayMs` | 启动延迟（毫秒），给宿主留出加载时间 |
+| `stopOnUnload` | 卸载插件时是否顺手关掉桌宠 |
+| `size` | 尺寸档位（5 档） |
+| `alwaysOnTop` | 是否常驻置顶 |
+| `lowBalanceThreshold` | 余额告急阈值（元） |
+| `balancePollSeconds` | 余额轮询间隔 |
+| `refreshSeconds` | 余额播报间隔 |
+
+这些都是 **volatile 字段：改完立即生效**，不会重挂插件；
+端口、Electron 路径这类"装错才动"的仍留在 `cordis.patch.yml` 里。
 
 ## 配置
 

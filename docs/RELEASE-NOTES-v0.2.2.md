@@ -60,13 +60,13 @@
 ## 安装方式（本版推荐）
 
 ```
-install_bundle  target = https://github.com/liuguanyu9719-source/dsh-pet-ds/releases/latest/download/dsh-pet-ds.tgz
+install_bundle  target = https://github.com/LoGuai/dsh-pet-ds/releases/latest/download/dsh-pet-ds.tgz
 ```
 
 锁版本：
 
 ```
-install_bundle  target = https://github.com/liuguanyu9719-source/dsh-pet-ds/archive/refs/tags/v0.2.2.tar.gz
+install_bundle  target = https://github.com/LoGuai/dsh-pet-ds/archive/refs/tags/v0.2.2.tar.gz
 ```
 
 > 不要用仓库主页地址：git 依赖要先过 5 秒预检、再克隆整个仓库，国内网络下经常超时。

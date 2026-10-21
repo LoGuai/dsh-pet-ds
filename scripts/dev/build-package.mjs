@@ -446,7 +446,7 @@ let sourceZip = null
  * 额外产出固定文件名的安装包，专门当 **GitHub Release 附件**。
  *
  * 为什么固定名：安装 URL 想写死成
- *   https://github.com/liuguanyu9719-source/dsh-pet-ds/releases/latest/download/dsh-pet-ds.tgz
+ *   https://github.com/LoGuai/dsh-pet-ds/releases/latest/download/dsh-pet-ds.tgz
  * 就必须每次都上传同名附件；带版本号的文件名做不到"永远指向最新"。
  *
  * 为什么需要附件而不是 git 地址：git 地址会被 pnpm 当 git 依赖，克隆整份仓库
@@ -459,8 +459,8 @@ let sourceZip = null
   console.log(`  ${join(releaseDir, 'dsh-pet-ds.tgz')}   ← Release 附件（固定名）`)
   const pkgVersion = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version
   console.log(`\n从 GitHub URL 安装（把其中一行交给 install_bundle）：`)
-  console.log(`  锁定版本（tag 快照）  https://github.com/liuguanyu9719-source/dsh-pet-ds/archive/refs/tags/v${pkgVersion}.tar.gz`)
-  console.log(`  永远最新（Release 附件） https://github.com/liuguanyu9719-source/dsh-pet-ds/releases/latest/download/dsh-pet-ds.tgz`)
+  console.log(`  锁定版本（tag 快照）  https://github.com/LoGuai/dsh-pet-ds/archive/refs/tags/v${pkgVersion}.tar.gz`)
+  console.log(`  永远最新（Release 附件） https://github.com/LoGuai/dsh-pet-ds/releases/latest/download/dsh-pet-ds.tgz`)
   console.log(`  ↑ 发布前：把上面那份 dsh-pet-ds.tgz 以**同名**上传到 GitHub Release`)
   console.log(`    （releases/new → tag 选 v${pkgVersion} → 拖入附件 → Publish）`)
 }
